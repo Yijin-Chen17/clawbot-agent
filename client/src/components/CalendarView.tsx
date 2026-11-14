@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   Share2,
+  Menu,
 } from 'lucide-react';
 
 // Grid Constants matching calcury/eisenhower-matrix
@@ -272,7 +273,11 @@ function safeCopyToClipboard(text: string): boolean {
   }
 }
 
-export const CalendarView: React.FC = () => {
+interface CalendarViewProps {
+  onOpenMobileMenu?: () => void;
+}
+
+export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
   const { user } = useAuth();
   const { isDark } = useTheme();
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -556,6 +561,16 @@ export const CalendarView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 px-1">
         {/* Navigation Group */}
         <div className="flex items-center gap-2">
+          {onOpenMobileMenu && (
+            <button
+              type="button"
+              onClick={onOpenMobileMenu}
+              className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              title="打开侧边导航"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
           <div className="flex items-center bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700/80 rounded-full shadow-2xs overflow-hidden">
             <button
               onClick={() => setWeekStart((prev) => addDays(prev, -7))}

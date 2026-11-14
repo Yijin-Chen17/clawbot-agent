@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthPage } from './pages/AuthPage';
-import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
 import { EisenhowerWorkspace } from './components/EisenhowerWorkspace';
 import { CalendarView } from './components/CalendarView';
 import { SettingsView } from './components/SettingsView';
@@ -12,10 +12,20 @@ import { api } from './api/client';
 
 const DashboardContent: React.FC = () => {
   const { user, loading } = useAuth();
-  const [activeTab, setActiveTab] = useState<string>('todos');
+  // 当前活动视图：四象限看板 (matrix) / 待办清单 (list) / 日历日程 (calendar) / 设置 (settings) / 审核 (admin) / 调试 (debug)
+  const [activeTab, setActiveTab] = useState<string>('matrix');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [pendingCount, setPendingCount] = useState(0);
 
-  // New user default to settings, returning user default to todos
+  // 模态框全局触发状态 (由侧边栏触发)
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // 新用户首次登录默认进设置页完成微信/外部对接，后续默认进入四象限看板
   useEffect(() => {
     if (user?.id) {
       const onboardedKey = `clawbot_user_onboarded_${user.id}`;
@@ -43,7 +53,7 @@ const DashboardContent: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f8fafd] dark:bg-[#131314] flex items-center justify-center">
+      <div className="min-h-screen bg-white dark:bg-[#1e1f20] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-3 border-blue-600 dark:border-blue-400 border-t-transparent"></div>
           <span className="text-gray-500 dark:text-neutral-400 text-xs font-medium">Clawbot Tasks 加载中...</span>
@@ -57,27 +67,83 @@ const DashboardContent: React.FC = () => {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[#f8fafd] dark:bg-[#131314] flex flex-col text-gray-900 dark:text-gray-100 transition-colors">
-      <Navbar
+    <div className="h-screen w-screen overflow-hidden flex bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 transition-colors">
+      {/* 主流 AI Agent 风格左侧边栏 */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        activeCategory={activeCategory}
+        setActiveCategory={setActiveCategory}
+        categoryCounts={categoryCounts}
+        onNewTask={() => {
+          setIsCreateModalOpen(true);
+          if (activeTab !== 'matrix' && activeTab !== 'list') {
+            setActiveTab('matrix');
+          }
+        }}
+        onOpenWizard={() => {
+          setIsWizardOpen(true);
+          if (activeTab !== 'matrix' && activeTab !== 'list') {
+            setActiveTab('matrix');
+          }
+        }}
+        onOpenStats={() => {
+          setIsStatsOpen(true);
+          if (activeTab !== 'matrix' && activeTab !== 'list') {
+            setActiveTab('matrix');
+          }
+        }}
+        onOpenBackup={() => {
+          setIsBackupOpen(true);
+          if (activeTab !== 'matrix' && activeTab !== 'list') {
+            setActiveTab('matrix');
+          }
+        }}
         pendingUsersCount={pendingCount}
+        mobileOpen={mobileSidebarOpen}
+        setMobileOpen={setMobileSidebarOpen}
       />
 
-      {/* Main Container with full height and zero page scroll */}
-      <main className="flex-1 min-h-0 w-full max-w-[1700px] mx-auto px-2 sm:px-4 lg:px-6 py-2 sm:py-3.5 pb-16 sm:pb-3.5 overflow-hidden flex flex-col">
-        {activeTab === 'todos' && (
+      {/* 右侧主工作区 (无外层卡片与外边距，纯净贴边满高) */}
+      <main className="flex-1 h-full min-w-0 overflow-hidden flex flex-col bg-white dark:bg-[#1e1f20]">
+        {(activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos') && (
           <EisenhowerWorkspace
-            activeView="matrix"
-            onSelectView={(view) => setActiveTab(view === 'calendar' ? 'calendar' : 'todos')}
+            currentView={activeTab === 'list' ? 'list' : 'matrix'}
+            onSwitchView={(v) => setActiveTab(v)}
+            activeCategory={activeCategory}
+            setActiveCategory={setActiveCategory}
+            onCountsUpdate={setCategoryCounts}
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
+            isCreateModalOpen={isCreateModalOpen}
+            setIsCreateModalOpen={setIsCreateModalOpen}
+            isWizardOpen={isWizardOpen}
+            setIsWizardOpen={setIsWizardOpen}
+            isStatsOpen={isStatsOpen}
+            setIsStatsOpen={setIsStatsOpen}
+            isBackupOpen={isBackupOpen}
+            setIsBackupOpen={setIsBackupOpen}
           />
         )}
-        {activeTab === 'calendar' && <CalendarView />}
-        {activeTab === 'settings' && <SettingsView />}
-        {activeTab === 'admin' && user.role === 'admin' && (
-          <AdminUsersView onRefreshCount={fetchPendingCount} />
+        {activeTab === 'calendar' && (
+          <div className="w-full h-full flex flex-col overflow-hidden p-2 sm:p-4">
+            <CalendarView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />
+          </div>
         )}
-        {activeTab === 'debug' && user.role === 'admin' && <SystemDebugger />}
+        {activeTab === 'settings' && (
+          <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <SettingsView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />
+          </div>
+        )}
+        {activeTab === 'admin' && user.role === 'admin' && (
+          <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <AdminUsersView onRefreshCount={fetchPendingCount} />
+          </div>
+        )}
+        {activeTab === 'debug' && user.role === 'admin' && (
+          <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <SystemDebugger />
+          </div>
+        )}
       </main>
     </div>
   );

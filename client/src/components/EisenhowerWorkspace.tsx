@@ -4,81 +4,96 @@ import { calculateQuadrant, formatLocalDate } from '../types/task';
 import { calculateDynamicUrgency } from '../utils/priorityAlgorithm';
 import { api } from '../api/client';
 import { MatrixBoard } from './MatrixBoard';
-import { CalendarView } from './CalendarView';
 import { TaskModal } from './TaskModal';
 import { WizardModal } from './WizardModal';
 import { StatsModal } from './StatsModal';
 import { BackupModal } from './BackupModal';
 import {
   LayoutGrid,
-  CalendarDays,
   Plus,
   RefreshCw,
   Search,
   Check,
   CheckSquare,
   Clock,
-  Sparkles,
   Inbox,
   Flame,
   Star,
   Layers,
   Archive,
-  PieChart,
-  ArrowUpDown,
   Edit3,
   Trash2,
   Calendar as CalendarIcon,
   CheckCircle2,
+  Menu,
 } from 'lucide-react';
 
 interface EisenhowerWorkspaceProps {
-  activeView: 'matrix' | 'calendar';
-  onSelectView: (view: 'matrix' | 'calendar') => void;
+  currentView?: 'matrix' | 'list';
+  onSwitchView?: (view: 'matrix' | 'list') => void;
+  activeCategory?: string;
+  setActiveCategory?: (cat: string) => void;
+  onCountsUpdate?: (counts: Record<string, number>) => void;
+  onOpenMobileMenu?: () => void;
+  isCreateModalOpen?: boolean;
+  setIsCreateModalOpen?: (open: boolean) => void;
+  isWizardOpen?: boolean;
+  setIsWizardOpen?: (open: boolean) => void;
+  isStatsOpen?: boolean;
+  setIsStatsOpen?: (open: boolean) => void;
+  isBackupOpen?: boolean;
+  setIsBackupOpen?: (open: boolean) => void;
 }
 
 export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
-  activeView,
-  onSelectView,
+  currentView: propsCurrentView = 'matrix',
+  onSwitchView,
+  activeCategory: propsActiveCategory,
+  setActiveCategory: propsSetActiveCategory,
+  onCountsUpdate,
+  onOpenMobileMenu,
+  isCreateModalOpen: propsIsCreateModalOpen,
+  setIsCreateModalOpen: propsSetIsCreateModalOpen,
+  isWizardOpen: propsIsWizardOpen,
+  setIsWizardOpen: propsSetIsWizardOpen,
+  isStatsOpen: propsIsStatsOpen,
+  setIsStatsOpen: propsSetIsStatsOpen,
+  isBackupOpen: propsIsBackupOpen,
+  setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list) / 时间轴排程 (calendar)
-  const [currentView, setCurrentView] = useState<'matrix' | 'list' | 'calendar'>(
-    activeView === 'calendar' ? 'calendar' : 'matrix'
-  );
+  // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list)
+  const [internalCurrentView, setInternalCurrentView] = useState<'matrix' | 'list'>(propsCurrentView);
+  const viewMode = propsCurrentView || internalCurrentView;
 
-  // 与父级 activeView 同步
+  // 与父级 propsCurrentView 同步
   useEffect(() => {
-    if (activeView === 'calendar' && currentView !== 'calendar') {
-      setCurrentView('calendar');
-    } else if (activeView === 'matrix' && currentView === 'calendar') {
-      setCurrentView('matrix');
+    if (propsCurrentView && propsCurrentView !== internalCurrentView) {
+      setInternalCurrentView(propsCurrentView);
     }
-  }, [activeView]);
+  }, [propsCurrentView, internalCurrentView]);
 
-  const handleSwitchView = (v: 'matrix' | 'list' | 'calendar') => {
-    setCurrentView(v);
-    if (v === 'calendar') {
-      onSelectView('calendar');
+  const handleToggleViewMode = (v: 'matrix' | 'list') => {
+    setInternalCurrentView(v);
+    onSwitchView?.(v);
+  };
+
+  // 分类筛选控制
+  const [internalActiveCategory, setInternalActiveCategory] = useState<string>('all');
+  const currentCategory = propsActiveCategory || internalActiveCategory;
+
+  const handleSelectCategory = (cat: string) => {
+    if (propsSetActiveCategory) {
+      propsSetActiveCategory(cat);
     } else {
-      onSelectView('matrix');
+      setInternalActiveCategory(cat);
     }
   };
+  void handleSelectCategory;
 
   // 任务数据与加载状态
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // 分类筛选与搜索 (模仿旧版 TodoList)
-  const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-
-  // 快速添加表单状态 (旧版左侧快捷栏)
-  const [quickTitle, setQuickTitle] = useState('');
-  const [quickDuration, setQuickDuration] = useState(60);
-  const [quickDeadline, setQuickDeadline] = useState('');
-  const [quickUrgency, setQuickUrgency] = useState(6);
-  const [quickImportance, setQuickImportance] = useState(6);
-  const [quickSubmitting, setQuickSubmitting] = useState(false);
 
   // 模态框状态
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -87,6 +102,37 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+
+  // 响应父级侧边栏触发模态框
+  useEffect(() => {
+    if (propsIsCreateModalOpen) {
+      setEditingTask(null);
+      setClickCoords(null);
+      setIsTaskModalOpen(true);
+      propsSetIsCreateModalOpen?.(false);
+    }
+  }, [propsIsCreateModalOpen, propsSetIsCreateModalOpen]);
+
+  useEffect(() => {
+    if (propsIsWizardOpen) {
+      setIsWizardOpen(true);
+      propsSetIsWizardOpen?.(false);
+    }
+  }, [propsIsWizardOpen, propsSetIsWizardOpen]);
+
+  useEffect(() => {
+    if (propsIsStatsOpen) {
+      setIsStatsOpen(true);
+      propsSetIsStatsOpen?.(false);
+    }
+  }, [propsIsStatsOpen, propsSetIsStatsOpen]);
+
+  useEffect(() => {
+    if (propsIsBackupOpen) {
+      setIsBackupOpen(true);
+      propsSetIsBackupOpen?.(false);
+    }
+  }, [propsIsBackupOpen, propsSetIsBackupOpen]);
 
   // 转换服务端 Task 为标准 TaskItem (0~10分值模型)
   const mapServerTask = useCallback((t: any): TaskItem => {
@@ -207,6 +253,11 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     return counts;
   }, [tasks]);
 
+  // 同步统计数据至父级侧边栏
+  useEffect(() => {
+    onCountsUpdate?.(categoryCounts);
+  }, [categoryCounts, onCountsUpdate]);
+
   // 计算多维效能统计数据 (供复盘弹窗使用)
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -245,22 +296,21 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     return { total, completed, pending, completionRate, breakdown };
   }, [tasks]);
 
-  // 根据左侧分类及搜索框过滤任务列表
+  // 根据分类及搜索框过滤任务列表
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
       // 在四象限看板视图下，已完成的事项坚决不显示
-      if (currentView === 'matrix' && task.isCompleted) {
+      if (viewMode === 'matrix' && task.isCompleted) {
         return false;
       }
 
-      if (activeCategory === 'completed') {
+      if (currentCategory === 'completed') {
         if (!task.isCompleted) return false;
-      } else if (activeCategory === 'all') {
-        // 在待办列表中若不是 completed 分类，默认展示未完成事项
-        if (currentView === 'list' && task.isCompleted) return false;
-      } else if (activeCategory.startsWith('q')) {
-        if (task.quadrant !== activeCategory) return false;
-        if (currentView === 'list' && task.isCompleted) return false;
+      } else if (currentCategory === 'all') {
+        if (viewMode === 'list' && task.isCompleted) return false;
+      } else if (currentCategory.startsWith('q')) {
+        if (task.quadrant !== currentCategory) return false;
+        if (viewMode === 'list' && task.isCompleted) return false;
       }
 
       if (searchQuery.trim()) {
@@ -271,7 +321,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       }
       return true;
     });
-  }, [tasks, activeCategory, searchQuery, currentView]);
+  }, [tasks, currentCategory, searchQuery, viewMode]);
 
   // 点击直角坐标平面任意空白处，自动落位创建
   const handleCreateWithCoords = useCallback((importance: number, urgency: number) => {
@@ -314,32 +364,6 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       setClickCoords(null);
     } catch (err: any) {
       alert(err.response?.data?.error || '保存任务失败，请重试');
-    }
-  };
-
-  // 左侧快速表单提交创建待办
-  const handleQuickCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickTitle.trim()) return;
-
-    setQuickSubmitting(true);
-    try {
-      await api.post('/tasks', {
-        title: quickTitle.trim(),
-        duration_minutes: quickDuration,
-        importance: quickImportance,
-        urgency: quickUrgency,
-        deadline: quickDeadline ? new Date(quickDeadline).toISOString() : null,
-        auto_schedule: true,
-      });
-
-      setQuickTitle('');
-      setQuickDeadline('');
-      await fetchTasks();
-    } catch (err: any) {
-      alert(err.response?.data?.error || '快速创建待办失败');
-    } finally {
-      setQuickSubmitting(false);
     }
   };
 
@@ -444,291 +468,119 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   };
 
   return (
-    <div className="w-full flex-1 min-h-0 flex flex-col space-y-2.5 overflow-hidden">
-      {/* ===================== 左右排版主视窗 (模仿旧版 Google Tasks 布局) ===================== */}
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3.5 items-stretch overflow-hidden">
-        {/* 左侧栏: 分类与四象限导航 + 快速新建待办 + 辅助效率工具 */}
-        <aside className="w-full lg:w-72 xl:w-80 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1">
-          {/* 1. 分类与四象限 (Filter Rail) */}
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl p-3 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs transition-colors">
-            <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5">
-              分类与四象限
-            </div>
-            <div className="space-y-0.5 mt-1">
-              {filterCategories.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeCategory === item.key;
-                const count = categoryCounts[item.key] || 0;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setActiveCategory(item.key)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-                      isActive
-                        ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs'
-                        : 'text-gray-600 dark:text-neutral-400 hover:bg-gray-100/80 dark:hover:bg-neutral-800/60 hover:text-gray-900 dark:hover:text-neutral-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 truncate">
-                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : item.color}`} />
-                      <span className="truncate">{item.label}</span>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono shrink-0 transition ${
-                        isActive
-                          ? 'bg-blue-600 text-white font-bold'
-                          : 'bg-gray-100 dark:bg-neutral-800 text-gray-500 dark:text-neutral-400'
-                      }`}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 2. 快速新建待办 (桌面端快捷表单) */}
-          <div className="hidden lg:block bg-white dark:bg-[#1e1f20] rounded-2xl p-4 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs transition-colors">
-            <div className="flex items-center gap-2 pb-2.5 border-b border-gray-100 dark:border-neutral-800 text-xs font-bold text-gray-900 dark:text-gray-100">
-              <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span>快速新建待办</span>
-            </div>
-
-            <form onSubmit={handleQuickCreate} className="space-y-3 mt-3">
-              <div>
-                <input
-                  type="text"
-                  value={quickTitle}
-                  onChange={(e) => setQuickTitle(e.target.value)}
-                  placeholder="待办名称 (如: 准备里程碑审查)"
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 focus:bg-white dark:focus:bg-[#232425] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    预计耗时
-                  </label>
-                  <select
-                    value={quickDuration}
-                    onChange={(e) => setQuickDuration(Number(e.target.value))}
-                    className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
-                  >
-                    <option value={15}>15 分钟</option>
-                    <option value={30}>30 分钟</option>
-                    <option value={45}>45 分钟</option>
-                    <option value={60}>60 分钟 (1h)</option>
-                    <option value={90}>90 分钟 (1.5h)</option>
-                    <option value={120}>120 分钟 (2h)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    截止日期
-                  </label>
-                  <input
-                    type="date"
-                    value={quickDeadline}
-                    onChange={(e) => setQuickDeadline(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    战略重要度
-                  </label>
-                  <select
-                    value={quickImportance}
-                    onChange={(e) => setQuickImportance(Number(e.target.value))}
-                    className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
-                  >
-                    <option value={2}>2 - 较低关注</option>
-                    <option value={5}>5 - 普通事项</option>
-                    <option value={8}>8 - 重要核心</option>
-                    <option value={10}>10 - 极关键战略</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    时间紧迫度
-                  </label>
-                  <select
-                    value={quickUrgency}
-                    onChange={(e) => setQuickUrgency(Number(e.target.value))}
-                    className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
-                  >
-                    <option value={2}>2 - 宽裕从容</option>
-                    <option value={5}>5 - 正常推进</option>
-                    <option value={8}>8 - 紧急迫近</option>
-                    <option value={10}>10 - 特急火线</option>
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={quickSubmitting}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{quickSubmitting ? '录入排程中...' : '录入并自动规划'}</span>
-              </button>
-            </form>
-          </div>
-
-          {/* 3. 辅助效率工具快捷入口 */}
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl p-3 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs space-y-1">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20]">
+      {/* 顶部极简操作工具栏 (主流 AI Agent 风格无缝顶栏) */}
+      <header className="h-13 px-3 sm:px-6 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+        {/* 左侧: 移动端侧栏汉堡菜单 + 标题与分类 */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {onOpenMobileMenu && (
             <button
               type="button"
-              onClick={() => setIsWizardOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+              onClick={onOpenMobileMenu}
+              className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              title="打开侧边导航"
             >
-              <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>智能决策向导</span>
+              <Menu className="w-5 h-5" />
             </button>
+          )}
+
+          <div className="flex items-center gap-2 truncate">
+            <span className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">
+              {viewMode === 'matrix' ? '四象限看板' : '待办清单'}
+            </span>
+            <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono hidden sm:inline">
+              · {filterCategories.find((c) => c.key === currentCategory)?.label || '全部待办'} ({filteredTasks.length})
+            </span>
+          </div>
+        </div>
+
+        {/* 右侧: 看板/列表双模态切换 + 搜索框 + 刷新 + 添加任务 */}
+        <div className="flex items-center gap-2">
+          {/* 看板 / 列表快速切换胶囊 */}
+          <div className="flex items-center p-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-xs font-medium border border-gray-200/50 dark:border-neutral-700/60">
             <button
               type="button"
-              onClick={() => setIsStatsOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+              onClick={() => handleToggleViewMode('matrix')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
+                viewMode === 'matrix'
+                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
+              }`}
+              title="切换到四象限直角坐标看板"
             >
-              <PieChart className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>精力复盘分析</span>
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>看板</span>
             </button>
+
             <button
               type="button"
-              onClick={() => setIsBackupOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+              onClick={() => handleToggleViewMode('list')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
+                viewMode === 'list'
+                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
+              }`}
+              title="切换到待办清单列表"
             >
-              <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 dark:text-neutral-400" />
-              <span>数据备份与导出</span>
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>列表</span>
             </button>
           </div>
-        </aside>
 
-        {/* 右侧主视窗: 顶部操作栏 + 核心视窗 (四象限看板 / 待办清单列表 / 日程时间轴) */}
-        <section className="flex-1 min-w-0 w-full flex flex-col gap-2.5 overflow-hidden">
-          {/* 顶部操作条 (Google Workspace 风格) */}
-          <div className="shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl p-2.5 sm:p-3 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs flex flex-wrap items-center justify-between gap-2.5 transition-colors">
-            {/* 分类标题与数量 */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                {filterCategories.find((c) => c.key === activeCategory)?.label || '任务清单'}
-              </span>
-              <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono">
-                (共 {filteredTasks.length} 项)
-              </span>
-            </div>
-
-            {/* 核心视窗三模态切换 Tab (四象限看板 / 待办清单 / 日程时间轴) */}
-            <div className="flex items-center p-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-xs font-medium border border-gray-200/50 dark:border-neutral-700/60">
-              <button
-                type="button"
-                onClick={() => handleSwitchView('matrix')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                  currentView === 'matrix'
-                    ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-                }`}
-                title="切换到四象限直角坐标看板"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>四象限看板</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleSwitchView('list')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                  currentView === 'list'
-                    ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-                }`}
-                title="切换到标准待办清单列表"
-              >
-                <CheckSquare className="w-3.5 h-3.5" />
-                <span>待办列表</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleSwitchView('calendar')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                  currentView === 'calendar'
-                    ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-                }`}
-                title="切换到单日时间轴排程视图"
-              >
-                <CalendarDays className="w-3.5 h-3.5" />
-                <span>日程排程</span>
-              </button>
-            </div>
-
-            {/* 右侧入口: 搜索框 + 刷新 + 新建待办 */}
-            <div className="flex items-center gap-2">
-              <div className="relative w-36 sm:w-48">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索待办..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => fetchTasks()}
-                className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
-                title="刷新任务列表"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingTask(null);
-                  setClickCoords(null);
-                  setIsTaskModalOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-xs hover:shadow transition cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                <span>添加任务</span>
-                <kbd className="hidden sm:inline px-1 py-0.2 rounded text-[10px] bg-blue-700 text-blue-100 font-mono">
-                  N
-                </kbd>
-              </button>
-            </div>
+          {/* 搜索框 */}
+          <div className="relative w-28 sm:w-44">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索待办..."
+              className="w-full pl-7.5 pr-2.5 py-1 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+            />
           </div>
 
-          {/* 主视窗渲染卡片 (零页面外层滚动条，单屏满高) */}
-          <div className="flex-1 min-h-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 shadow-xs overflow-hidden transition-colors">
-            {/* 1. 四象限直角坐标系看板视图 */}
-            {currentView === 'matrix' && (
-              <MatrixBoard
-                tasks={filteredTasks}
-                onToggleComplete={handleToggleComplete}
-                onEdit={handleEditTask}
-                onDelete={handleDeleteTask}
-                onOpenCreateWithCoordinates={handleCreateWithCoords}
-              />
-            )}
+          {/* 刷新按钮 */}
+          <button
+            type="button"
+            onClick={() => fetchTasks()}
+            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            title="刷新任务列表"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
+          </button>
 
-            {/* 2. Google Todo 待办清单列表视图 */}
-            {currentView === 'list' && (
-              <div className="h-full overflow-y-auto divide-y divide-gray-100 dark:divide-neutral-800/80">
+          {/* 新建任务 */}
+          <button
+            type="button"
+            onClick={() => {
+              setEditingTask(null);
+              setClickCoords(null);
+              setIsTaskModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-xs transition cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span className="hidden sm:inline">添加任务</span>
+          </button>
+        </div>
+      </header>
+
+      {/* 核心无缝画布 (全高贴边无外层卡片) */}
+      <div className="flex-1 min-h-0 w-full overflow-hidden p-2 sm:p-3">
+        {/* 1. 四象限直角坐标系看板视图 */}
+        {viewMode === 'matrix' && (
+          <MatrixBoard
+            tasks={filteredTasks}
+            onToggleComplete={handleToggleComplete}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onOpenCreateWithCoordinates={handleCreateWithCoords}
+          />
+        )}
+
+        {/* 2. Google Todo 待办清单列表视图 */}
+        {viewMode === 'list' && (
+          <div className="h-full overflow-y-auto divide-y divide-gray-100 dark:divide-neutral-800/80 rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 bg-white dark:bg-[#1e1f20] scrollbar-thin">
                 {loading ? (
                   <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs">
                     正在加载任务列表...
@@ -844,14 +696,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                 )}
               </div>
             )}
-
-            {/* 3. 周视图日历排程 */}
-            {currentView === 'calendar' && (
-              <CalendarView />
-            )}
           </div>
-        </section>
-      </div>
 
       {/* ===================== 全局交互模态框 ===================== */}
       <TaskModal

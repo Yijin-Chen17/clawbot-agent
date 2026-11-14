@@ -20,6 +20,7 @@ import {
   Bell,
   ChevronRight,
   Sparkles,
+  Menu,
 } from 'lucide-react';
 
 interface WorkSlot {
@@ -149,7 +150,11 @@ function parseWorkSlotsString(input: string): {
   };
 }
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  onOpenMobileMenu?: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -562,6 +567,16 @@ export const SettingsView: React.FC = () => {
   ) => (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
       <div className="flex items-center gap-3">
+        {onOpenMobileMenu && (
+          <button
+            type="button"
+            onClick={onOpenMobileMenu}
+            className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+            title="打开侧边导航"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
           {icon}
         </div>
