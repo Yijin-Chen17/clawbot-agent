@@ -47,7 +47,7 @@ function getQuadrant(importance: number, urgency: number): {
   if (important && urgent) {
     return {
       id: 'q1',
-      name: 'Q1 紧急且重要',
+      name: 'Do First',
       badge: '重要紧急',
       color: 'text-rose-700 dark:text-rose-300',
       bg: 'bg-rose-50 dark:bg-rose-950/40',
@@ -57,7 +57,7 @@ function getQuadrant(importance: number, urgency: number): {
   if (important && !urgent) {
     return {
       id: 'q2',
-      name: 'Q2 重要不紧急',
+      name: 'Schedule',
       badge: '规划深耕',
       color: 'text-blue-700 dark:text-blue-300',
       bg: 'bg-blue-50 dark:bg-blue-950/40',
@@ -67,7 +67,7 @@ function getQuadrant(importance: number, urgency: number): {
   if (!important && urgent) {
     return {
       id: 'q3',
-      name: 'Q3 紧急不重要',
+      name: 'Delegate',
       badge: '批量委派',
       color: 'text-amber-700 dark:text-amber-300',
       bg: 'bg-amber-50 dark:bg-amber-950/40',
@@ -76,7 +76,7 @@ function getQuadrant(importance: number, urgency: number): {
   }
   return {
     id: 'q4',
-    name: 'Q4 不重要不紧急',
+    name: 'Eliminate',
     badge: '琐事备忘',
     color: 'text-gray-600 dark:text-neutral-400',
     bg: 'bg-gray-50 dark:bg-neutral-800/60',
@@ -239,10 +239,10 @@ export const TodoList: React.FC = () => {
 
   const filterCategories = [
     { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q1', label: 'Q1 重要且紧急', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
-    { key: 'q2', label: 'Q2 重要不紧急', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q3', label: 'Q3 紧急不重要', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
-    { key: 'q4', label: 'Q4 不重要不紧急', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
+    { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
+    { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
+    { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
     { key: 'scheduled', label: '已排程日程', icon: Calendar, color: 'text-sky-600 dark:text-sky-400' },
     { key: 'in_progress', label: '进行中任务', icon: Sparkles, color: 'text-emerald-600 dark:text-emerald-400' },
     { key: 'pending_slot', label: '待排期事项', icon: AlertCircle, color: 'text-amber-600 dark:text-amber-400' },

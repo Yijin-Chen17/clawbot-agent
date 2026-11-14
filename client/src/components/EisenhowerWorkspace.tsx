@@ -230,13 +230,13 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     return Array.from(tagSet).sort();
   }, [tasks]);
 
-  // 旧版分类与四象限统计定义
+  // 分类与四象限定义
   const filterCategories = [
     { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q1', label: 'Q1 重要且紧急', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
-    { key: 'q2', label: 'Q2 重要不紧急', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q3', label: 'Q3 紧急不重要', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
-    { key: 'q4', label: 'Q4 不重要不紧急', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
+    { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
+    { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
+    { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
     { key: 'completed', label: '已完成事项', icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
@@ -602,10 +602,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
                     // 象限样式
                     const quadStyles = {
-                      q1: { name: 'Q1 重要且紧急', color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' },
-                      q2: { name: 'Q2 重要不紧急', color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200' },
-                      q3: { name: 'Q3 紧急不重要', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' },
-                      q4: { name: 'Q4 不重要不紧急', color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200' },
+                      q1: { name: 'Do First', color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' },
+                      q2: { name: 'Schedule', color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200' },
+                      q3: { name: 'Delegate', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' },
+                      q4: { name: 'Eliminate', color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200' },
                     }[quad];
 
                     return (

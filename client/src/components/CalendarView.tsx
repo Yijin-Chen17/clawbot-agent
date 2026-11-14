@@ -240,10 +240,10 @@ function layoutDayItems<T extends { start: string; end: string }>(items: T[]): P
 function getTaskQuadrant(importance: number, urgency: number) {
   const imp = importance >= 3;
   const urg = urgency >= 3;
-  if (imp && urg) return { key: 'q1', name: 'Q1 重要且紧急', color: '#EF4444' };
-  if (imp && !urg) return { key: 'q2', name: 'Q2 重要不紧急', color: '#3B82F6' };
-  if (!imp && urg) return { key: 'q3', name: 'Q3 紧急不重要', color: '#F59E0B' };
-  return { key: 'q4', name: 'Q4 不重要不紧急', color: '#9CA3AF' };
+  if (imp && urg) return { key: 'q1', name: 'Do First', color: '#EF4444' };
+  if (imp && !urg) return { key: 'q2', name: 'Schedule', color: '#3B82F6' };
+  if (!imp && urg) return { key: 'q3', name: 'Delegate', color: '#F59E0B' };
+  return { key: 'q4', name: 'Eliminate', color: '#9CA3AF' };
 }
 
 function safeCopyToClipboard(text: string): boolean {

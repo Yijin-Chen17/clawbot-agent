@@ -324,7 +324,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-400">
-          智能排程：黄金深度区优先 Q1/Q2 · 碎片/午后填补 Q3 · 60m 节律切分
+          智能排程：黄金深度区优先 Do First / Schedule · 碎片/午后填补 Delegate · 60m 节律切分
         </div>
       </div>
 
@@ -598,7 +598,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
               <span>未排入今日日程 ({schedulePlan.unscheduledTasks.length})</span>
             </h3>
             <p className="text-[10px] text-slate-400 mb-3">
-              基于精力负荷保护（5.5h 上限）、防切碎规则与 Q4 自动过滤策略暂缓排入：
+              基于精力负荷保护（5.5h 上限）、防切碎规则与 Eliminate 自动过滤策略暂缓排入：
             </p>
             <div className="space-y-2">
               {schedulePlan.unscheduledTasks.map((item) => (

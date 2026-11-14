@@ -87,10 +87,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 四象限分类导航
   const filterCategories = [
     { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q1', label: 'Do First (Q1)', icon: Flame, color: 'text-rose-500' },
-    { key: 'q2', label: 'Schedule (Q2)', icon: Star, color: 'text-blue-500' },
-    { key: 'q3', label: 'Delegate (Q3)', icon: Clock, color: 'text-amber-500' },
-    { key: 'q4', label: 'Eliminate (Q4)', icon: Layers, color: 'text-gray-400 dark:text-neutral-500' },
+    { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-500' },
+    { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-500' },
+    { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-500' },
+    { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-400 dark:text-neutral-500' },
     { key: 'completed', label: '已完成事项', icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
@@ -117,7 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const sidebarContent = (
-    <div className="h-full flex flex-col justify-between select-none">
+    <div className="w-full h-full flex flex-col justify-between select-none overflow-hidden">
       {/* 顶部区域：Brand 标识 + 新建按钮 */}
       <div className="p-4 pb-2 shrink-0">
         <div className="flex items-center justify-between mb-4">
@@ -150,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* 核心行动按钮 (模仿主流 AI Agent 的 New Chat / New Task 按钮) */}
+        {/* 核心行动按钮 (模仿主流 AI Agent 的 New Task 按钮) */}
         <button
           type="button"
           onClick={handleCreateTask}
@@ -165,7 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 中部可滚动导航区域 */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-4 scrollbar-thin">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2 space-y-4 scrollbar-thin">
         {/* 1. 主视图 */}
         <div className="space-y-1">
           <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
@@ -311,49 +311,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* 底部固定区域 (用户需求重点：设置/对接放在左侧边栏最底部，放置一个设置选项) */}
-      <div className="p-3 border-t border-gray-200/80 dark:border-neutral-800 shrink-0 space-y-2">
-        {/* 设置 & 对接 (全部配置入口收口于此) */}
-        <button
-          type="button"
+      {/* 底部固定区域：设置与账户合并 (一体化账号卡片) */}
+      <div className="p-2.5 border-t border-gray-200/80 dark:border-neutral-800 shrink-0">
+        <div
           onClick={() => handleSelectView('settings')}
-          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+          className={`flex items-center justify-between p-2 rounded-xl transition cursor-pointer ${
             activeTab === 'settings'
               ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
               : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
           }`}
+          title="点击进入设置与偏好"
         >
-          <div className="flex items-center gap-2.5">
-            <Settings className={`w-4 h-4 ${activeTab === 'settings' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
-            <span>设置 & 对接</span>
-          </div>
-          <span className="text-[10px] px-1.5 py-0.2 rounded bg-gray-100 dark:bg-neutral-800 text-gray-500 dark:text-neutral-400 font-mono">
-            配置
-          </span>
-        </button>
-
-        {/* 用户资料与外观栏 */}
-        <div className="pt-1.5 border-t border-gray-100 dark:border-neutral-800/60 flex items-center justify-between">
-          {/* 用户信息 */}
-          <div className="flex items-center gap-2 min-w-0 pr-1">
-            <div className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-[11px] shrink-0">
+          {/* 左侧：用户头像与名称、设置状态提示 */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-1">
+            <div className="w-7 h-7 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-2xs">
               {user?.username?.slice(0, 1).toUpperCase()}
             </div>
-            <div className="min-w-0 truncate">
-              <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate block">
-                {user?.username}
-              </span>
+            <div className="min-w-0 flex-1 truncate text-left">
+              <div className="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate leading-tight flex items-center gap-1.5">
+                <span className="truncate">{user?.username}</span>
+                {user?.role === 'admin' && (
+                  <span className="px-1 py-0.2 rounded text-[9px] bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 font-mono shrink-0">
+                    Admin
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-gray-400 dark:text-neutral-500 truncate flex items-center gap-1 mt-0.5">
+                <Settings className={`w-2.5 h-2.5 shrink-0 ${activeTab === 'settings' ? 'text-blue-600 dark:text-blue-400' : ''}`} />
+                <span>设置与偏好</span>
+              </div>
             </div>
           </div>
 
-          {/* 外观模式切换与退出 */}
-          <div className="flex items-center gap-1 shrink-0">
+          {/* 右侧：外观模式切换与退出登录按钮 (防止冒泡进入设置) */}
+          <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
             <div className="relative" ref={themeMenuRef}>
               <button
                 type="button"
                 onClick={() => setThemeMenuOpen(!themeMenuOpen)}
                 title={`当前外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}`}
-                className="p-1.5 text-gray-500 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-100 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition cursor-pointer"
+                className="p-1.5 text-gray-400 hover:text-gray-700 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-gray-200/60 dark:hover:bg-neutral-700/60 rounded-lg transition cursor-pointer"
               >
                 {isDark ? <Moon className="w-3.5 h-3.5 text-blue-400" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
               </button>
@@ -393,7 +390,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               onClick={logout}
               title="退出登录"
-              className="p-1.5 text-gray-400 dark:text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
+              className="p-1.5 text-gray-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
             </button>
@@ -406,7 +403,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* 桌面端常驻左侧边栏 */}
-      <aside className="hidden md:flex w-60 lg:w-64 shrink-0 h-full bg-[#f9fafb] dark:bg-[#18191a] border-r border-gray-200/80 dark:border-neutral-800">
+      <aside className="hidden md:flex w-64 shrink-0 h-full bg-[#f9fafb] dark:bg-[#18191a] border-r border-gray-200/80 dark:border-neutral-800 overflow-hidden">
         {sidebarContent}
       </aside>
 
@@ -417,7 +414,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="relative w-64 max-w-[80vw] h-full bg-[#f9fafb] dark:bg-[#18191a] border-r border-gray-200 dark:border-neutral-800 shadow-2xl z-10">
+          <aside className="relative w-64 max-w-[80vw] h-full bg-[#f9fafb] dark:bg-[#18191a] border-r border-gray-200 dark:border-neutral-800 shadow-2xl z-10 overflow-hidden">
             {sidebarContent}
           </aside>
         </div>

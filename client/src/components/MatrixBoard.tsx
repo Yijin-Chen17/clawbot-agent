@@ -187,23 +187,13 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
               const { leftPercent, topPercent, alignX, alignY, urgency, importance } = calculatePosition(task);
               const isImportant = importance >= 5;
               const isUrgent = urgency >= 5;
-              const quadrantLabel = isImportant ? (isUrgent ? 'Q1' : 'Q2') : (isUrgent ? 'Q3' : 'Q4');
-
-              const qBadgeStyle =
-                quadrantLabel === 'Q1'
-                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-900'
-                  : quadrantLabel === 'Q2'
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-900'
-                  : quadrantLabel === 'Q3'
-                  ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900'
-                  : 'bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300 border-gray-200 dark:border-neutral-700';
 
               const dotColor =
-                quadrantLabel === 'Q1'
+                isImportant && isUrgent
                   ? 'bg-rose-500'
-                  : quadrantLabel === 'Q2'
+                  : isImportant && !isUrgent
                   ? 'bg-blue-600 dark:bg-blue-500'
-                  : quadrantLabel === 'Q3'
+                  : !isImportant && isUrgent
                   ? 'bg-amber-500'
                   : 'bg-gray-400 dark:bg-neutral-500';
 
@@ -227,7 +217,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                     />
                   </div>
 
-                  {/* 任务微卡片 (模仿 oxoxox 经典两行排版 · 纯净无坐标与完成按钮 · 点击打开编辑菜单) */}
+                  {/* 任务微卡片 (模仿 oxoxox 经典两行排版 · 纯净无 Q1/Q2 字样、无坐标分值与完成按钮 · 点击打开编辑菜单) */}
                   <div
                     className={`absolute z-30 transition-all duration-150 group-hover:scale-105 pointer-events-auto ${
                       alignY === 'bottom' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
@@ -243,13 +233,8 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                       className="rounded-xl border border-gray-200/90 dark:border-neutral-700 bg-white/95 dark:bg-[#28292a]/95 backdrop-blur-xs p-2 text-xs shadow-xs hover:border-blue-500/60 dark:hover:border-blue-400/60 hover:shadow-md transition-all w-max min-w-[130px] max-w-[190px] sm:max-w-[220px]"
                       title="点击打开编辑菜单（可完成任务或修改详情）"
                     >
-                      {/* 第一行：象限徽标 + 任务标题 (不显示坐标分值，不显示完成按钮) */}
+                      {/* 第一行：任务标题 (去除 Q1/Q2 等文字描述) */}
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold border shrink-0 ${qBadgeStyle}`}
-                        >
-                          {quadrantLabel}
-                        </span>
                         <span
                           className="truncate font-medium text-[11px] leading-tight text-gray-900 dark:text-gray-100 flex-1"
                           title={task.title}

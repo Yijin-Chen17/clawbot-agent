@@ -67,7 +67,7 @@ const DashboardContent: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 transition-colors">
+    <div className="h-screen w-full overflow-hidden flex bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 transition-colors">
       {/* 主流 AI Agent 风格左侧边栏 */}
       <Sidebar
         activeTab={activeTab}

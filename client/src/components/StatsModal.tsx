@@ -38,34 +38,34 @@ export const StatsModal: React.FC<StatsModalProps> = ({
     if (q1Percent > 35) {
       return {
         title: '⚠️ 处于“救火状态”风险',
-        content: `重要且紧急事项占比已达 ${q1Percent}%（建议控制在 20%~25%）。这说明突发危机较多，容易导致身心疲惫。建议多投入时间到【Q2 重要不紧急】进行前置规划与防患。`,
+        content: `重要且紧急事项占比已达 ${q1Percent}%（建议控制在 20%~25%）。这说明突发危机较多，容易导致身心疲惫。建议多投入时间到【Schedule】进行前置规划与防患。`,
         type: 'warning',
       };
     }
     if (q2Percent >= 50) {
       return {
         title: '🌟 极佳的黄金效能状态！',
-        content: `【Q2 重要不紧急】占比达到 ${q2Percent}%（高产人士理想占比为 60%+）。你正在将核心精力投向长期目标、成长规划与预防性工作，请继续保持！`,
+        content: `【Schedule】占比达到 ${q2Percent}%（高产人士理想占比为 60%+）。你正在将核心精力投向长期目标、成长规划与预防性工作，请继续保持！`,
         type: 'success',
       };
     }
     if (q3Percent > 30) {
       return {
         title: '⚠️ 被外部琐事打扰过多',
-        content: `【Q3 紧急不重要】占比高达 ${q3Percent}%。很多紧急的事情并不代表重要，建议尝试授权委派、设定专注时段或礼貌拒绝。`,
+        content: `【Delegate】占比高达 ${q3Percent}%。很多紧急的事情并不代表重要，建议尝试授权委派、设定专注时段或礼貌拒绝。`,
         type: 'warning',
       };
     }
     if (q4Percent > 20) {
       return {
         title: '⚠️ 存在时间黑洞隐患',
-        content: `【Q4 不重要不紧急】占比 ${q4Percent}%。建议坚决剔除逃避性事务与低价值消耗，把精力腾挪给更有意义的事。`,
+        content: `【Eliminate】占比 ${q4Percent}%。建议坚决剔除逃避性事务与低价值消耗，把精力腾挪给更有意义的事。`,
         type: 'warning',
       };
     }
     return {
       title: '📈 精力结构相对均衡',
-      content: `当前重点放在推进 Q1 交付与扩大 Q2 规划。持续优化时间分配，逐步提升 Q2 长期事项比例。`,
+      content: `当前重点放在推进 Do First 交付与扩大 Schedule 规划。持续优化时间分配，逐步提升 Schedule 长期事项比例。`,
       type: 'info',
     };
   };
