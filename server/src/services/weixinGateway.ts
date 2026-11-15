@@ -5,7 +5,7 @@ import { UserSettings, Task, ConversationState } from '../models/types.js';
 import { parseUserMessageWithLLM } from './llm.js';
 import { scheduleTask, replanUserTasks } from './scheduler.js';
 import { syncAllUserSubscriptions } from './calendarSync.js';
-import { renderCalendarImage, renderTodoListImage } from './cardRenderer.js';
+import { renderCalendarImage, renderWeekCalendarImage, renderTodoListImage } from './cardRenderer.js';
 import { templates } from './clawbot.js';
 import { addDebugLog } from './debugLogger.js';
 
@@ -383,7 +383,7 @@ export async function processWeChatMessage(
 
   const trimmed = content.trim();
 
-  // 1. Direct Trigger Command: "查看日历" / "今日日程" / "刷新日历" / "我的日历"
+  // 1. Direct Trigger Command: "查看日历" / "今日日程" / "刷新日历" / "我的日历" / "周日历" / "本周日历"
   if (
     trimmed === '查看日历' ||
     trimmed === '日历' ||
@@ -393,24 +393,30 @@ export async function processWeChatMessage(
     trimmed === '刷新日历' ||
     trimmed === '我的日历' ||
     trimmed === '日程安排' ||
-    trimmed.includes('查看日历')
+    trimmed === '周日历' ||
+    trimmed === '查看周日历' ||
+    trimmed === '本周日历' ||
+    trimmed === '本周日程' ||
+    trimmed === '一周日程' ||
+    trimmed.includes('查看日历') ||
+    trimmed.includes('周日历')
   ) {
-    addDebugLog('Weixin', 'info', `[用户 #${userId}] 触发指令: 查看并刷新日历`);
+    addDebugLog('Weixin', 'info', `[用户 #${userId}] 触发指令: 查看完整周日历并刷新`);
     const syncRes = await syncAllUserSubscriptions(userId);
     const replanRes = replanUserTasks(userId);
     let imageBuffer: Buffer | undefined;
     try {
-      imageBuffer = await renderCalendarImage(userId);
+      imageBuffer = await renderWeekCalendarImage(userId);
     } catch (e: any) {
-      addDebugLog('Weixin', 'error', `生成日历卡片图片失败: ${e.message}`);
+      addDebugLog('Weixin', 'error', `生成完整周日历图片失败: ${e.message}`);
     }
 
     const replyText =
-      `📅【今日智能日程与排程】\n` +
-      `已自动同步最新外部日历并完成自适应排程！\n` +
+      `📅【完整周智能日历与排程】\n` +
+      `已自动同步外部日历并完成本周自适应排程！\n` +
       `• 外部日程同步：${syncRes.totalEvents} 项\n` +
       `• 待办智能排程：${replanRes.scheduledCount} 项\n` +
-      (imageBuffer ? `日程卡片图已在下方发送 👇` : `(图片生成中...)`);
+      (imageBuffer ? `完整周日历图片已在下方发送 👇` : `(图片生成中...)`);
 
     return {
       replyText,
@@ -471,16 +477,16 @@ export async function processWeChatMessage(
     const replanRes = replanUserTasks(userId);
     let imageBuffer: Buffer | undefined;
     try {
-      imageBuffer = await renderCalendarImage(userId);
+      imageBuffer = await renderWeekCalendarImage(userId);
     } catch (e: any) {
-      addDebugLog('Weixin', 'error', `生成日历卡片图片失败: ${e.message}`);
+      addDebugLog('Weixin', 'error', `生成完整周日历卡片图片失败: ${e.message}`);
     }
 
     const replyText =
       `🔄【自适应重新排程已完成】\n` +
       `已结合最新紧急度、截止时间与外部日程重新排布！\n` +
       `• 共规划任务：${replanRes.scheduledCount} 项${replanRes.failedCount > 0 ? `（${replanRes.failedCount} 项暂无合适时段）` : ''}\n` +
-      (imageBuffer ? `最新日程图已在下方发送 👇` : '');
+      (imageBuffer ? `最新完整周日历图已在下方发送 👇` : '');
 
     return {
       replyText,
@@ -593,10 +599,17 @@ export async function processWeChatMessage(
         ORDER BY scheduled_start ASC
       `).all(userId, todayStart.toISOString(), todayEnd.toISOString()) as Task[];
 
+      let imageBuffer: Buffer | undefined;
+      try {
+        imageBuffer = await renderWeekCalendarImage(userId);
+      } catch (e: any) {
+        addDebugLog('Weixin', 'error', `生成完整周日历图片失败: ${e.message}`);
+      }
+
       const todayStr = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
-      const reply = templates.scheduleQueryList(todayTasks, todayStr);
-      addDebugLog('Scheduler', 'info', `查询今日日程，共找到 ${todayTasks.length} 项`);
-      return { replyText: reply, diagnostics: { intent: parsed.intent, todayTasksCount: todayTasks.length } };
+      const reply = templates.scheduleQueryList(todayTasks, todayStr) + (imageBuffer ? '\n\n📅 完整周日程图已在下方发送 👇' : '');
+      addDebugLog('Scheduler', 'info', `查询日程，共找到今日 ${todayTasks.length} 项，并生成完整周日历图片`);
+      return { replyText: reply, imageBuffer, diagnostics: { intent: parsed.intent, todayTasksCount: todayTasks.length } };
     } else if (parsed.intent === 'create_task') {
       const title = parsed.title || pendingTask?.title || '未命名任务';
       const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
