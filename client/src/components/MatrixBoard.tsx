@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import type { TaskItem } from '../types/task';
+import { useTheme } from '../context/ThemeContext';
 import { 
   Calendar, 
   Clock, 
@@ -19,6 +20,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
   onEdit,
   onOpenCreateWithCoordinates,
 }) => {
+  const { t } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 处理在坐标系任意空白区域点击，快速落位创建
@@ -140,14 +142,14 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
         <div className="absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5">
           <div className="w-0 h-0 border-x-4 border-x-transparent border-b-6 border-b-gray-500 dark:border-b-neutral-400" />
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/95 dark:bg-[#1e1f20]/95 text-rose-700 dark:text-rose-300 border border-gray-200 dark:border-neutral-700 shadow-2xs whitespace-nowrap">
-            Important
+            {t('matrix.important')}
           </span>
         </div>
 
         {/* 下箭头与标签 */}
         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5">
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/95 dark:bg-[#1e1f20]/95 text-gray-600 dark:text-neutral-400 border border-gray-200 dark:border-neutral-700 shadow-2xs whitespace-nowrap">
-            Not Important
+            {t('matrix.not_important')}
           </span>
           <div className="w-0 h-0 border-x-4 border-x-transparent border-t-6 border-t-gray-500 dark:border-t-neutral-400" />
         </div>
@@ -159,14 +161,14 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
         <div className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
           <div className="w-0 h-0 border-y-4 border-y-transparent border-r-6 border-r-gray-500 dark:border-r-neutral-400" />
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/95 dark:bg-[#1e1f20]/95 text-amber-700 dark:text-amber-300 border border-gray-200 dark:border-neutral-700 shadow-2xs whitespace-nowrap">
-            Urgent
+            {t('matrix.urgent')}
           </span>
         </div>
 
         {/* 右箭头与标签 */}
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/95 dark:bg-[#1e1f20]/95 text-blue-700 dark:text-blue-300 border border-gray-200 dark:border-neutral-700 shadow-2xs whitespace-nowrap">
-            Not Urgent
+            {t('matrix.not_urgent')}
           </span>
           <div className="w-0 h-0 border-y-4 border-y-transparent border-l-6 border-l-gray-500 dark:border-l-neutral-400" />
         </div>
@@ -283,7 +285,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
                 <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 dark:bg-[#28292a]/90 border border-gray-200 dark:border-neutral-700 shadow-xs backdrop-blur-xs text-xs text-gray-600 dark:text-neutral-300">
                   <MousePointerClick className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                  <span>点击坐标平面任意位置即可按坐标自动落位添加待办，或按快捷键 <kbd className="px-1 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-700 dark:text-neutral-300 font-mono text-[10px]">N</kbd></span>
+                  <span>{t('matrix.click_to_add')}</span>
                 </div>
               </div>
             )}

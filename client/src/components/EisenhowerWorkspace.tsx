@@ -3,6 +3,7 @@ import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
 import { calculateDynamicUrgency } from '../utils/priorityAlgorithm';
 import { api } from '../api/client';
+import { useTheme } from '../context/ThemeContext';
 import { MatrixBoard } from './MatrixBoard';
 import { TaskModal } from './TaskModal';
 import { WizardModal } from './WizardModal';
@@ -61,6 +62,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
+  const { t } = useTheme();
+
   // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list)
   const [internalCurrentView, setInternalCurrentView] = useState<'matrix' | 'list'>(propsCurrentView);
   const viewMode = propsCurrentView || internalCurrentView;
@@ -232,12 +235,12 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   // 分类与四象限定义
   const filterCategories = [
-    { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
-    { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
-    { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
-    { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
-    { key: 'completed', label: '已完成事项', icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
+    { key: 'all', label: t('nav.all_tasks'), icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'q1', label: t('quad.do_first'), icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
+    { key: 'q2', label: t('quad.schedule'), icon: Star, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'q3', label: t('quad.delegate'), icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
+    { key: 'q4', label: t('quad.eliminate'), icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
+    { key: 'completed', label: t('nav.completed_tasks'), icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
   // 计算各分类计数
@@ -486,10 +489,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
           <div className="flex items-center gap-2 truncate">
             <span className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">
-              {viewMode === 'matrix' ? '四象限看板' : '待办清单'}
+              {viewMode === 'matrix' ? t('nav.matrix') : t('nav.list')}
             </span>
             <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono hidden sm:inline">
-              · {filterCategories.find((c) => c.key === currentCategory)?.label || '全部待办'} ({filteredTasks.length})
+              · {filterCategories.find((c) => c.key === currentCategory)?.label || t('nav.all_tasks')} ({filteredTasks.length})
             </span>
           </div>
         </div>
@@ -506,10 +509,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                   ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
                   : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
               }`}
-              title="切换到四象限直角坐标看板"
+              title={t('general.view_matrix_desc')}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
-              <span>看板</span>
+              <span>{t('nav.matrix')}</span>
             </button>
 
             <button
@@ -520,10 +523,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                   ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
                   : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
               }`}
-              title="切换到待办清单列表"
+              title={t('general.view_list_desc')}
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              <span>列表</span>
+              <span>{t('nav.list')}</span>
             </button>
           </div>
 
@@ -534,7 +537,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索待办..."
+              placeholder={t('workspace.search_placeholder')}
               className="w-full pl-7.5 pr-2.5 py-1 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
             />
           </div>
@@ -544,7 +547,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             type="button"
             onClick={() => fetchTasks()}
             className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
-            title="刷新任务列表"
+            title={t('workspace.refresh_tasks')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
           </button>
@@ -560,7 +563,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             className="flex items-center gap-1.5 px-3.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-xs transition cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span className="hidden sm:inline">添加任务</span>
+            <span className="hidden sm:inline">{t('workspace.add_task')}</span>
           </button>
         </div>
       </header>
@@ -583,16 +586,16 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           <div className="h-full overflow-y-auto divide-y divide-gray-100 dark:divide-neutral-800/80 rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 bg-white dark:bg-[#1e1f20] scrollbar-thin">
                 {loading ? (
                   <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs">
-                    正在加载任务列表...
+                    {t('common.loading')}
                   </div>
                 ) : filteredTasks.length === 0 ? (
                   <div className="p-12 text-center space-y-2">
                     <CheckCircle2 className="w-10 h-10 text-gray-300 dark:text-neutral-600 mx-auto stroke-[1.5]" />
                     <div className="text-gray-700 dark:text-neutral-300 font-medium text-sm">
-                      {searchQuery ? '未检索到匹配的待办' : '该分类下暂无事项'}
+                      {searchQuery ? t('workspace.no_search_results') : t('workspace.no_tasks')}
                     </div>
                     <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
-                      微信发送给时间规划助手如：“明天下午3点排个开会”，或点击右上角添加。
+                      {t('workspace.empty_hint')}
                     </p>
                   </div>
                 ) : (
@@ -602,10 +605,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
                     // 象限样式
                     const quadStyles = {
-                      q1: { name: 'Do First', color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' },
-                      q2: { name: 'Schedule', color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200' },
-                      q3: { name: 'Delegate', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' },
-                      q4: { name: 'Eliminate', color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200' },
+                      q1: { name: t('quad.do_first'), color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' },
+                      q2: { name: t('quad.schedule'), color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200' },
+                      q3: { name: t('quad.delegate'), color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' },
+                      q4: { name: t('quad.eliminate'), color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200' },
                     }[quad];
 
                     return (
@@ -623,7 +626,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                                 ? 'bg-blue-600 dark:bg-blue-500 border-blue-600 dark:border-blue-500 text-white'
                                 : 'border-gray-400 dark:border-neutral-500 hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-transparent hover:text-blue-600'
                             }`}
-                            title={isCompleted ? '标为未完成' : '标为完成'}
+                            title={isCompleted ? t('workspace.mark_uncompleted') : t('workspace.mark_completed')}
                           >
                             <Check className="w-3 h-3 stroke-[3]" />
                           </button>
@@ -648,7 +651,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                             {/* 附属信息栏 */}
                             <div className="mt-1 flex items-center gap-3 text-[11px] text-gray-400 dark:text-neutral-500 flex-wrap">
                               <span className="font-mono text-gray-500 dark:text-neutral-400">
-                                分值: ({task.urgency.toFixed(1)}, {task.importance.toFixed(1)})
+                                ({task.urgency.toFixed(1)}, {task.importance.toFixed(1)})
                               </span>
                               {task.dueDate && (
                                 <span className="flex items-center gap-1 text-gray-500 dark:text-neutral-400">
@@ -659,7 +662,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                               {task.estimatedMinutes && (
                                 <span className="flex items-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  <span>{task.estimatedMinutes} 分钟</span>
+                                  <span>{task.estimatedMinutes} {t('general.minutes')}</span>
                                 </span>
                               )}
                               {task.description && (
@@ -677,7 +680,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                             type="button"
                             onClick={() => handleEditTask(task)}
                             className="p-1 rounded-full text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-                            title="编辑"
+                            title={t('common.edit')}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -685,7 +688,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                             type="button"
                             onClick={() => handleDeleteTask(task.id)}
                             className="p-1 rounded-full text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                            title="删除"
+                            title={t('common.delete')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

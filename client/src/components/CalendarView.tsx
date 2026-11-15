@@ -279,7 +279,7 @@ interface CalendarViewProps {
 
 export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
   const { user } = useAuth();
-  const { isDark } = useTheme();
+  const { isDark, t } = useTheme();
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -583,7 +583,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               onClick={() => setWeekStart(startOfWeek(new Date()))}
               className="px-3 py-1 text-xs font-semibold text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 border-x border-gray-200/80 dark:border-neutral-700/80 transition cursor-pointer"
             >
-              今天
+              {t('common.today')}
             </button>
             <button
               onClick={() => setWeekStart((prev) => addDays(prev, 7))}
@@ -604,27 +604,27 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           {loading && (
             <span className="text-xs text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1.5">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              <span>同步中...</span>
+              <span>{t('common.loading')}</span>
             </span>
           )}
 
           <button
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
-            title="拉取最新外部日程并按任务紧急度自适应重新排程"
+            title={t('calendar.replan')}
             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
-            <span>{replanLoading ? '排程计算中...' : '同步并自适应重排'}</span>
+            <span>{replanLoading ? t('calendar.replanning') : t('calendar.replan')}</span>
           </button>
 
           <button
             onClick={() => setShowExportModal(true)}
-            title="导出与订阅专属待办日历 (支持 Apple / Google / Outlook / 离线 .ics)"
+            title={t('calendar.export_btn')}
             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span>导出订阅日历</span>
+            <span>{t('calendar.export_btn')}</span>
           </button>
 
           <button
@@ -632,7 +632,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200/80 dark:border-neutral-700/80 rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
           >
             <CalendarIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-            <span>日历源管理</span>
+            <span>{t('calendar.manage_btn')}</span>
             {subscriptions.length > 0 && (
               <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
                 {subscriptions.length}
@@ -643,7 +643,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           <button
             onClick={() => fetchData()}
             className="p-2 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 border border-gray-200/80 dark:border-neutral-700/80 rounded-full shadow-2xs transition cursor-pointer"
-            title="刷新日程"
+            title={t('calendar.refresh_btn')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -656,11 +656,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
         <aside className="w-full lg:w-56 xl:w-64 shrink-0 flex flex-col bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-800/80 rounded-2xl shadow-xs overflow-hidden transition-colors">
           <div className="px-3.5 py-2.5 border-b border-gray-100 dark:border-neutral-800 flex items-baseline justify-between bg-gray-50/50 dark:bg-[#252627]/50">
             <h3 className="text-xs font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-              <span>截止待办</span>
+              <span>{t('calendar.due_title')}</span>
               <span className="text-[10px] text-gray-400 font-normal">Due</span>
             </h3>
             <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 font-semibold font-mono">
-              本周安排
+              {t('calendar.week_schedule')}
             </span>
           </div>
 
@@ -670,7 +670,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               <div className="space-y-1.5">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 px-1 flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" />
-                  <span>逾期未完成 ({overdueTasks.length})</span>
+                  <span>{t('calendar.overdue')} ({overdueTasks.length})</span>
                 </div>
                 {overdueTasks.map((t) => {
                   const quad = getTaskQuadrant(t.importance, t.urgency);
@@ -748,7 +748,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
             {overdueTasks.length === 0 && dueGroups.length === 0 && (
               <div className="p-6 text-center text-gray-400 dark:text-neutral-500 text-xs">
-                本周暂无截止待办
+                {t('calendar.no_due')}
               </div>
             )}
           </div>
@@ -803,7 +803,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
             {/* Row 2: Sticky All-Day Row */}
             <div className="sticky top-[44px] z-20 min-h-[28px] bg-gray-50 dark:bg-[#252627] border-b border-gray-200 dark:border-neutral-800 flex items-center justify-end px-2 text-[9px] uppercase font-bold text-gray-400 font-mono tracking-wider">
-              全天
+              {t('calendar.all_day')}
             </div>
             {dayData.map((d) => (
               <div

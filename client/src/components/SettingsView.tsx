@@ -202,6 +202,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     setDefaultTaskDuration,
     soundEnabled,
     setSoundEnabled,
+    t,
   } = useTheme();
 
   // 个人账户管理状态
@@ -693,57 +694,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const navMenuItems = [
     {
       id: 'account' as const,
-      label: '个人账户管理',
-      desc: '头像、昵称、密码修改与退出',
+      label: t('set.tab_account'),
+      desc: t('set.tab_account_desc'),
       icon: User,
       isDone: isAccountDone,
     },
     {
       id: 'general' as const,
-      label: '通用偏好设置',
-      desc: '语言、默认视图与任务时长',
+      label: t('set.tab_general'),
+      desc: t('set.tab_general_desc'),
       icon: Sliders,
       isDone: true,
     },
     {
       id: 'appearance' as const,
-      label: '外观主题定制',
-      desc: '深浅模式、主题配色与风格',
+      label: t('set.tab_appearance'),
+      desc: t('set.tab_appearance_desc'),
       icon: Palette,
       isDone: true,
     },
     {
       id: 'weixin' as const,
-      label: '微信 Clawbot 对接',
-      desc: '扫码配对与微信消息通知',
+      label: t('set.tab_weixin'),
+      desc: t('set.tab_weixin_desc'),
       icon: Bot,
       isDone: isWeixinDone,
     },
     {
       id: 'scheduler' as const,
-      label: '日程规划算法偏好',
-      desc: '作息时段与 24h 可视化',
+      label: t('set.tab_scheduler'),
+      desc: t('set.tab_scheduler_desc'),
       icon: Clock,
       isDone: isSchedulerDone,
     },
     {
       id: 'notification' as const,
-      label: '提醒通知与前置周期',
-      desc: '任务开始/结束提前提醒',
+      label: t('set.tab_notification'),
+      desc: t('set.tab_notification_desc'),
       icon: Bell,
       isDone: isNotificationDone,
     },
     {
       id: 'llm' as const,
-      label: '大模型 DeepSeek',
-      desc: '语义抽取与任务解析 API',
+      label: t('set.tab_llm'),
+      desc: t('set.tab_llm_desc'),
       icon: Brain,
       isDone: isLlmDone,
     },
     {
       id: 'calendar' as const,
-      label: '外部日历订阅源',
-      desc: '双向防冲突与 iCal 导出',
+      label: t('set.tab_calendar'),
+      desc: t('set.tab_calendar_desc'),
       icon: Calendar,
       isDone: isCalendarDone,
     },
@@ -789,7 +790,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-50 dark:bg-[#28292a] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-full shadow-2xs transition disabled:opacity-50 cursor-pointer"
           >
             {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <Save className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
-            <span>{saving ? '保存中...' : '保存更改'}</span>
+            <span>{saving ? t('common.saving') : t('common.save')}</span>
           </button>
         )}
 
@@ -798,7 +799,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           onClick={handleNextStep}
           className="flex items-center gap-1 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold text-xs rounded-full shadow-xs transition cursor-pointer"
         >
-          <span>{activeSection === 'calendar' ? '回到第一步' : '下一步'}</span>
+          <span>{activeSection === 'calendar' ? t('common.back') : t('common.next')}</span>
           <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
         </button>
       </div>
@@ -810,7 +811,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       {saveSuccess && (
         <div className="shrink-0 flex items-center gap-2 px-3.5 py-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-medium animate-fadeIn">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span>配置已成功保存！算法排程与微信提醒设置已即时生效。</span>
+          <span>{t('common.saved')}</span>
         </div>
       )}
 
@@ -842,9 +843,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         {/* Left Column: Vertical Nav List */}
         <aside className="hidden lg:flex flex-col w-72 xl:w-80 shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-3 shadow-xs space-y-1.5 overflow-y-auto scrollbar-thin">
           <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5 flex items-center justify-between">
-            <span>配置目录</span>
+            <span>{t('set.catalog')}</span>
             <span className="font-mono text-[10px] text-gray-500 dark:text-neutral-400">
-              {navMenuItems.filter((i) => i.isDone).length}/{navMenuItems.length} 已配置
+              {navMenuItems.filter((i) => i.isDone).length}/{navMenuItems.length} {t('common.configured')}
             </span>
           </div>
           {navMenuItems.map((item) => {
@@ -875,12 +876,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     {item.isDone ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300/70 dark:border-emerald-800 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        已完成
+                        {t('common.completed')}
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        未完成
+                        {t('common.pending')}
                       </span>
                     )}
                   </div>
@@ -902,8 +903,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <User className="w-5 h-5" />
                 </div>,
-                '个人账户管理',
-                '管理您的头像、对外展示昵称与安全登录密码（登录账号唯一不可修改）',
+                t('account.title'),
+                t('account.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
                   @{user?.username}
                 </span>,
@@ -927,14 +928,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 1. 头像上传 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  个人头像
+                  {t('account.avatar')}
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-5">
                   <div className="relative group shrink-0">
                     {user?.avatar_url ? (
                       <img
                         src={user.avatar_url}
-                        alt="用户头像"
+                        alt="Avatar"
                         className="w-20 h-20 rounded-full object-cover ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md"
                       />
                     ) : (
@@ -969,11 +970,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         ) : (
                           <Upload className="w-3.5 h-3.5" />
                         )}
-                        <span>{avatarUploading ? '上传中...' : '上传新头像'}</span>
+                        <span>{avatarUploading ? t('account.avatar_uploading') : t('account.avatar_upload')}</span>
                       </button>
                     </div>
                     <p className="text-[11px] text-gray-500 dark:text-neutral-400 leading-relaxed">
-                      支持 JPG, PNG, WEBP, GIF 格式。文件大小严格限制在 <strong>2MB</strong> 以内。上传后全站即时同步生效。
+                      {t('account.avatar_tip')}
                     </p>
                   </div>
                 </div>
@@ -982,13 +983,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 2. 账号与昵称设置 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  账号与昵称
+                  {t('account.user_info')}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* 登录账号（只读） */}
                   <div>
                     <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-                      登录账号 (Username)
+                      {t('account.username')}
                     </label>
                     <div className="relative">
                       <input
@@ -1000,21 +1001,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       <Lock className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
                     </div>
                     <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      系统唯一底层识别账号，注册后严格不可修改。
+                      {t('account.username_tip')}
                     </span>
                   </div>
 
                   {/* 对外展示昵称 */}
                   <div>
                     <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-                      展示昵称 (Nickname)
+                      {t('account.nickname')}
                     </label>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={nickname}
                         onChange={(e) => setNickname(e.target.value)}
-                        placeholder="请输入对外展示的昵称"
+                        placeholder={t('account.nickname_placeholder')}
                         maxLength={30}
                         className="flex-1 px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                       />
@@ -1024,11 +1025,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         disabled={savingProfile || nickname === user?.nickname}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer shrink-0"
                       >
-                        {savingProfile ? '保存中...' : '保存昵称'}
+                        {savingProfile ? t('common.saving') : t('account.save_nickname')}
                       </button>
                     </div>
                     <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      用于左侧边栏、看板与日历顶部展示，可随时修改。
+                      {t('account.nickname_tip')}
                     </span>
                   </div>
                 </div>
@@ -1039,7 +1040,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>修改登录密码</span>
+                    <span>{t('account.password_title')}</span>
                   </div>
                   <button
                     type="button"
@@ -1047,7 +1048,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     className="text-[11px] text-gray-500 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    <span>{showPassword ? '隐藏明文' : '显示明文'}</span>
+                    <span>{showPassword ? t('account.hide_password') : t('account.show_password')}</span>
                   </button>
                 </div>
 
@@ -1069,26 +1070,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
-                        原密码
+                        {t('account.old_password')}
                       </label>
                       <input
                         type={showPassword ? 'text' : 'password'}
                         value={oldPassword}
                         onChange={(e) => setOldPassword(e.target.value)}
-                        placeholder="输入当前使用的密码"
+                        placeholder={t('account.old_password_placeholder')}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                       />
                     </div>
 
                     <div>
                       <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
-                        新密码 (不少于 6 位)
+                        {t('account.new_password')}
                       </label>
                       <input
                         type={showPassword ? 'text' : 'password'}
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="至少 6 位字符"
+                        placeholder={t('account.new_password_placeholder')}
                         minLength={6}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                       />
@@ -1096,13 +1097,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
                     <div>
                       <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
-                        确认新密码
+                        {t('account.confirm_password')}
                       </label>
                       <input
                         type={showPassword ? 'text' : 'password'}
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="再次输入新密码"
+                        placeholder={t('account.confirm_password_placeholder')}
                         minLength={6}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                       />
@@ -1115,7 +1116,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       disabled={changingPassword || !oldPassword || !newPassword}
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
                     >
-                      {changingPassword ? '正在更新哈希...' : '确认更新密码'}
+                      {changingPassword ? t('account.updating_password') : t('account.change_password_btn')}
                     </button>
                   </div>
                 </form>
@@ -1125,10 +1126,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="p-5 rounded-2xl bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h4 className="text-xs font-bold text-rose-800 dark:text-rose-300">
-                    退出当前账号
+                    {t('account.logout_title')}
                   </h4>
                   <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
-                    退出后将清除本设备的登录会话凭据，下次使用需重新输入账号与密码。
+                    {t('account.logout_desc')}
                   </p>
                 </div>
                 <button
@@ -1137,7 +1138,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>退出账号登录</span>
+                  <span>{t('account.logout_btn')}</span>
                 </button>
               </div>
             </div>
@@ -1150,10 +1151,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
                   <Sliders className="w-5 h-5" />
                 </div>,
-                '通用偏好设置',
-                '配置界面交互语言、默认初始视图、默认任务时长与声音特效',
+                t('general.title'),
+                t('general.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
-                  即时生效
+                  {t('general.instant_badge')}
                 </span>,
                 true
               )}
@@ -1162,7 +1163,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>界面语言 (Interface Language)</span>
+                  <span>{t('general.lang_title')}</span>
                 </div>
                 <div className="max-w-xs pt-1">
                   <select
@@ -1175,20 +1176,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </select>
                 </div>
                 <p className="text-[10px] text-gray-400 dark:text-neutral-500">
-                  选择系统的核心展示语言，全站即时生效。
+                  {t('general.lang_tip')}
                 </p>
               </div>
 
               {/* 2. 默认起始视图 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  默认打开视图 (Default View)
+                  {t('general.view_title')}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   {[
-                    { id: 'matrix' as const, name: '四象限看板', desc: '直角坐标矩阵，直观轻重缓急' },
-                    { id: 'list' as const, name: '待办清单', desc: 'Google Todo 式极简清单' },
-                    { id: 'calendar' as const, name: '日历日程', desc: '一周时间块排程全览' },
+                    { id: 'matrix' as const, name: t('general.view_matrix'), desc: t('general.view_matrix_desc') },
+                    { id: 'list' as const, name: t('general.view_list'), desc: t('general.view_list_desc') },
+                    { id: 'calendar' as const, name: t('general.view_calendar'), desc: t('general.view_calendar_desc') },
                   ].map((v) => (
                     <button
                       key={v.id}
@@ -1213,10 +1214,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 3. 默认新建任务耗时 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  默认待办耗时 (Default Duration)
+                  {t('general.duration_title')}
                 </div>
                 <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                  新建事项或从微信提取任务未指定时长时，算法自动分配的初始时间块大小：
+                  {t('general.duration_tip')}
                 </p>
                 <div className="flex flex-wrap gap-2.5 pt-1">
                   {[30, 45, 60, 90].map((mins) => (
@@ -1230,7 +1231,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
                       }`}
                     >
-                      {mins} 分钟 {mins === 60 ? '(推荐)' : ''}
+                      {mins} {t('general.minutes')} {mins === 60 ? `(${t('common.recommended')})` : ''}
                     </button>
                   ))}
                 </div>
@@ -1244,10 +1245,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </div>
                   <div>
                     <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
-                      完成任务音效提示
+                      {t('general.sound_title')}
                     </div>
                     <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">
-                      在四象限或待办列表中标记完成事项时，播放轻量愉悦的触感音效
+                      {t('general.sound_desc')}
                     </div>
                   </div>
                 </div>
@@ -1270,23 +1271,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   <Keyboard className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>全局快捷键速查</span>
+                  <span>{t('general.shortcuts_title')}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
-                    <span className="text-xs text-gray-700 dark:text-neutral-300">新建待办事项</span>
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_new')}</span>
                     <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       N
                     </kbd>
                   </div>
                   <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
-                    <span className="text-xs text-gray-700 dark:text-neutral-300">关闭弹窗 / 取消</span>
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_close')}</span>
                     <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       Esc
                     </kbd>
                   </div>
                   <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
-                    <span className="text-xs text-gray-700 dark:text-neutral-300">提交表单 / 确定</span>
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_submit')}</span>
                     <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       Enter
                     </kbd>
@@ -1303,10 +1304,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
                   <Palette className="w-5 h-5" />
                 </div>,
-                '外观主题定制',
-                '深浅主题色彩模式、系统品牌主色调与界面排版风格',
+                t('appearance.title'),
+                t('appearance.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300">
-                  即时预览
+                  {t('appearance.preview_badge')}
                 </span>,
                 true
               )}
@@ -1314,13 +1315,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 1. 亮暗模式切换 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  色彩模式 (Color Mode)
+                  {t('appearance.mode_title')}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   {[
-                    { id: 'light' as const, label: '浅色模式', icon: Sun, desc: '明朗清爽象牙白' },
-                    { id: 'dark' as const, label: '深色模式', icon: Moon, desc: '沉浸护眼暗夜黑' },
-                    { id: 'system' as const, label: '跟随系统', icon: Monitor, desc: '自动匹配操作系统' },
+                    { id: 'light' as const, label: t('appearance.mode_light'), icon: Sun, desc: t('appearance.mode_light_desc') },
+                    { id: 'dark' as const, label: t('appearance.mode_dark'), icon: Moon, desc: t('appearance.mode_dark_desc') },
+                    { id: 'system' as const, label: t('appearance.mode_system'), icon: Monitor, desc: t('appearance.mode_system_desc') },
                   ].map((item) => {
                     const Icon = item.icon;
                     const isSelected = themeMode === item.id;
@@ -1352,16 +1353,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 2. 主题强调配色 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  品牌主强调色 (Accent Color)
+                  {t('appearance.accent_title')}
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
                   {[
-                    { id: 'blue' as const, name: '经典科技蓝', hex: '#2563eb' },
-                    { id: 'emerald' as const, name: '自然生机绿', hex: '#059669' },
-                    { id: 'violet' as const, name: '优雅紫罗兰', hex: '#7c3aed' },
-                    { id: 'amber' as const, name: '阳光活力橙', hex: '#d97706' },
-                    { id: 'rose' as const, name: '热烈玫瑰红', hex: '#e11d48' },
-                    { id: 'neutral' as const, name: '极简中性灰', hex: '#374151' },
+                    { id: 'blue' as const, name: t('appearance.accent_blue'), hex: '#2563eb' },
+                    { id: 'emerald' as const, name: t('appearance.accent_emerald'), hex: '#059669' },
+                    { id: 'violet' as const, name: t('appearance.accent_violet'), hex: '#7c3aed' },
+                    { id: 'amber' as const, name: t('appearance.accent_amber'), hex: '#d97706' },
+                    { id: 'rose' as const, name: t('appearance.accent_rose'), hex: '#e11d48' },
+                    { id: 'neutral' as const, name: t('appearance.accent_neutral'), hex: '#374151' },
                   ].map((c) => {
                     const isSelected = themeColor === c.id;
                     return (
@@ -1392,19 +1393,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 3. 界面排版紧凑度风格 */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  排版紧凑度 (Display Density)
+                  {t('appearance.density_title')}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   {[
                     {
                       id: 'comfortable' as const,
-                      title: '舒适模式 (Comfortable)',
-                      desc: '间距舒朗，视觉开阔，适合高分辨率桌面端与日常浏览',
+                      title: t('appearance.density_comfortable'),
+                      desc: t('appearance.density_comfortable_desc'),
                     },
                     {
                       id: 'compact' as const,
-                      title: '紧凑模式 (Compact)',
-                      desc: '间距紧密，信息密集，可在单屏内呈现更多任务与日程项',
+                      title: t('appearance.density_compact'),
+                      desc: t('appearance.density_compact_desc'),
                     },
                   ].map((d) => {
                     const isSelected = displayDensity === d.id;
@@ -1439,16 +1440,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                   <Bot className="w-5 h-5" />
                 </div>,
-                '微信 Clawbot 对接',
-                '扫码绑定个人微信，日程提醒、排程进度与长图预览将直接下发到手机微信',
+                t('weixin.title'),
+                t('weixin.subtitle'),
                 wxConnected ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    已连接
+                    {t('weixin.connected')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    等待扫码配对
+                    {t('weixin.waiting_scan')}
                   </span>
                 )
               )}
@@ -1462,10 +1463,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       </div>
                       <div>
                         <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">
-                          {wxNickname ? `已绑定微信：${wxNickname}` : '已绑定微信账号'}
+                          {wxNickname ? `${t('weixin.bound_account')}：${wxNickname}` : t('weixin.bound_account')}
                         </h3>
                         <p className="text-xs font-mono text-gray-500 dark:text-neutral-400 mt-0.5 truncate max-w-sm">
-                          通讯 ID: {wxUserId || '已加密保护'}
+                          {t('weixin.comm_id')}: {wxUserId || t('weixin.encrypted')}
                         </p>
                       </div>
                     </div>
@@ -1478,7 +1479,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         className="flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-full shadow-2xs transition disabled:opacity-50 cursor-pointer"
                       >
                         {testSending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
-                        <span>{testSending ? '发送中...' : '测试微信通知'}</span>
+                        <span>{testSending ? t('weixin.testing') : t('weixin.test_btn')}</span>
                       </button>
                       <button
                         type="button"
@@ -1486,7 +1487,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         className="flex items-center gap-1.5 px-4 py-2 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900 font-medium text-xs rounded-full transition cursor-pointer"
                       >
                         <LogOut className="w-3.5 h-3.5" />
-                        <span>解绑账号</span>
+                        <span>{t('weixin.unbind_btn')}</span>
                       </button>
                     </div>
                   </div>
@@ -1500,21 +1501,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
                   <div className="text-xs text-gray-600 dark:text-neutral-400 bg-white/80 dark:bg-[#1e1f20]/60 p-4 rounded-xl border border-gray-200/50 dark:border-neutral-700/50 leading-relaxed space-y-2">
                     <div className="font-semibold text-gray-800 dark:text-neutral-200 flex items-center gap-1.5">
-                      <span>💡 微信机器人使用指南与指令：</span>
+                      <span>{t('weixin.guide_title')}</span>
                     </div>
                     <ul className="list-disc list-inside space-y-1 text-xs pl-1">
-                      <li>
-                        <strong className="text-gray-800 dark:text-gray-200">安排日程：</strong>发送如“帮我安排明天下午写报告两小时，加急5分，周三前交”，AI 自动提取关键要素并插入空闲时段。
-                      </li>
-                      <li>
-                        <strong className="text-gray-800 dark:text-gray-200">查看日历：</strong>发送“查看日历”，Clawbot 将即时生成当天日历日程图片发送至微信。
-                      </li>
-                      <li>
-                        <strong className="text-gray-800 dark:text-gray-200">查看任务：</strong>发送“查看任务”，Clawbot 将生成四象限 Todo List 视觉卡片发送至微信。
-                      </li>
-                      <li>
-                        <strong className="text-gray-800 dark:text-gray-200">任务结项：</strong>在任务结束前收到询问时，回复“已完成”即可快速更新状态。
-                      </li>
+                      <li>{t('weixin.guide_schedule')}</li>
+                      <li>{t('weixin.guide_cal')}</li>
+                      <li>{t('weixin.guide_task')}</li>
+                      <li>{t('weixin.guide_chat')}</li>
                     </ul>
                   </div>
                 </div>
@@ -1526,7 +1519,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       {qrStatus === 'loading' && (
                         <div className="flex flex-col items-center gap-2 text-gray-400 text-xs">
                           <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-                          <span>正在获取登录二维码...</span>
+                          <span>{t('common.loading')}</span>
                         </div>
                       )}
 
@@ -1540,14 +1533,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                               includeMargin={false}
                             />
                           ) : (
-                            <div className="text-xs text-gray-400">二维码加载中...</div>
+                            <div className="text-xs text-gray-400">{t('common.loading')}</div>
                           )}
 
                           {qrStatus === 'scaned' && (
                             <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center text-center p-2 rounded-xl">
                               <CheckCircle2 className="w-8 h-8 text-emerald-600 animate-bounce mb-1" />
-                              <span className="text-sm font-bold text-gray-900">扫码成功</span>
-                              <span className="text-xs text-gray-500">请在手机微信上点击【确认】</span>
+                              <span className="text-sm font-bold text-gray-900">{t('common.success')}</span>
+                              <span className="text-xs text-gray-500">{t('weixin.qr_click_confirm')}</span>
                             </div>
                           )}
                         </div>
@@ -1556,12 +1549,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       {qrStatus === 'expired' && (
                         <div className="flex flex-col items-center gap-2 text-center p-3">
                           <AlertCircle className="w-8 h-8 text-amber-500" />
-                          <span className="text-xs text-gray-600 font-semibold">二维码已过期</span>
+                          <span className="text-xs text-gray-600 font-semibold">Expired</span>
                           <button
                             onClick={fetchQrCode}
                             className="text-xs text-blue-600 hover:underline font-bold"
                           >
-                            点击重新生成
+                            {t('weixin.qr_retry')}
                           </button>
                         </div>
                       )}
@@ -1573,7 +1566,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       className="mt-3 flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
-                      <span>刷新二维码</span>
+                      <span>{t('weixin.qr_retry')}</span>
                     </button>
                   </div>
 
@@ -1582,22 +1575,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <div>
                       <div className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-gray-100 mb-1">
                         <QrCode className="w-4 h-4 text-emerald-600" />
-                        <span>微信扫码免密配对流程</span>
+                        <span>{t('weixin.qr_title')}</span>
                       </div>
                       <p className="text-xs text-gray-500 dark:text-neutral-400 leading-relaxed">
-                        手机微信扫一扫即可配对微信 Clawbot，实现日程双向联动：
+                        {t('weixin.qr_subtitle')}
                       </p>
                     </div>
 
                     <ol className="space-y-1.5 text-xs text-gray-600 dark:text-neutral-300 list-decimal list-inside leading-relaxed pl-1">
-                      <li>手机打开微信，点击右上角【+】号选择【扫一扫】；</li>
-                      <li>扫描左侧二维码，在手机上确认【允许】；</li>
-                      <li>配对完成后系统将自动开启微信消息监听与主动任务提醒服务。</li>
+                      <li>{t('weixin.qr_step1')}</li>
+                      <li>{t('weixin.qr_step2')}</li>
+                      <li>{t('weixin.qr_step3')}</li>
                     </ol>
 
                     <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                      <span>当前状态：{qrStatusMsg}</span>
+                      <span>{qrStatusMsg}</span>
                     </div>
                   </div>
                 </div>
@@ -1612,11 +1605,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Clock className="w-5 h-5" />
                 </div>,
-                '日程规划算法偏好',
-                '配置工作作息时段、24小时可用工时分布与任务缓冲间隔',
+                t('scheduler.title'),
+                t('scheduler.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  已完成
+                  {t('scheduler.active_badge')}
                 </span>
               )}
 
@@ -1624,13 +1617,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 mb-1.5">
-                    <span>自定义工作时段 (手动输入)</span>
+                    <span>{t('scheduler.work_slots_title')}</span>
                   </label>
                   <input
                     type="text"
                     value={workSlotsText}
                     onChange={(e) => setWorkSlotsText(e.target.value)}
-                    placeholder="00:00-02:00, 13:00-18:00"
+                    placeholder={t('scheduler.work_slots_placeholder')}
                     className={`w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 focus:bg-white dark:focus:bg-[#232425] outline-none transition ${
                       parsedSlotsInfo.error
                         ? 'border-rose-300 dark:border-rose-700 focus:ring-2 focus:ring-rose-400/20'
@@ -1644,7 +1637,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
-                      格式形如 <span className="font-mono text-gray-600 dark:text-neutral-300 font-semibold">00:00-02:00, 13:00-18:00</span>。日程将只安排在亮色时段中，支持跨夜与多时段。
+                      {t('scheduler.work_slots_desc')}
                     </p>
                   )}
                 </div>
@@ -1653,22 +1646,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="p-4 bg-gray-50/90 dark:bg-[#28292a]/60 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
                     <div className="flex items-center gap-3">
-                      <span className="font-bold text-gray-800 dark:text-gray-200">24h 规划分布</span>
+                      <span className="font-bold text-gray-800 dark:text-gray-200">{t('scheduler.preview_24h')}</span>
                       <div className="flex items-center gap-3 text-xs">
                         <span className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 dark:bg-blue-500 inline-block shadow-2xs" />
-                          <span className="font-semibold text-blue-700 dark:text-blue-300">亮色: 可安排</span>
+                          <span className="font-semibold text-blue-700 dark:text-blue-300">Active</span>
                         </span>
                         <span className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded-xs bg-gray-300 dark:bg-neutral-700 border border-gray-400/40 inline-block" />
-                          <span className="text-gray-500 dark:text-neutral-400">灰色: 休息</span>
+                          <span className="text-gray-500 dark:text-neutral-400">Rest</span>
                         </span>
                       </div>
                     </div>
 
                     {!parsedSlotsInfo.error && (
                       <div className="text-xs text-gray-500 dark:text-neutral-400 font-medium">
-                        今日工时：<span className="font-bold text-blue-600 dark:text-blue-400">{(parsedSlotsInfo.totalMinutes / 60).toFixed(1)}h</span> / 24h
+                        {t('scheduler.total_available')}：<span className="font-bold text-blue-600 dark:text-blue-400">{(parsedSlotsInfo.totalMinutes / 60).toFixed(1)}{t('scheduler.hours')}</span> / 24h
                       </div>
                     )}
                   </div>
@@ -1687,7 +1680,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                             left: `${leftPct}%`,
                             width: `${widthPct}%`,
                           }}
-                          title={`可安排时段：${slot.label} (共 ${durationHours} 小时)`}
+                          title={`${slot.label} (${durationHours}h)`}
                           className="absolute top-0 bottom-0 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
                         >
                           {widthPct >= 6 && (
@@ -1728,7 +1721,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 {/* Buffer Setting */}
                 <div className="pt-2">
                   <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1 text-xs">
-                    任务缓冲间隔 (分钟)
+                    {t('scheduler.buffer_title')}
                   </label>
                   <input
                     type="number"
@@ -1739,7 +1732,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     className="w-full sm:w-60 px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs"
                   />
                   <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1">
-                    两个任务之间自动预留的切换与休息间隔（建议 10-15 分钟）
+                    {t('scheduler.buffer_desc')}
                   </p>
                 </div>
               </div>
@@ -1753,11 +1746,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
                   <Bell className="w-5 h-5" />
                 </div>,
-                '提醒通知与前置周期',
-                '设置任务开始前与结束前主动推送微信通知的提前量与防重复策略',
+                t('notification.title'),
+                t('notification.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  已完成
+                  {t('notification.active_badge')}
                 </span>
               )}
 
@@ -1766,10 +1759,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="p-4 bg-gray-50/80 dark:bg-[#28292a]/50 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                   <div>
                     <label className="block font-bold text-gray-800 dark:text-gray-200 mb-1">
-                      开始前微信提醒 (分钟)
+                      {t('notification.start_title')}
                     </label>
                     <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2">
-                      在任务即将开始前通过微信通知您准备开始
+                      {t('notification.start_desc')}
                     </p>
                     <input
                       type="number"
@@ -1792,7 +1785,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                             : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300'
                         }`}
                       >
-                        {mins} 分钟
+                        {mins} {t('general.minutes')}
                       </button>
                     ))}
                   </div>
@@ -1802,10 +1795,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="p-4 bg-gray-50/80 dark:bg-[#28292a]/50 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                   <div>
                     <label className="block font-bold text-gray-800 dark:text-gray-200 mb-1">
-                      结束前微信确认 (分钟)
+                      {t('notification.end_title')}
                     </label>
                     <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2">
-                      在任务到期前询问完成情况，可回复“已完成”结项
+                      {t('notification.end_desc')}
                     </p>
                     <input
                       type="number"
@@ -1828,7 +1821,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                             : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300'
                         }`}
                       >
-                        {mins} 分钟
+                        {mins} {t('general.minutes')}
                       </button>
                     ))}
                   </div>
@@ -1839,10 +1832,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 rounded-2xl space-y-2 text-xs">
                 <div className="font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span>微信智能提醒策略机制已就绪：</span>
+                  <span>{t('notification.strategy_title')}</span>
                 </div>
                 <p className="text-blue-800/80 dark:text-blue-300/80 leading-relaxed">
-                  系统每 30 秒执行一次精准日程核验。当任务到达设定的前置时间窗口时，将<strong className="text-blue-950 dark:text-blue-100">仅发送一次</strong>微信通知并原子记录状态，避免任何重复刷屏打扰。
+                  {t('notification.strategy_desc')}
                 </p>
               </div>
             </div>
@@ -1855,16 +1848,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                   <Brain className="w-5 h-5" />
                 </div>,
-                '大语言模型配置 (LLM)',
-                '从微信用户消息中抽取任务名称、预计耗时、加急度、重要度与截止时间 (DDL)',
+                t('llm.title'),
+                t('llm.subtitle'),
                 isLlmDone ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    验证有效 (已完成)
+                    {t('llm.valid_badge')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    待测试验证 (未完成)
+                    {t('llm.unverified_badge')}
                   </span>
                 )
               )}
@@ -1872,7 +1865,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               <div className="space-y-4 text-xs max-w-xl">
                 <div>
                   <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-                    API 端点 (Base URL)
+                    {t('llm.endpoint')}
                   </label>
                   <input
                     type="text"
@@ -1881,12 +1874,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     placeholder="https://api.deepseek.com/v1"
                     className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">默认预设为 DeepSeek 官方端点</span>
+                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: DeepSeek Official Endpoint</span>
                 </div>
 
                 <div>
                   <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-                    API 密钥 (API Key)
+                    {t('llm.api_key')}
                   </label>
                   <input
                     type="password"
@@ -1898,15 +1891,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         localStorage.removeItem(`clawbot_llm_valid_${userId}`);
                       }
                     }}
-                    placeholder="sk-..."
+                    placeholder={t('llm.api_key_placeholder')}
                     className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">安全存储在服务器 SQLite 数据库中并按用户完全隔离</span>
+                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Stored securely in SQLite database and isolated per account</span>
                 </div>
 
                 <div>
                   <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-                    模型型号 (Model)
+                    {t('llm.model')}
                   </label>
                   <input
                     type="text"
@@ -1915,7 +1908,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     placeholder="deepseek-chat"
                     className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">推荐 deepseek-chat 或兼容 OpenAI 的模型名称</span>
+                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
                 </div>
 
                 <div className="flex items-center gap-2.5 pt-2">
@@ -1926,13 +1919,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
                   >
                     {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    <span>{llmTesting ? '正在验证 API Key...' : '测试 API Key 有效性'}</span>
+                    <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
                   </button>
 
                   {isLlmDone && (
                     <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>验证有效 (已完成)</span>
+                      <span>{t('llm.valid_badge')}</span>
                     </span>
                   )}
                 </div>
@@ -1958,16 +1951,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
                 </div>,
-                '外部日历与订阅同步',
-                '导入外部日历自动避开日程冲突 · 导出专属 TODO 订阅链接至手机日历',
+                t('calendar.title'),
+                t('calendar.subtitle'),
                 isCalendarDone ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    已配置 ({subs.length}个源)
+                    {t('common.configured')} ({subs.length})
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    未添加日历源
+                    {t('common.pending')}
                   </span>
                 )
               )}
@@ -1975,7 +1968,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* Export TODO link */}
               <div className="p-4 bg-gray-50 dark:bg-[#28292a] rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-2 text-xs">
                 <label className="block font-bold text-gray-800 dark:text-neutral-200 text-xs">
-                  TODO 专属日历订阅 (导出至 iPhone / Mac / Google Calendar)
+                  {t('calendar.export_title')}
                 </label>
                 <div className="flex items-center gap-2">
                   <input
@@ -1990,7 +1983,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     className="px-4 py-2 bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-neutral-200 text-xs font-medium rounded-xl shrink-0 flex items-center gap-1.5 transition cursor-pointer"
                   >
                     {copiedIcal ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedIcal ? '已复制' : '复制'}</span>
+                    <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
               </div>
@@ -2001,7 +1994,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   type="text"
                   value={newSubName}
                   onChange={(e) => setNewSubName(e.target.value)}
-                  placeholder="日历名称 (如: 日常会议)"
+                  placeholder={t('calendar.name_placeholder')}
                   className="w-full sm:w-48 px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-800 dark:text-gray-100 outline-none"
                   required
                 />
@@ -2009,7 +2002,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   type="text"
                   value={newSubUrl}
                   onChange={(e) => setNewSubUrl(e.target.value)}
-                  placeholder="订阅链接 (webcal://... 或 https://...ics)"
+                  placeholder={t('calendar.url_placeholder')}
                   className="w-full px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none"
                   required
                 />
@@ -2018,16 +2011,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   disabled={addingSub}
                   className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shrink-0 transition disabled:opacity-50 cursor-pointer"
                 >
-                  {addingSub ? '添加中...' : '添加日历'}
+                  {addingSub ? t('calendar.adding') : t('calendar.add_btn')}
                 </button>
               </form>
 
               {/* Subscriptions list */}
               <div className="space-y-2.5 text-xs">
-                <div className="font-semibold text-gray-700 dark:text-neutral-300">已订阅日历源列表：</div>
+                <div className="font-semibold text-gray-700 dark:text-neutral-300">{t('calendar.list_title')}</div>
                 {subs.length === 0 ? (
                   <div className="p-6 text-center text-gray-400 dark:text-neutral-500 bg-gray-50 dark:bg-[#28292a]/50 rounded-2xl border border-dashed border-gray-200 dark:border-neutral-800 text-xs">
-                    暂未导入外部日历。填入 Apple / Google 日历订阅链接即可自动规避已有日程。
+                    {t('calendar.empty_list')}
                   </div>
                 ) : (
                   subs.map((sub) => (
@@ -2045,7 +2038,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                                 : 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
                             }`}
                           >
-                            {sub.sync_status === 'ok' ? `正常 (${sub.event_count}条)` : '异常'}
+                            {sub.sync_status === 'ok' ? `OK (${sub.event_count})` : 'Error'}
                           </span>
                         </div>
                         <div className="font-mono text-[10px] text-gray-400 dark:text-neutral-500 truncate">
@@ -2058,7 +2051,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           type="button"
                           onClick={() => handleSyncNow(sub.id)}
                           className="p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-full transition cursor-pointer"
-                          title="立即同步"
+                          title={t('calendar.sync_now')}
                         >
                           <RefreshCw className="w-4 h-4" />
                         </button>
@@ -2066,7 +2059,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           type="button"
                           onClick={() => handleDeleteSubscription(sub.id)}
                           className="p-2 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-full transition cursor-pointer"
-                          title="删除"
+                          title={t('common.delete')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

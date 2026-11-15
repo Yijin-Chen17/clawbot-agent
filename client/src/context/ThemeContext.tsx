@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { translations, type Language } from '../i18n/translations';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ThemeColor = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'neutral';
 export type DisplayDensity = 'comfortable' | 'compact';
-export type Language = 'zh' | 'en';
+export type { Language };
 export type DefaultView = 'matrix' | 'list' | 'calendar';
 
 interface ThemeContextType {
@@ -24,107 +25,6 @@ interface ThemeContextType {
   setSoundEnabled: (enabled: boolean) => void;
   t: (key: string, fallback?: string) => string;
 }
-
-const dictionary: Record<Language, Record<string, string>> = {
-  zh: {
-    'nav.matrix': '四象限看板',
-    'nav.list': '待办清单',
-    'nav.calendar': '日历日程',
-    'nav.settings': '设置与对接',
-    'nav.new_task': '新建待办',
-    'nav.views': '视图导航',
-    'nav.quadrants': '四象限分类',
-    'nav.tools': '效率辅助',
-    'nav.admin': '系统运维',
-    'nav.wizard': '智能决策向导',
-    'nav.stats': '精力复盘分析',
-    'nav.backup': '数据备份导入',
-    'nav.users': '用户审核',
-    'nav.debugger': '系统调试',
-    'nav.all_tasks': '全部待办',
-    'nav.completed': '已完成事项',
-    'nav.brand_sub': '智能时间规划 Agent',
-    'nav.account_settings': '设置与偏好',
-
-    'set.title': '设置与偏好',
-    'set.account': '个人账户管理',
-    'set.general': '通用偏好设置',
-    'set.appearance': '外观主题定制',
-    'set.weixin': '微信 Clawbot 对接',
-    'set.scheduler': '日程规划算法偏好',
-    'set.notification': '提醒通知与前置周期',
-    'set.llm': '大模型 DeepSeek',
-    'set.calendar': '外部日历订阅源',
-    'set.save': '保存更改',
-    'set.saving': '保存中...',
-    'set.saved': '配置已成功保存！',
-    'set.next': '下一步',
-    'set.lang': '界面语言 (Language)',
-    'set.default_view': '默认打开视图 (Default View)',
-    'set.default_duration': '默认待办耗时 (Default Duration)',
-    'set.sound': '完成任务音效提示',
-    'set.sound_desc': '在四象限或待办列表中标记完成事项时，播放轻量触感音效',
-    'set.shortcuts': '全局快捷键速查',
-    'set.color_mode': '色彩模式 (Color Mode)',
-    'set.light': '浅色模式',
-    'set.dark': '深色模式',
-    'set.system': '跟随系统',
-    'set.accent': '品牌主强调色 (Accent Color)',
-    'set.density': '排版紧凑度 (Display Density)',
-    'set.comfortable': '舒适模式 (Comfortable)',
-    'set.compact': '紧凑模式 (Compact)',
-    'set.logout': '退出当前账号',
-  },
-  en: {
-    'nav.matrix': 'Matrix Board',
-    'nav.list': 'Todo List',
-    'nav.calendar': 'Calendar',
-    'nav.settings': 'Settings & Integration',
-    'nav.new_task': 'New Task',
-    'nav.views': 'Navigation',
-    'nav.quadrants': 'Quadrants',
-    'nav.tools': 'Tools',
-    'nav.admin': 'Admin',
-    'nav.wizard': 'Decision Wizard',
-    'nav.stats': 'Energy Review',
-    'nav.backup': 'Backup & Import',
-    'nav.users': 'User Approvals',
-    'nav.debugger': 'System Debugger',
-    'nav.all_tasks': 'All Tasks',
-    'nav.completed': 'Completed Tasks',
-    'nav.brand_sub': 'AI Time Planning Agent',
-    'nav.account_settings': 'Settings & Preferences',
-
-    'set.title': 'Settings & Preferences',
-    'set.account': 'Account Management',
-    'set.general': 'General Preferences',
-    'set.appearance': 'Appearance & Theme',
-    'set.weixin': 'WeChat Integration',
-    'set.scheduler': 'Scheduler Algorithm',
-    'set.notification': 'Notifications & Reminders',
-    'set.llm': 'DeepSeek LLM',
-    'set.calendar': 'External Calendar Feeds',
-    'set.save': 'Save Changes',
-    'set.saving': 'Saving...',
-    'set.saved': 'Settings saved successfully!',
-    'set.next': 'Next Step',
-    'set.lang': 'Interface Language',
-    'set.default_view': 'Default Start View',
-    'set.default_duration': 'Default Task Duration',
-    'set.sound': 'Task Completion Sound',
-    'set.sound_desc': 'Play an audio cue when a task is checked or marked done',
-    'set.shortcuts': 'Keyboard Shortcuts',
-    'set.color_mode': 'Color Mode',
-    'set.light': 'Light Mode',
-    'set.dark': 'Dark Mode',
-    'set.system': 'System Sync',
-    'set.accent': 'Theme Accent Color',
-    'set.density': 'Display Density',
-    'set.comfortable': 'Comfortable Mode',
-    'set.compact': 'Compact Mode',
-    'set.logout': 'Log Out',
-  },
-};
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
@@ -246,7 +146,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const t = (key: string, fallback?: string): string => {
-    const langDict = dictionary[language] || dictionary.zh;
+    const langDict = (translations as Record<string, Record<string, string>>)[language] || translations.zh;
     return langDict[key] || fallback || key;
   };
 
