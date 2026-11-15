@@ -1158,37 +1158,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 true
               )}
 
-              {/* 1. 界面语言 */}
+              {/* 1. 界面语言 (下拉选择框) */}
               <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>界面语言 (Language)</span>
+                  <span>界面语言 (Interface Language)</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  {[
-                    { id: 'zh' as const, label: '简体中文 (Simplified Chinese)', note: '默认界面语言' },
-                    { id: 'en' as const, label: 'English (英文模式)', note: 'Standard English' },
-                  ].map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setLanguage(item.id)}
-                      className={`flex items-center justify-between p-3.5 rounded-xl border text-left transition cursor-pointer ${
-                        language === item.id
-                          ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
-                          : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
-                      }`}
-                    >
-                      <div>
-                        <div className="text-xs font-semibold">{item.label}</div>
-                        <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">
-                          {item.note}
-                        </div>
-                      </div>
-                      {language === item.id && <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
-                    </button>
-                  ))}
+                <div className="max-w-xs pt-1">
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as 'zh' | 'en')}
+                    className="w-full px-3.5 py-2.5 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer shadow-2xs font-medium"
+                  >
+                    <option value="zh">简体中文 (Simplified Chinese)</option>
+                    <option value="en">English (US)</option>
+                  </select>
                 </div>
+                <p className="text-[10px] text-gray-400 dark:text-neutral-500">
+                  选择系统的核心展示语言，全站即时生效。
+                </p>
               </div>
 
               {/* 2. 默认起始视图 */}
@@ -1343,13 +1331,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         onClick={() => setThemeMode(item.id)}
                         className={`p-4 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
                           isSelected
-                            ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 shadow-2xs'
+                            ? 'border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-2xs font-semibold'
                             : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
                         }`}
                       >
                         <div className="flex items-center justify-between mb-2">
-                          <Icon className={`w-5 h-5 ${isSelected ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400'}`} />
-                          {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
+                          <Icon className={`w-5 h-5 ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}`} />
+                          {isSelected && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                         </div>
                         <div>
                           <div className="text-xs font-semibold">{item.label}</div>
@@ -1368,12 +1356,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
                   {[
-                    { id: 'blue' as const, name: '经典科技蓝', hex: '#2563eb', colorClass: 'bg-blue-600' },
-                    { id: 'emerald' as const, name: '自然生机绿', hex: '#059669', colorClass: 'bg-emerald-600' },
-                    { id: 'violet' as const, name: '优雅紫罗兰', hex: '#7c3aed', colorClass: 'bg-purple-600' },
-                    { id: 'amber' as const, name: '阳光活力橙', hex: '#d97706', colorClass: 'bg-amber-600' },
-                    { id: 'rose' as const, name: '热烈玫瑰红', hex: '#e11d48', colorClass: 'bg-rose-600' },
-                    { id: 'neutral' as const, name: '极简中性灰', hex: '#374151', colorClass: 'bg-neutral-700' },
+                    { id: 'blue' as const, name: '经典科技蓝', hex: '#2563eb' },
+                    { id: 'emerald' as const, name: '自然生机绿', hex: '#059669' },
+                    { id: 'violet' as const, name: '优雅紫罗兰', hex: '#7c3aed' },
+                    { id: 'amber' as const, name: '阳光活力橙', hex: '#d97706' },
+                    { id: 'rose' as const, name: '热烈玫瑰红', hex: '#e11d48' },
+                    { id: 'neutral' as const, name: '极简中性灰', hex: '#374151' },
                   ].map((c) => {
                     const isSelected = themeColor === c.id;
                     return (
@@ -1383,15 +1371,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         onClick={() => setThemeColor(c.id)}
                         className={`flex items-center gap-3 p-3 rounded-xl border text-left transition cursor-pointer ${
                           isSelected
-                            ? 'border-purple-500 bg-purple-50/50 dark:bg-purple-950/30 shadow-2xs'
+                            ? 'border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 shadow-2xs font-semibold'
                             : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
                         }`}
                       >
-                        <span className={`w-4 h-4 rounded-full ${c.colorClass} shrink-0 ring-2 ring-white dark:ring-neutral-800 shadow-2xs`} />
-                        <span className="text-xs font-semibold flex-1 truncate text-gray-800 dark:text-gray-200">
+                        <span
+                          className="w-4 h-4 rounded-full shrink-0 ring-2 ring-white dark:ring-neutral-800 shadow-2xs"
+                          style={{ backgroundColor: c.hex }}
+                        />
+                        <span className="text-xs flex-1 truncate text-gray-800 dark:text-gray-200">
                           {c.name}
                         </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />}
+                        {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />}
                       </button>
                     );
                   })}
@@ -1424,13 +1415,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         onClick={() => setDisplayDensity(d.id)}
                         className={`p-3.5 rounded-xl border text-left transition cursor-pointer ${
                           isSelected
-                            ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 shadow-2xs'
+                            ? 'border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-2xs font-semibold'
                             : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-semibold">{d.title}</span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />}
+                          {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
                         </div>
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">{d.desc}</p>
                       </button>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import {
   LayoutGrid,
   CheckSquare,
@@ -50,22 +51,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
 }) => {
   const { user } = useAuth();
+  const { t } = useTheme();
 
   // 主视图导航
   const mainViews = [
-    { id: 'matrix', label: '四象限看板', icon: LayoutGrid },
-    { id: 'list', label: '待办清单', icon: CheckSquare },
-    { id: 'calendar', label: '日历日程', icon: CalendarDays },
+    { id: 'matrix', label: t('nav.matrix', '四象限看板'), icon: LayoutGrid },
+    { id: 'list', label: t('nav.list', '待办清单'), icon: CheckSquare },
+    { id: 'calendar', label: t('nav.calendar', '日历日程'), icon: CalendarDays },
   ];
 
   // 四象限分类导航
   const filterCategories = [
-    { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'all', label: t('nav.all_tasks', '全部待办'), icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
     { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-500' },
     { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-500' },
     { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-500' },
     { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-400 dark:text-neutral-500' },
-    { key: 'completed', label: '已完成事项', icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
+    { key: 'completed', label: t('nav.completed', '已完成事项'), icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
   const handleSelectView = (viewId: string) => {
@@ -109,7 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               </div>
               <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5 block">
-                智能时间规划 Agent
+                {t('nav.brand_sub', '智能时间规划 Agent')}
               </span>
             </div>
           </div>
@@ -124,14 +126,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* 核心行动按钮 (模仿主流 AI Agent 的 New Task 按钮) */}
+        {/* 核心行动按钮 */}
         <button
           type="button"
           onClick={handleCreateTask}
           className="w-full flex items-center justify-center gap-2 py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold shadow-xs hover:shadow transition cursor-pointer"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>新建待办</span>
+          <span>{t('nav.new_task', '新建待办')}</span>
           <kbd className="hidden sm:inline-block ml-auto px-1.5 py-0.2 rounded text-[10px] bg-blue-700 text-blue-100 font-mono">
             N
           </kbd>
@@ -143,7 +145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 1. 主视图 */}
         <div className="space-y-1">
           <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
-            视图导航
+            {t('nav.views', '视图导航')}
           </div>
           {mainViews.map((item) => {
             const Icon = item.icon;
@@ -169,7 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 2. 四象限与分类筛选 (当处于看板或清单时深度联动) */}
         <div className="space-y-1">
           <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 flex items-center justify-between">
-            <span>四象限分类</span>
+            <span>{t('nav.quadrants', '四象限分类')}</span>
           </div>
           {filterCategories.map((item) => {
             const Icon = item.icon;
@@ -207,7 +209,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 3. 辅助效率工具 */}
         <div className="space-y-1">
           <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
-            效率辅助
+            {t('nav.tools', '效率辅助')}
           </div>
           <button
             type="button"
@@ -218,7 +220,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-            <span>智能决策向导</span>
+            <span>{t('nav.wizard', '智能决策向导')}</span>
           </button>
           <button
             type="button"
@@ -229,7 +231,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
           >
             <PieChart className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>精力复盘分析</span>
+            <span>{t('nav.stats', '精力复盘分析')}</span>
           </button>
           <button
             type="button"
@@ -240,7 +242,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
           >
             <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 dark:text-neutral-400 shrink-0" />
-            <span>数据备份导入</span>
+            <span>{t('nav.backup', '数据备份导入')}</span>
           </button>
         </div>
 
@@ -248,7 +250,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {user?.role === 'admin' && (
           <div className="space-y-1">
             <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
-              系统运维
+              {t('nav.admin', '系统运维')}
             </div>
             <button
               type="button"
@@ -261,7 +263,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <Users className="w-3.5 h-3.5" />
-                <span>用户审核</span>
+                <span>{t('nav.users', '用户审核')}</span>
               </div>
               {pendingUsersCount > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-500 text-white animate-pulse">
@@ -279,7 +281,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <Terminal className="w-3.5 h-3.5" />
-              <span>系统调试</span>
+              <span>{t('nav.debugger', '系统调试')}</span>
             </button>
           </div>
         )}
