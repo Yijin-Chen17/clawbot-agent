@@ -107,6 +107,29 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
 
   const activePoint = hoverIndex !== null && coordinates[hoverIndex] ? coordinates[hoverIndex] : null;
 
+  // Tooltip 智能防遮挡动态定位计算 (根据点在视口内的位置自适应翻转和位移)
+  const tooltipStyle = useMemo(() => {
+    if (!activePoint) return null;
+
+    const xPct = (activePoint.x / chartWidth) * 100;
+    const yPct = (activePoint.y / chartHeight) * 100;
+
+    // 横向：若在最左侧 (< 24%) 向右展开；若在最右侧 (> 76%) 向左展开；否则水平居中
+    let translateX = '-50%';
+    if (xPct < 24) translateX = '0%';
+    else if (xPct > 76) translateX = '-100%';
+
+    // 纵向：若靠近顶部 (< 45%)，提示框显示在节点下方，避免被上层卡片外部遮挡；否则显示在节点上方
+    const isNearTop = yPct < 45;
+    const translateY = isNearTop ? '12px' : 'calc(-100% - 12px)';
+
+    return {
+      left: `${xPct}%`,
+      top: `${yPct}%`,
+      transform: `translate(${translateX}, ${translateY})`,
+    };
+  }, [activePoint, chartWidth, chartHeight]);
+
   return (
     <div className="rounded-2xl border border-gray-200/90 dark:border-neutral-800 bg-white dark:bg-[#1e1f20] p-4 sm:p-5 shadow-2xs space-y-4">
       {/* 顶栏：图表标题与范围快速切换胶囊 */}
@@ -201,14 +224,14 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
       </div>
 
       {/* SVG 曲线画布 */}
-      <div className="relative w-full overflow-hidden select-none">
+      <div className="relative w-full overflow-visible select-none">
         {loading ? (
           <div className="h-44 flex items-center justify-center text-xs text-gray-400">
             <span className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent mr-2" />
             {t('common.loading')}
           </div>
         ) : (
-          <div className="relative w-full">
+          <div className="relative w-full overflow-visible">
             <svg
               viewBox={`0 0 ${chartWidth} ${chartHeight}`}
               className="w-full h-44 overflow-visible"
@@ -249,6 +272,20 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
                   </g>
                 );
               })}
+
+              {/* 垂直参考准线 (Crosshair) */}
+              {activePoint && (
+                <line
+                  x1={activePoint.x}
+                  y1={padding.top}
+                  x2={activePoint.x}
+                  y2={padding.top + graphHeight}
+                  stroke="#3b82f6"
+                  strokeWidth="1.5"
+                  strokeDasharray="3 3"
+                  className="opacity-60 pointer-events-none"
+                />
+              )}
 
               {/* 面积填充 */}
               {areaPath && (
@@ -311,16 +348,13 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
               ))}
             </svg>
 
-            {/* 鼠标悬停时的浮层提示 Tooltip */}
-            {activePoint && (
+            {/* 鼠标悬停时的浮层提示 Tooltip (带防遮挡动态反向锚定) */}
+            {activePoint && tooltipStyle && (
               <div
-                className="pointer-events-none absolute z-20 px-3 py-2 bg-gray-900/90 dark:bg-neutral-900/95 text-white rounded-xl shadow-lg backdrop-blur-xs text-xs font-mono space-y-1 transform -translate-x-1/2 -translate-y-full border border-gray-700/60 transition-all duration-75"
-                style={{
-                  left: `${(activePoint.x / chartWidth) * 100}%`,
-                  top: `${Math.max(10, (activePoint.y / chartHeight) * 100 - 8)}%`,
-                }}
+                className="pointer-events-none absolute z-30 px-3 py-2 bg-gray-900/95 dark:bg-neutral-900/95 text-white rounded-xl shadow-xl backdrop-blur-md text-xs font-mono space-y-1 border border-gray-700/80 transition-all duration-75 min-w-[130px] whitespace-nowrap"
+                style={tooltipStyle}
               >
-                <div className="text-[11px] font-bold text-gray-300 flex items-center justify-between gap-3">
+                <div className="text-[11px] font-bold text-gray-300 flex items-center justify-between gap-3 border-b border-gray-800 pb-1">
                   <span>{activePoint.point.date || activePoint.point.label}</span>
                   <span className="text-amber-400 font-semibold">{activePoint.point.requests} 次调用</span>
                 </div>
