@@ -1,6 +1,8 @@
 export interface User {
   id: number;
   username: string;
+  nickname?: string;
+  avatar_url?: string;
   password_hash?: string;
   role: 'user' | 'admin';
   status: 'pending' | 'approved' | 'rejected';

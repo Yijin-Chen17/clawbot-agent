@@ -18,7 +18,7 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   const token = authHeader.split(' ')[1];
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
-    const user = db.prepare('SELECT id, username, role, status, token_secret, created_at, updated_at FROM users WHERE id = ?').get(payload.id) as User | undefined;
+    const user = db.prepare('SELECT id, username, nickname, avatar_url, role, status, token_secret, created_at, updated_at FROM users WHERE id = ?').get(payload.id) as User | undefined;
 
     if (!user) {
       res.status(401).json({ error: '用户不存在' });

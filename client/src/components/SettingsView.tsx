@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { QRCodeSVG } from 'qrcode.react';
 import {
+  User,
+  Sliders,
+  Palette,
   Bot,
   Brain,
   Calendar,
@@ -21,6 +25,19 @@ import {
   ChevronRight,
   Sparkles,
   Menu,
+  Lock,
+  Upload,
+  Sun,
+  Moon,
+  Monitor,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  Volume2,
+  VolumeX,
+  Languages,
+  Keyboard,
+  KeyRound,
 } from 'lucide-react';
 
 interface WorkSlot {
@@ -150,6 +167,16 @@ function parseWorkSlotsString(input: string): {
   };
 }
 
+export type SectionType =
+  | 'account'
+  | 'general'
+  | 'appearance'
+  | 'weixin'
+  | 'scheduler'
+  | 'notification'
+  | 'llm'
+  | 'calendar';
+
 interface SettingsViewProps {
   onOpenMobileMenu?: () => void;
 }
@@ -158,7 +185,50 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [activeSection, setActiveSection] = useState<'weixin' | 'scheduler' | 'notification' | 'llm' | 'calendar'>('weixin');
+  const [activeSection, setActiveSection] = useState<SectionType>('account');
+
+  const { user, updateUser, logout } = useAuth();
+  const {
+    themeMode,
+    setThemeMode,
+    themeColor,
+    setThemeColor,
+    displayDensity,
+    setDisplayDensity,
+    language,
+    setLanguage,
+    defaultView,
+    setDefaultView,
+    defaultTaskDuration,
+    setDefaultTaskDuration,
+    soundEnabled,
+    setSoundEnabled,
+  } = useTheme();
+
+  // 个人账户管理状态
+  const [nickname, setNickname] = useState(user?.nickname || '');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+
+  // 修改密码状态
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 监听并同步 user.nickname
+  useEffect(() => {
+    if (user?.nickname !== undefined) {
+      setNickname(user.nickname || '');
+    }
+  }, [user?.nickname]);
 
   // Weixin Clawbot Integration State
   const [wxConnected, setWxConnected] = useState(false);
@@ -199,16 +269,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [icalExportUrl, setIcalExportUrl] = useState('');
   const [copiedIcal, setCopiedIcal] = useState(false);
 
-  const { user } = useAuth();
   const userId = user?.id ? String(user.id) : 'default';
 
   // Visited sections for "日程规划/提醒通知点开过"
   const [visitedSections, setVisitedSections] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem(`clawbot_visited_${userId}`);
-      return saved ? new Set(JSON.parse(saved)) : new Set(['weixin']);
+      return saved ? new Set(JSON.parse(saved)) : new Set(['account', 'weixin']);
     } catch {
-      return new Set(['weixin']);
+      return new Set(['account', 'weixin']);
     }
   });
 
@@ -258,7 +327,107 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const sectionOrder = ['weixin', 'scheduler', 'notification', 'llm', 'calendar'] as const;
+  // 头像上传处理 (限制 2MB，并即时更新全局上下文)
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+    if (file.size > MAX_SIZE) {
+      setAvatarError('头像图片文件不能超过 2MB，请选择更小的图片');
+      return;
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+      setAvatarError('仅支持 JPG, PNG, WEBP, GIF 格式图片');
+      return;
+    }
+
+    setAvatarError(null);
+    setAvatarUploading(true);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = reader.result as string;
+        const res = await api.post('/auth/avatar', { avatarData: base64Data });
+        const newUrl = res.data.avatar_url;
+        updateUser({ avatar_url: newUrl });
+        setProfileSuccess('头像上传更新成功！');
+        setTimeout(() => setProfileSuccess(null), 3000);
+      } catch (err: any) {
+        setAvatarError(err.response?.data?.error || '头像上传失败');
+      } finally {
+        setAvatarUploading(false);
+      }
+    };
+    reader.onerror = () => {
+      setAvatarError('读取文件失败');
+      setAvatarUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 昵称保存处理
+  const handleSaveNickname = async () => {
+    setSavingProfile(true);
+    setProfileSuccess(null);
+    try {
+      const res = await api.put('/auth/profile', { nickname });
+      updateUser({ nickname: res.data.user.nickname });
+      setProfileSuccess('昵称保存修改成功！');
+      setTimeout(() => setProfileSuccess(null), 3000);
+    } catch (err: any) {
+      alert(err.response?.data?.error || '修改昵称失败');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  // 密码修改处理 (服务器仅保留不可逆哈希)
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!oldPassword || !newPassword) {
+      setPasswordError('请输入原密码与新密码');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('新密码长度不能少于 6 位');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('两次输入的新密码不一致');
+      return;
+    }
+
+    setChangingPassword(true);
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    try {
+      const res = await api.put('/auth/password', { oldPassword, newPassword });
+      setPasswordSuccess(res.data.message || '密码修改成功！新密码哈希已安全更新。');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPasswordSuccess(null), 4000);
+    } catch (err: any) {
+      setPasswordError(err.response?.data?.error || '修改密码失败，请核验原密码');
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const sectionOrder: readonly SectionType[] = [
+    'account',
+    'general',
+    'appearance',
+    'weixin',
+    'scheduler',
+    'notification',
+    'llm',
+    'calendar',
+  ];
 
   const handleNextStep = () => {
     const currentIndex = sectionOrder.indexOf(activeSection);
@@ -515,6 +684,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     );
   }
 
+  const isAccountDone = Boolean(user?.nickname || user?.avatar_url);
   const isWeixinDone = Boolean(wxConnected);
   const isSchedulerDone = visitedSections.has('scheduler');
   const isNotificationDone = visitedSections.has('notification');
@@ -522,6 +692,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const isCalendarDone = subs.length > 0;
 
   const navMenuItems = [
+    {
+      id: 'account' as const,
+      label: '个人账户管理',
+      desc: '头像、昵称、密码修改与退出',
+      icon: User,
+      isDone: isAccountDone,
+    },
+    {
+      id: 'general' as const,
+      label: '通用偏好设置',
+      desc: '语言、默认视图与任务时长',
+      icon: Sliders,
+      isDone: true,
+    },
+    {
+      id: 'appearance' as const,
+      label: '外观主题定制',
+      desc: '深浅模式、主题配色与风格',
+      icon: Palette,
+      isDone: true,
+    },
     {
       id: 'weixin' as const,
       label: '微信 Clawbot 对接',
@@ -563,7 +754,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     icon: React.ReactNode,
     title: string,
     subtitle: string,
-    statusBadge?: React.ReactNode
+    statusBadge?: React.ReactNode,
+    hideGlobalSave?: boolean
   ) => (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
       <div className="flex items-center gap-3">
@@ -590,15 +782,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       </div>
 
       <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-        <button
-          type="button"
-          onClick={handleSavePreferences}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-50 dark:bg-[#28292a] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-full shadow-2xs transition disabled:opacity-50 cursor-pointer"
-        >
-          {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <Save className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
-          <span>{saving ? '保存中...' : '保存更改'}</span>
-        </button>
+        {!hideGlobalSave && (
+          <button
+            type="button"
+            onClick={handleSavePreferences}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-50 dark:bg-[#28292a] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-full shadow-2xs transition disabled:opacity-50 cursor-pointer"
+          >
+            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <Save className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+            <span>{saving ? '保存中...' : '保存更改'}</span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -651,7 +845,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5 flex items-center justify-between">
             <span>配置目录</span>
             <span className="font-mono text-[10px] text-gray-500 dark:text-neutral-400">
-              {[isWeixinDone, isSchedulerDone, isNotificationDone, isLlmDone, isCalendarDone].filter(Boolean).length}/5 已完成
+              {navMenuItems.filter((i) => i.isDone).length}/{navMenuItems.length} 已配置
             </span>
           </div>
           {navMenuItems.map((item) => {
@@ -702,6 +896,560 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
         {/* Right Column: Selected Config Panel */}
         <section className="flex-1 min-w-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-5 sm:p-7 shadow-xs overflow-y-auto transition-colors scrollbar-thin">
+          {/* ===================== A. 个人账户管理 (Account) ===================== */}
+          {activeSection === 'account' && (
+            <div className="space-y-6 animate-fadeIn">
+              {renderCardHeader(
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <User className="w-5 h-5" />
+                </div>,
+                '个人账户管理',
+                '管理您的头像、对外展示昵称与安全登录密码（登录账号唯一不可修改）',
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
+                  @{user?.username}
+                </span>,
+                true
+              )}
+
+              {profileSuccess && (
+                <div className="flex items-center gap-2 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-medium animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>{profileSuccess}</span>
+                </div>
+              )}
+
+              {avatarError && (
+                <div className="flex items-center gap-2 p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 rounded-xl text-xs font-medium animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                  <span>{avatarError}</span>
+                </div>
+              )}
+
+              {/* 1. 头像上传 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  个人头像
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+                  <div className="relative group shrink-0">
+                    {user?.avatar_url ? (
+                      <img
+                        src={user.avatar_url}
+                        alt="用户头像"
+                        className="w-20 h-20 rounded-full object-cover ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-2xl shadow-md">
+                        {(user?.nickname || user?.username || 'U').slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    {avatarUploading && (
+                      <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center text-white">
+                        <RefreshCw className="w-6 h-6 animate-spin" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 flex-1">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={handleAvatarChange}
+                      className="hidden"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={avatarUploading}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {avatarUploading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="w-3.5 h-3.5" />
+                        )}
+                        <span>{avatarUploading ? '上传中...' : '上传新头像'}</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-500 dark:text-neutral-400 leading-relaxed">
+                      支持 JPG, PNG, WEBP, GIF 格式。文件大小严格限制在 <strong>2MB</strong> 以内。上传后全站即时同步生效。
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. 账号与昵称设置 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  账号与昵称
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* 登录账号（只读） */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
+                      登录账号 (Username)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={user?.username || ''}
+                        disabled
+                        className="w-full pl-3 pr-8 py-2 text-xs bg-gray-200/60 dark:bg-neutral-800/80 border border-gray-300/80 dark:border-neutral-700 text-gray-500 dark:text-neutral-400 rounded-xl cursor-not-allowed font-mono select-none"
+                      />
+                      <Lock className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
+                      系统唯一底层识别账号，注册后严格不可修改。
+                    </span>
+                  </div>
+
+                  {/* 对外展示昵称 */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
+                      展示昵称 (Nickname)
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={nickname}
+                        onChange={(e) => setNickname(e.target.value)}
+                        placeholder="请输入对外展示的昵称"
+                        maxLength={30}
+                        className="flex-1 px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveNickname}
+                        disabled={savingProfile || nickname === user?.nickname}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer shrink-0"
+                      >
+                        {savingProfile ? '保存中...' : '保存昵称'}
+                      </button>
+                    </div>
+                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
+                      用于左侧边栏、看板与日历顶部展示，可随时修改。
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. 修改密码 (服务器只保存不可逆哈希) */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>修改登录密码</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="text-[11px] text-gray-500 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showPassword ? '隐藏明文' : '显示明文'}</span>
+                  </button>
+                </div>
+
+                <div className="p-3 bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/70 dark:border-blue-900/60 rounded-xl text-[11px] text-blue-800 dark:text-blue-300 flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <p>
+                    <strong>安全哈希保护：</strong>
+                    服务器端仅采用不可逆 Bcrypt 加盐强哈希存储您的密码，绝不会以任何明文形式保留或记录您的密码。
+                  </p>
+                </div>
+
+                {passwordSuccess && (
+                  <div className="flex items-center gap-2 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-medium animate-fadeIn">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>{passwordSuccess}</span>
+                  </div>
+                )}
+
+                {passwordError && (
+                  <div className="flex items-center gap-2 p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 rounded-xl text-xs font-medium animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                    <span>{passwordError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleChangePassword} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
+                        原密码
+                      </label>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={oldPassword}
+                        onChange={(e) => setOldPassword(e.target.value)}
+                        placeholder="输入当前使用的密码"
+                        className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
+                        新密码 (不少于 6 位)
+                      </label>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="至少 6 位字符"
+                        minLength={6}
+                        className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1">
+                        确认新密码
+                      </label>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="再次输入新密码"
+                        minLength={6}
+                        className="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      disabled={changingPassword || !oldPassword || !newPassword}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {changingPassword ? '正在更新哈希...' : '确认更新密码'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* 4. 退出登录 */}
+              <div className="p-5 rounded-2xl bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-bold text-rose-800 dark:text-rose-300">
+                    退出当前账号
+                  </h4>
+                  <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
+                    退出后将清除本设备的登录会话凭据，下次使用需重新输入账号与密码。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>退出账号登录</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ===================== B. 通用偏好设置 (General) ===================== */}
+          {activeSection === 'general' && (
+            <div className="space-y-6 animate-fadeIn">
+              {renderCardHeader(
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <Sliders className="w-5 h-5" />
+                </div>,
+                '通用偏好设置',
+                '配置界面交互语言、默认初始视图、默认任务时长与声音特效',
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
+                  即时生效
+                </span>,
+                true
+              )}
+
+              {/* 1. 界面语言 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>界面语言 (Language)</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {[
+                    { id: 'zh' as const, label: '简体中文 (Simplified Chinese)', note: '默认界面语言' },
+                    { id: 'en' as const, label: 'English (英文模式)', note: 'Standard English' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setLanguage(item.id)}
+                      className={`flex items-center justify-between p-3.5 rounded-xl border text-left transition cursor-pointer ${
+                        language === item.id
+                          ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
+                          : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-semibold">{item.label}</div>
+                        <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">
+                          {item.note}
+                        </div>
+                      </div>
+                      {language === item.id && <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. 默认起始视图 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  默认打开视图 (Default View)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  {[
+                    { id: 'matrix' as const, name: '四象限看板', desc: '直角坐标矩阵，直观轻重缓急' },
+                    { id: 'list' as const, name: '待办清单', desc: 'Google Todo 式极简清单' },
+                    { id: 'calendar' as const, name: '日历日程', desc: '一周时间块排程全览' },
+                  ].map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setDefaultView(v.id)}
+                      className={`p-3.5 rounded-xl border text-left transition cursor-pointer ${
+                        defaultView === v.id
+                          ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
+                          : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold">{v.name}</span>
+                        {defaultView === v.id && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                      </div>
+                      <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">{v.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. 默认新建任务耗时 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  默认待办耗时 (Default Duration)
+                </div>
+                <p className="text-[11px] text-gray-500 dark:text-neutral-400">
+                  新建事项或从微信提取任务未指定时长时，算法自动分配的初始时间块大小：
+                </p>
+                <div className="flex flex-wrap gap-2.5 pt-1">
+                  {[30, 45, 60, 90].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setDefaultTaskDuration(mins)}
+                      className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                        defaultTaskDuration === mins
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      {mins} 分钟 {mins === 60 ? '(推荐)' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4. 声音与音效反馈 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-gray-200/70 dark:bg-neutral-800 flex items-center justify-center text-gray-600 dark:text-neutral-300 shrink-0">
+                    {soundEnabled ? <Volume2 className="w-4 h-4 text-indigo-600" /> : <VolumeX className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
+                      完成任务音效提示
+                    </div>
+                    <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">
+                      在四象限或待办列表中标记完成事项时，播放轻量愉悦的触感音效
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`w-11 h-6 rounded-full p-1 transition cursor-pointer shrink-0 ${
+                    soundEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-neutral-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      soundEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* 5. 键盘快捷键速查 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  <Keyboard className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>全局快捷键速查</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">新建待办事项</span>
+                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                      N
+                    </kbd>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">关闭弹窗 / 取消</span>
+                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                      Esc
+                    </kbd>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                    <span className="text-xs text-gray-700 dark:text-neutral-300">提交表单 / 确定</span>
+                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                      Enter
+                    </kbd>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================== C. 外观主题定制 (Appearance) ===================== */}
+          {activeSection === 'appearance' && (
+            <div className="space-y-6 animate-fadeIn">
+              {renderCardHeader(
+                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                  <Palette className="w-5 h-5" />
+                </div>,
+                '外观主题定制',
+                '深浅主题色彩模式、系统品牌主色调与界面排版风格',
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300">
+                  即时预览
+                </span>,
+                true
+              )}
+
+              {/* 1. 亮暗模式切换 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  色彩模式 (Color Mode)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  {[
+                    { id: 'light' as const, label: '浅色模式', icon: Sun, desc: '明朗清爽象牙白' },
+                    { id: 'dark' as const, label: '深色模式', icon: Moon, desc: '沉浸护眼暗夜黑' },
+                    { id: 'system' as const, label: '跟随系统', icon: Monitor, desc: '自动匹配操作系统' },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const isSelected = themeMode === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setThemeMode(item.id)}
+                        className={`p-4 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 shadow-2xs'
+                            : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <Icon className={`w-5 h-5 ${isSelected ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400'}`} />
+                          {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">{item.label}</div>
+                          <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">{item.desc}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2. 主题强调配色 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  品牌主强调色 (Accent Color)
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
+                  {[
+                    { id: 'blue' as const, name: '经典科技蓝', hex: '#2563eb', colorClass: 'bg-blue-600' },
+                    { id: 'emerald' as const, name: '自然生机绿', hex: '#059669', colorClass: 'bg-emerald-600' },
+                    { id: 'violet' as const, name: '优雅紫罗兰', hex: '#7c3aed', colorClass: 'bg-purple-600' },
+                    { id: 'amber' as const, name: '阳光活力橙', hex: '#d97706', colorClass: 'bg-amber-600' },
+                    { id: 'rose' as const, name: '热烈玫瑰红', hex: '#e11d48', colorClass: 'bg-rose-600' },
+                    { id: 'neutral' as const, name: '极简中性灰', hex: '#374151', colorClass: 'bg-neutral-700' },
+                  ].map((c) => {
+                    const isSelected = themeColor === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setThemeColor(c.id)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border text-left transition cursor-pointer ${
+                          isSelected
+                            ? 'border-purple-500 bg-purple-50/50 dark:bg-purple-950/30 shadow-2xs'
+                            : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded-full ${c.colorClass} shrink-0 ring-2 ring-white dark:ring-neutral-800 shadow-2xs`} />
+                        <span className="text-xs font-semibold flex-1 truncate text-gray-800 dark:text-gray-200">
+                          {c.name}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. 界面排版紧凑度风格 */}
+              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                  排版紧凑度 (Display Density)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {[
+                    {
+                      id: 'comfortable' as const,
+                      title: '舒适模式 (Comfortable)',
+                      desc: '间距舒朗，视觉开阔，适合高分辨率桌面端与日常浏览',
+                    },
+                    {
+                      id: 'compact' as const,
+                      title: '紧凑模式 (Compact)',
+                      desc: '间距紧密，信息密集，可在单屏内呈现更多任务与日程项',
+                    },
+                  ].map((d) => {
+                    const isSelected = displayDensity === d.id;
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => setDisplayDensity(d.id)}
+                        className={`p-3.5 rounded-xl border text-left transition cursor-pointer ${
+                          isSelected
+                            ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 shadow-2xs'
+                            : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold">{d.title}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />}
+                        </div>
+                        <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">{d.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 1. WeChat Pairing Section */}
           {activeSection === 'weixin' && (
             <div className="space-y-5 animate-fadeIn">

@@ -1,6 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useTheme, type ThemeMode } from '../context/ThemeContext';
 import {
   LayoutGrid,
   CheckSquare,
@@ -17,13 +16,8 @@ import {
   Settings,
   Users,
   Terminal,
-  Sun,
-  Moon,
-  Monitor,
-  LogOut,
   Plus,
   X,
-  Check,
 } from 'lucide-react';
 
 export interface SidebarProps {
@@ -55,27 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   setMobileOpen,
 }) => {
-  const { user, logout } = useAuth();
-  const { themeMode, setThemeMode, isDark } = useTheme();
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
-  const themeMenuRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭主题下拉框
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
-        setThemeMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const themeOptions: { mode: ThemeMode; label: string; icon: typeof Sun }[] = [
-    { mode: 'system', label: '跟随系统', icon: Monitor },
-    { mode: 'light', label: '浅色模式', icon: Sun },
-    { mode: 'dark', label: '深色模式', icon: Moon },
-  ];
+  const { user } = useAuth();
 
   // 主视图导航
   const mainViews = [
@@ -311,91 +285,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* 底部固定区域：设置与账户合并 (一体化账号卡片) */}
+      {/* 底部固定区域：仅显示【左：头像+昵称 右：设置符号】 */}
       <div className="p-2.5 border-t border-gray-200/80 dark:border-neutral-800 shrink-0">
-        <div
+        <button
+          type="button"
           onClick={() => handleSelectView('settings')}
-          className={`flex items-center justify-between p-2 rounded-xl transition cursor-pointer ${
+          className={`w-full flex items-center justify-between p-2 rounded-xl transition cursor-pointer group ${
             activeTab === 'settings'
               ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
               : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
           }`}
-          title="点击进入设置与偏好"
+          title="账号与系统设置"
         >
-          {/* 左侧：用户头像与名称、设置状态提示 */}
-          <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-1">
-            <div className="w-7 h-7 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-2xs">
-              {user?.username?.slice(0, 1).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1 truncate text-left">
+          {/* 左：头像 + 昵称 */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2 text-left">
+            {user?.avatar_url ? (
+              <img
+                src={user.avatar_url}
+                alt="头像"
+                className="w-7 h-7 rounded-full object-cover shrink-0 ring-1 ring-gray-200 dark:ring-neutral-700 shadow-2xs"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-2xs">
+                {(user?.nickname || user?.username || 'U').slice(0, 1).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1 truncate">
               <div className="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate leading-tight flex items-center gap-1.5">
-                <span className="truncate">{user?.username}</span>
+                <span className="truncate">{user?.nickname || user?.username}</span>
                 {user?.role === 'admin' && (
                   <span className="px-1 py-0.2 rounded text-[9px] bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 font-mono shrink-0">
                     Admin
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-gray-400 dark:text-neutral-500 truncate flex items-center gap-1 mt-0.5">
-                <Settings className={`w-2.5 h-2.5 shrink-0 ${activeTab === 'settings' ? 'text-blue-600 dark:text-blue-400' : ''}`} />
-                <span>设置与偏好</span>
+              <div className="text-[10px] text-gray-400 dark:text-neutral-500 truncate mt-0.5">
+                @{user?.username}
               </div>
             </div>
           </div>
 
-          {/* 右侧：外观模式切换与退出登录按钮 (防止冒泡进入设置) */}
-          <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <div className="relative" ref={themeMenuRef}>
-              <button
-                type="button"
-                onClick={() => setThemeMenuOpen(!themeMenuOpen)}
-                title={`当前外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}`}
-                className="p-1.5 text-gray-400 hover:text-gray-700 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-gray-200/60 dark:hover:bg-neutral-700/60 rounded-lg transition cursor-pointer"
-              >
-                {isDark ? <Moon className="w-3.5 h-3.5 text-blue-400" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
-              </button>
-
-              {themeMenuOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-32 bg-white dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 rounded-xl shadow-lg p-1 z-50 text-xs">
-                  {themeOptions.map((opt) => {
-                    const Icon = opt.icon;
-                    const isSelected = themeMode === opt.mode;
-                    return (
-                      <button
-                        key={opt.mode}
-                        type="button"
-                        onClick={() => {
-                          setThemeMode(opt.mode);
-                          setThemeMenuOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium'
-                            : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Icon className="w-3.5 h-3.5" />
-                          <span>{opt.label}</span>
-                        </div>
-                        {isSelected && <Check className="w-3 h-3" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={logout}
-              title="退出登录"
-              className="p-1.5 text-gray-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
+          {/* 右：设置符号 */}
+          <div className="p-1.5 text-gray-400 group-hover:text-gray-700 dark:text-neutral-400 dark:group-hover:text-neutral-200 rounded-lg transition shrink-0">
+            <Settings className={`w-4 h-4 ${activeTab === 'settings' ? 'text-blue-600 dark:text-blue-400' : ''}`} />
           </div>
-        </div>
+        </button>
       </div>
     </div>
   );

@@ -120,6 +120,15 @@ export function initDatabase() {
   addCol('weixin_nickname', 'TEXT', "''");
   addCol('weixin_context_token', 'TEXT', "''");
 
+  // Migrate users table columns if missing (nickname, avatar_url)
+  const userCols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map(c => c.name);
+  if (!userCols.includes('nickname')) {
+    db.exec("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT '';");
+  }
+  if (!userCols.includes('avatar_url')) {
+    db.exec("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT '';");
+  }
+
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
   if (!taskCols.includes('schedule_blocks')) {

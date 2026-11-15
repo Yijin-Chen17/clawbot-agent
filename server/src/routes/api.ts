@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { register, login, getMe } from '../controllers/authController.js';
+import { register, login, getMe, updateProfile, uploadAvatar, changePassword } from '../controllers/authController.js';
 import {
   listUsers,
   approveUser,
@@ -44,6 +44,9 @@ router.post('/webhook/clawbot/:token', handleClawbotWebhook);
 
 // ================= Protected Routes =================
 router.get('/auth/me', requireAuth, getMe);
+router.put('/auth/profile', requireAuth, updateProfile);
+router.post('/auth/avatar', requireAuth, uploadAvatar);
+router.put('/auth/password', requireAuth, changePassword);
 
 // User Settings
 router.get('/settings', requireAuth, getSettings);
