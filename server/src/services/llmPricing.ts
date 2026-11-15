@@ -187,6 +187,14 @@ export function recordApiUsage(
   }
 }
 
+export interface DailyHistoryPoint {
+  label: string;
+  date: string;
+  cost_cny: number;
+  tokens: number;
+  requests: number;
+}
+
 export interface UserUsageStats {
   summary: {
     totalRequests: number;
@@ -198,11 +206,16 @@ export interface UserUsageStats {
     totalCostCny: number;
     inputCostCny: number;
     outputCostCny: number;
-    savedCostCny: number; // 相比于全峰时未命中价格节省的金额
-    cacheHitRate: number; // 命中百分比 0 ~ 100
+    savedCostCny: number;
+    cacheHitRate: number;
   };
   currentStatus: DeepSeekPricingPeriod;
-  recentLogs: Array<{
+  dailyHistory: {
+    '1d': DailyHistoryPoint[];
+    '7d': DailyHistoryPoint[];
+    '30d': DailyHistoryPoint[];
+  };
+  recentLogs?: Array<{
     id: number;
     model: string;
     prompt_tokens: number;
@@ -220,7 +233,7 @@ export interface UserUsageStats {
 }
 
 /**
- * 查询指定用户的用量统计汇总与最近调用明细
+ * 查询指定用户的用量统计汇总与前 1天/7天/30天 价格曲线数据
  */
 export function getUserUsageStats(userId: number, currentModel: string = 'deepseek-chat'): UserUsageStats {
   const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
@@ -251,23 +264,11 @@ export function getUserUsageStats(userId: number, currentModel: string = 'deepse
     const inputCostCny = agg?.input_cost_cny || 0;
     const outputCostCny = agg?.output_cost_cny || 0;
 
-    // 计算如果全按高峰期标准未命中价格计算的基础理论成本：
-    // (Prompt / 1M * 2.0) + (Output / 1M * 8.0)
     const baselineCost = (promptTokens / 1_000_000) * 2.0 + (completionTokens / 1_000_000) * 8.0;
     const savedCostCny = Math.max(0, baselineCost - totalCostCny);
-
     const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
 
-    const recentLogs = db.prepare(`
-      SELECT 
-        id, model, prompt_tokens, completion_tokens, total_tokens,
-        cache_hit_tokens, cache_miss_tokens, is_peak, cost_cny,
-        input_cost_cny, output_cost_cny, request_type, created_at
-      FROM api_usage_logs
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT 50
-    `).all(userId) as any[];
+    const dailyHistory = getDailyHistory(userId);
 
     return {
       summary: {
@@ -284,7 +285,7 @@ export function getUserUsageStats(userId: number, currentModel: string = 'deepse
         cacheHitRate,
       },
       currentStatus,
-      recentLogs,
+      dailyHistory,
     };
   } catch (err: any) {
     console.error('[API Usage] Failed to query stats:', err.message);
@@ -303,9 +304,136 @@ export function getUserUsageStats(userId: number, currentModel: string = 'deepse
         cacheHitRate: 0,
       },
       currentStatus,
-      recentLogs: [],
+      dailyHistory: {
+        '1d': [],
+        '7d': [],
+        '30d': [],
+      },
     };
   }
+}
+
+/**
+ * 统计前 1 天 (按小时) / 7 天 / 30 天每日资费消耗曲线数据
+ */
+export function getDailyHistory(userId: number): {
+  '1d': DailyHistoryPoint[];
+  '7d': DailyHistoryPoint[];
+  '30d': DailyHistoryPoint[];
+} {
+  // 1. 今日 24 小时 (1d)
+  const todayRows = db.prepare(`
+    SELECT 
+      strftime('%H:00', created_at, '+8 hours') as hour,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE user_id = ? AND date(created_at, '+8 hours') = date('now', '+8 hours')
+    GROUP BY hour
+  `).all(userId) as any[];
+
+  const todayMap = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  todayRows.forEach((r) => {
+    todayMap.set(r.hour, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history1d: DailyHistoryPoint[] = [];
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0') + ':00';
+    const found = todayMap.get(hh);
+    history1d.push({
+      label: hh,
+      date: hh,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  // 2. 过去 7 天 (7d)
+  const rows7d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE user_id = ? AND date(created_at, '+8 hours') >= date('now', '+8 hours', '-6 days')
+    GROUP BY day
+  `).all(userId) as any[];
+
+  const map7d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows7d.forEach((r) => {
+    map7d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history7d: DailyHistoryPoint[] = [];
+  const now = new Date();
+  const bjNow = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map7d.get(dateStr);
+    history7d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  // 3. 过去 30 天 (30d)
+  const rows30d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE user_id = ? AND date(created_at, '+8 hours') >= date('now', '+8 hours', '-29 days')
+    GROUP BY day
+  `).all(userId) as any[];
+
+  const map30d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows30d.forEach((r) => {
+    map30d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history30d: DailyHistoryPoint[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map30d.get(dateStr);
+    history30d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  return {
+    '1d': history1d,
+    '7d': history7d,
+    '30d': history30d,
+  };
 }
 
 /**

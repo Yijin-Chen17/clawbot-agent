@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { QRCodeSVG } from 'qrcode.react';
+import { CostCurveChart } from './CostCurveChart';
 import {
   User,
   Sliders,
@@ -14,7 +15,6 @@ import {
   Copy,
   Check,
   RefreshCw,
-  Save,
   CheckCircle2,
   AlertCircle,
   QrCode,
@@ -22,10 +22,8 @@ import {
   LogOut,
   Trash2,
   Bell,
-  ChevronRight,
   Sparkles,
   Coins,
-  Zap,
   Menu,
   Lock,
   Mail,
@@ -332,31 +330,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       savedCostCny: number;
       cacheHitRate: number;
     };
-    currentStatus: {
-      isPeak: boolean;
-      periodLabel: string;
-      beijingTimeStr: string;
-      rates: {
-        cacheHitPerMillion: number;
-        cacheMissPerMillion: number;
-        outputPerMillion: number;
-      };
+    dailyHistory: {
+      '1d': Array<{ label: string; date: string; cost_cny: number; tokens: number; requests: number }>;
+      '7d': Array<{ label: string; date: string; cost_cny: number; tokens: number; requests: number }>;
+      '30d': Array<{ label: string; date: string; cost_cny: number; tokens: number; requests: number }>;
     };
-    recentLogs: Array<{
-      id: number;
-      model: string;
-      prompt_tokens: number;
-      completion_tokens: number;
-      total_tokens: number;
-      cache_hit_tokens: number;
-      cache_miss_tokens: number;
-      is_peak: number;
-      cost_cny: number;
-      input_cost_cny: number;
-      output_cost_cny: number;
-      request_type: string;
-      created_at: string;
-    }>;
   } | null>(null);
 
   const fetchLlmUsage = async () => {
@@ -499,26 +477,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const sectionOrder: readonly SectionType[] = [
-    'account',
-    'general',
-    'appearance',
-    'weixin',
-    'scheduler',
-    'notification',
-    'llm',
-    'calendar',
-  ];
-
-  const handleNextStep = () => {
-    const currentIndex = sectionOrder.indexOf(activeSection);
-    if (currentIndex < sectionOrder.length - 1) {
-      setActiveSection(sectionOrder[currentIndex + 1]);
-    } else {
-      setActiveSection(sectionOrder[0]);
-    }
-  };
-
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
@@ -567,6 +525,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       if (!settings?.weixin_connected) {
         fetchQrCode();
       }
+
+      setTimeout(() => {
+        isInitialLoadDone.current = true;
+      }, 500);
     } catch (err) {
       console.error('Failed to load settings:', err);
     } finally {
@@ -675,38 +637,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const handleSavePreferences = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (parsedSlotsInfo.error) {
-      alert('工作时间段格式有误：' + parsedSlotsInfo.error);
-      return;
-    }
+  const isInitialLoadDone = useRef(false);
 
-    setSaving(true);
-    setSaveSuccess(false);
+  // 自动保存偏好设置 (防抖 600ms)
+  useEffect(() => {
+    if (!isInitialLoadDone.current) return;
+    if (parsedSlotsInfo.error) return;
 
-    try {
-      await api.put('/settings', {
-        llm_endpoint: llmEndpoint,
-        llm_api_key: llmApiKey,
-        llm_model: llmModel,
-        work_slots: parsedSlotsInfo.slots,
-        task_buffer_minutes: Number(taskBuffer),
-        reminder_before_start_minutes: Number(remindStart),
-        reminder_before_end_minutes: Number(remindEnd),
-        calendar_sync_interval_minutes: Number(calSyncInterval),
-        advance_deadline_days: Number(advanceDeadlineDays),
-      });
+    const timer = setTimeout(async () => {
+      try {
+        setSaving(true);
+        await api.put('/settings', {
+          llm_endpoint: llmEndpoint,
+          llm_api_key: llmApiKey,
+          llm_model: llmModel,
+          work_slots: parsedSlotsInfo.slots,
+          task_buffer_minutes: Number(taskBuffer),
+          reminder_before_start_minutes: Number(remindStart),
+          reminder_before_end_minutes: Number(remindEnd),
+          calendar_sync_interval_minutes: Number(calSyncInterval),
+          advance_deadline_days: Number(advanceDeadlineDays),
+        });
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2000);
+      } catch (err) {
+        console.error('自动保存失败:', err);
+      } finally {
+        setSaving(false);
+      }
+    }, 600);
 
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: string } }; message?: string };
-      alert('保存失败：' + (error.response?.data?.error || error.message || '未知错误'));
-    } finally {
-      setSaving(false);
-    }
-  };
+    return () => clearTimeout(timer);
+  }, [
+    llmEndpoint,
+    llmApiKey,
+    llmModel,
+    workSlotsText,
+    taskBuffer,
+    remindStart,
+    remindEnd,
+    calSyncInterval,
+    advanceDeadlineDays,
+  ]);
 
   const handleAddSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -836,7 +808,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     title: string,
     subtitle: string,
     statusBadge?: React.ReactNode,
-    hideGlobalSave?: boolean
+    _hideGlobalSave?: boolean
   ) => (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
       <div className="flex items-center gap-3">
@@ -863,38 +835,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       </div>
 
       <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-        {!hideGlobalSave && (
-          <button
-            type="button"
-            onClick={handleSavePreferences}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-50 dark:bg-[#28292a] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-full shadow-2xs transition disabled:opacity-50 cursor-pointer"
-          >
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <Save className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
-            <span>{saving ? t('common.saving') : t('common.save')}</span>
-          </button>
+        {saving && (
+          <span className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 font-medium animate-fadeIn">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <span>{language === 'zh' ? '正在自动保存...' : 'Auto-saving...'}</span>
+          </span>
         )}
-
-        <button
-          type="button"
-          onClick={handleNextStep}
-          className="flex items-center gap-1 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold text-xs rounded-full shadow-xs transition cursor-pointer"
-        >
-          <span>{activeSection === 'calendar' ? t('common.back') : t('common.next')}</span>
-          <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
-        </button>
+        {!saving && saveSuccess && (
+          <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium animate-fadeIn">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>{language === 'zh' ? '已自动保存' : 'Auto-saved'}</span>
+          </span>
+        )}
       </div>
     </div>
   );
 
   return (
     <div className="w-full flex-1 min-h-0 flex flex-col space-y-2.5 overflow-hidden">
-      {saveSuccess && (
-        <div className="shrink-0 flex items-center gap-2 px-3.5 py-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-medium animate-fadeIn">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span>{t('common.saved')}</span>
-        </div>
-      )}
 
       {/* Mobile Horizontal Tabs Rail */}
       <div className="lg:hidden shrink-0 flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
@@ -2106,18 +2064,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 )}
 
                 {/* 用量与资费监控卡片 */}
-                <div className="pt-6 border-t border-gray-100 dark:border-neutral-800 space-y-5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Coins className="w-4 h-4 text-amber-500" />
-                        <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {t('llm.usage_title')}
-                        </h3>
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
-                        {t('llm.usage_subtitle')}
-                      </p>
+                <div className="pt-6 border-t border-gray-100 dark:border-neutral-800 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Coins className="w-4 h-4 text-amber-500" />
+                      <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                        {t('llm.usage_title')}
+                      </h3>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -2141,66 +2094,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     </div>
                   </div>
 
-                  {/* 当前时段计费规则横幅 */}
-                  {llmUsageData?.currentStatus && (
-                    <div className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                      llmUsageData.currentStatus.isPeak
-                        ? 'bg-amber-50/70 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50'
-                        : 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50'
-                    }`}>
-                      <div className="flex items-start sm:items-center gap-3">
-                        <div className={`p-2 rounded-xl shrink-0 ${
-                          llmUsageData.currentStatus.isPeak
-                            ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'
-                            : 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300'
-                        }`}>
-                          <Zap className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                              llmUsageData.currentStatus.isPeak
-                                ? 'bg-amber-200/80 dark:bg-amber-900 text-amber-900 dark:text-amber-200'
-                                : 'bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200'
-                            }`}>
-                              {llmUsageData.currentStatus.isPeak ? t('llm.peak_period') : t('llm.off_peak_period')}
-                            </span>
-                            <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">
-                              北京时间: {llmUsageData.currentStatus.beijingTimeStr}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-gray-600 dark:text-neutral-400 mt-1">
-                            {llmUsageData.currentStatus.isPeak ? t('llm.peak_desc') : t('llm.off_peak_desc')}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 text-[11px] font-mono text-gray-700 dark:text-neutral-300 bg-white/70 dark:bg-neutral-900/60 p-2.5 rounded-xl border border-gray-200/50 dark:border-neutral-800 shrink-0">
-                        <div>
-                          <span className="text-gray-400 block text-[10px]">缓存命中</span>
-                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                            ¥{llmUsageData.currentStatus.rates.cacheHitPerMillion}/1M
-                          </span>
-                        </div>
-                        <div className="w-px h-6 bg-gray-200 dark:bg-neutral-700" />
-                        <div>
-                          <span className="text-gray-400 block text-[10px]">未命中</span>
-                          <span className="font-semibold">
-                            ¥{llmUsageData.currentStatus.rates.cacheMissPerMillion}/1M
-                          </span>
-                        </div>
-                        <div className="w-px h-6 bg-gray-200 dark:bg-neutral-700" />
-                        <div>
-                          <span className="text-gray-400 block text-[10px]">输出</span>
-                          <span className="font-semibold">
-                            ¥{llmUsageData.currentStatus.rates.outputPerMillion}/1M
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 4 块核心统计指标卡片 */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* 核心统计指标卡片 (总消费、输入 Tokens、输出 Tokens) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
                       <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
                         {t('llm.total_cost')}
@@ -2210,18 +2105,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       </div>
                       <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
                         共 {llmUsageData?.summary?.totalRequests || 0} 次 API 调用
-                      </div>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
-                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
-                        {t('llm.hit_rate')} & 节省
-                      </span>
-                      <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
-                        {(llmUsageData?.summary?.cacheHitRate || 0).toFixed(1)}%
-                      </div>
-                      <div className="text-[10px] text-emerald-700 dark:text-emerald-300 mt-1 font-mono">
-                        已省 ¥{(llmUsageData?.summary?.savedCostCny || 0).toFixed(4)}
                       </div>
                     </div>
 
@@ -2252,72 +2135,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     </div>
                   </div>
 
-                  {/* 调用记录明细表 */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
-                      {t('llm.history_title')}
-                    </div>
-                    {(!llmUsageData?.recentLogs || llmUsageData.recentLogs.length === 0) ? (
-                      <div className="p-8 text-center border border-dashed border-gray-200 dark:border-neutral-800 rounded-2xl text-xs text-gray-400 dark:text-neutral-500">
-                        {t('llm.no_records')}
-                      </div>
-                    ) : (
-                      <div className="border border-gray-200 dark:border-neutral-800 rounded-2xl overflow-hidden shadow-2xs">
-                        <div className="max-h-64 overflow-y-auto">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-gray-50/90 dark:bg-neutral-800/90 sticky top-0 text-[11px] font-semibold text-gray-600 dark:text-neutral-400 border-b border-gray-200 dark:border-neutral-800 backdrop-blur-xs">
-                              <tr>
-                                <th className="py-2.5 px-3 font-medium">{t('llm.time')}</th>
-                                <th className="py-2.5 px-3 font-medium">{t('llm.period')}</th>
-                                <th className="py-2.5 px-3 font-medium">模型</th>
-                                <th className="py-2.5 px-3 font-medium">{t('llm.prompt_breakdown')}</th>
-                                <th className="py-2.5 px-3 font-medium">{t('llm.output')}</th>
-                                <th className="py-2.5 px-3 font-medium text-right">{t('llm.cost')}</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/60 font-mono">
-                              {llmUsageData.recentLogs.map((log) => (
-                                <tr key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-neutral-800/30 transition-colors">
-                                  <td className="py-2 px-3 text-[11px] text-gray-500 dark:text-neutral-400 whitespace-nowrap">
-                                    {new Date(log.created_at).toLocaleString('zh-CN', {
-                                      month: '2-digit',
-                                      day: '2-digit',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                      second: '2-digit',
-                                    })}
-                                  </td>
-                                  <td className="py-2 px-3 whitespace-nowrap">
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                      log.is_peak === 1
-                                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
-                                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                    }`}>
-                                      {log.is_peak === 1 ? '峰时' : '谷时 (5折)'}
-                                    </span>
-                                  </td>
-                                  <td className="py-2 px-3 text-[11px] text-gray-700 dark:text-neutral-300 whitespace-nowrap">
-                                    {log.model}
-                                  </td>
-                                  <td className="py-2 px-3 text-[11px] whitespace-nowrap">
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{log.cache_hit_tokens}</span>
-                                    <span className="text-gray-400 mx-1">/</span>
-                                    <span className="text-gray-700 dark:text-neutral-300">{log.cache_miss_tokens}</span>
-                                  </td>
-                                  <td className="py-2 px-3 text-[11px] text-purple-600 dark:text-purple-400 whitespace-nowrap">
-                                    {log.completion_tokens}
-                                  </td>
-                                  <td className="py-2 px-3 text-[11px] font-bold text-gray-900 dark:text-gray-100 text-right whitespace-nowrap">
-                                    ¥{log.cost_cny < 0.0001 ? log.cost_cny.toFixed(6) : log.cost_cny.toFixed(4)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {/* 每一天的消耗价格曲线图表 (前1天 / 前7天 / 前30天 可选择) */}
+                  <CostCurveChart data={llmUsageData?.dailyHistory} loading={llmUsageLoading} />
                 </div>
               </div>
             </div>
