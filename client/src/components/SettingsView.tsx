@@ -32,7 +32,6 @@ import {
   Monitor,
   Eye,
   EyeOff,
-  ShieldCheck,
   Volume2,
   VolumeX,
   Languages,
@@ -1050,14 +1049,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     <span>{showPassword ? '隐藏明文' : '显示明文'}</span>
                   </button>
-                </div>
-
-                <div className="p-3 bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/70 dark:border-blue-900/60 rounded-xl text-[11px] text-blue-800 dark:text-blue-300 flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                  <p>
-                    <strong>安全哈希保护：</strong>
-                    服务器端仅采用不可逆 Bcrypt 加盐强哈希存储您的密码，绝不会以任何明文形式保留或记录您的密码。
-                  </p>
                 </div>
 
                 {passwordSuccess && (
