@@ -177,6 +177,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       dueDate: effectiveDueDate,
       tags: Array.isArray(t.tags) ? t.tags : (t.tags ? String(t.tags).split(',').map((s: string) => s.trim()).filter(Boolean) : []),
       estimatedMinutes: t.duration_minutes || 60,
+      isFixed: Boolean(t.is_fixed),
+      isConcurrent: Boolean(t.is_concurrent),
+      scheduledStart: t.scheduled_start,
+      scheduledEnd: t.scheduled_end,
       createdAt: t.created_at || new Date().toISOString(),
       completedAt: isCompleted ? (t.updated_at || new Date().toISOString()) : null,
       algorithmStatusText: algo.statusText,
@@ -343,6 +347,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     dueDate?: string | null;
     tags?: string[];
     estimatedMinutes?: number;
+    isFixed?: boolean;
+    isConcurrent?: boolean;
+    scheduledStart?: string | null;
+    scheduledEnd?: string | null;
   }) => {
     try {
       const payload = {
@@ -351,8 +359,12 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importance: data.importance,
         urgency: data.urgency,
         deadline: data.dueDate ? new Date(data.dueDate).toISOString() : null,
+        scheduled_start: data.scheduledStart || null,
+        scheduled_end: data.scheduledEnd || null,
+        is_fixed: data.isFixed ? 1 : 0,
+        is_concurrent: data.isConcurrent ? 1 : 0,
         notes: data.description || '',
-        auto_schedule: true,
+        auto_schedule: !data.isFixed,
       };
 
       if (editingTask) {

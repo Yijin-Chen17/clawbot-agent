@@ -551,6 +551,41 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
+  const handleCompletePart = async (taskId: number) => {
+    try {
+      const res = await api.post(`/tasks/${taskId}/complete-part`, {});
+      alert(res.data.message);
+      setSelectedItem(null);
+      setSelectedDueTask(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || '操作失败');
+    }
+  };
+
+  const handleCompleteTask = async (taskId: number) => {
+    try {
+      await api.post(`/tasks/${taskId}/action`, { action: 'complete' });
+      setSelectedItem(null);
+      setSelectedDueTask(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || '操作失败');
+    }
+  };
+
+  const handleDeleteCalendarTask = async (taskId: number) => {
+    if (!confirm('确定删除该待办任务吗？')) return;
+    try {
+      await api.delete(`/tasks/${taskId}`);
+      setSelectedItem(null);
+      setSelectedDueTask(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || '删除失败');
+    }
+  };
+
   const gridHeight = (GRID_MINUTES / 60) * HOUR_HEIGHT;
   const restTop = (REST_START_MINUTES / 60) * HOUR_HEIGHT;
   const restHeight = ((GRID_MINUTES - REST_START_MINUTES) / 60) * HOUR_HEIGHT;
@@ -1281,15 +1316,63 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
             )}
 
-            <button
-              onClick={() => {
-                setSelectedItem(null);
-                setSelectedDueTask(null);
-              }}
-              className="w-full py-1.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-xs font-semibold rounded-xl transition cursor-pointer"
-            >
-              关闭
-            </button>
+            {/* 操作按钮区 */}
+            <div className="pt-2 border-t border-gray-100 dark:border-neutral-800 space-y-1.5">
+              {selectedItem?.kind === 'task' && (
+                <>
+                  <button
+                    onClick={() => handleCompletePart(selectedItem.task.id)}
+                    className="w-full py-1.5 px-3 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    完成此分段 (自动扣减剩余耗时)
+                  </button>
+                  <button
+                    onClick={() => handleCompleteTask(selectedItem.task.id)}
+                    className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    标记整个待办全部完成
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
+                    className="w-full py-1.5 px-3 bg-red-50 hover:bg-red-100 dark:bg-red-950/60 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    删除该待办任务
+                  </button>
+                </>
+              )}
+
+              {selectedDueTask && (
+                <>
+                  <button
+                    onClick={() => handleCompleteTask(selectedDueTask.id)}
+                    className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    标记已完成
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCalendarTask(selectedDueTask.id)}
+                    className="w-full py-1.5 px-3 bg-red-50 hover:bg-red-100 dark:bg-red-950/60 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    删除任务
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={() => {
+                  setSelectedItem(null);
+                  setSelectedDueTask(null);
+                }}
+                className="w-full py-1.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
       )}

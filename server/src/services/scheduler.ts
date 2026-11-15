@@ -52,6 +52,9 @@ export interface ScheduleOptions {
   dinnerEndHour?: number;          // 默认 19.0
   minChunkMinutes?: number;        // 跨槽拆分时的最小单块时长，默认 30 分钟
   allowSplit?: boolean;            // 当全天无单槽可完整容纳时，是否允许跨槽拆分
+  advanceDeadlineDays?: number;    // 提前截止缓冲天数 (尽可能在 DDL 前 N 天完成)
+  releaseTimeMs?: number;
+  rolloverTaskIds?: Set<number>;
 }
 
 export interface SchedulingResult {
@@ -435,8 +438,11 @@ function runSingleDaySchedule(
     if (t.status === 'completed') return false;
     if (targetDateStr < todayStr) return false;
     if (t.deadline) {
-      const ddlStr = t.deadline.slice(0, 10);
-      if (targetDateStr > ddlStr && targetDateStr > todayStr && !rolloverTaskIds?.has(t.id)) {
+      const advanceDays = options.advanceDeadlineDays ?? 1;
+      const ddlDate = new Date(t.deadline);
+      const effectiveDdlMs = ddlDate.getTime() - advanceDays * 86400000;
+      const effectiveDdlStr = formatLocalDate(new Date(Math.max(Date.now(), effectiveDdlMs)));
+      if (targetDateStr > effectiveDdlStr && targetDateStr > todayStr && !rolloverTaskIds?.has(t.id)) {
         return false;
       }
     }
@@ -561,6 +567,19 @@ function runSingleDaySchedule(
   for (const task of orderedQueue) {
     const totalTaskMinutes = task.duration_minutes > 0 ? task.duration_minutes : 45;
 
+    // 长任务分阶段均衡规划：避免长任务全挤在同一天（如期末复习20小时分散在考前各天）
+    let taskMinutesForToday = totalTaskMinutes;
+    if (totalTaskMinutes >= 180 && task.deadline) {
+      const ddlMs = new Date(task.deadline).getTime();
+      const targetMs = targetDate.getTime();
+      const daysDiff = Math.max(1, Math.ceil((ddlMs - targetMs) / 86400000));
+      if (daysDiff >= 2) {
+        const idealDaily = Math.ceil(totalTaskMinutes / daysDiff);
+        // 单日排程上限在 45 ~ 180 分钟之间，避免单日过载
+        taskMinutesForToday = Math.max(45, Math.min(180, idealDaily));
+      }
+    }
+
     if (dailyScheduledMinutes >= maxDailyTaskMinutes) {
       unscheduledTaskIds.push({
         taskId: task.id,
@@ -580,7 +599,7 @@ function runSingleDaySchedule(
       continue;
     }
 
-    const plannedSessions = splitIntoFocusSessions(totalTaskMinutes, maxContinuousMinutes);
+    const plannedSessions = splitIntoFocusSessions(taskMinutesForToday, maxContinuousMinutes);
     const totalContiguousSpan =
       plannedSessions.reduce((acc, m) => acc + m, 0) +
       Math.max(0, plannedSessions.length - 1) * taskRestMinutes;
@@ -607,10 +626,10 @@ function runSingleDaySchedule(
       }
     }
 
-    if (bestContiguousSlot && totalTaskMinutes <= remainingCapacity) {
+    if (bestContiguousSlot && taskMinutesForToday <= remainingCapacity) {
       allocateSessionsInSlot(bestContiguousSlot, plannedSessions, partsAllocated);
     } else if (allowSplit) {
-      let remainingToSchedule = Math.min(totalTaskMinutes, remainingCapacity);
+      let remainingToSchedule = Math.min(taskMinutesForToday, remainingCapacity);
 
       while (remainingToSchedule > 0) {
         const desiredSession = splitIntoFocusSessions(remainingToSchedule, maxContinuousMinutes)[0];
@@ -692,7 +711,7 @@ function runSingleDaySchedule(
       unscheduledTaskIds.push({
         taskId: task.id,
         remainingMinutes: unscheduledMin,
-        reason: '当天专注负荷达上限或无合适空闲槽，自动顺延',
+        reason: '长任务阶段排程或当天无更多合适空闲槽，自动顺延后续日期',
       });
     }
   }
@@ -775,14 +794,41 @@ export function replanUserTasks(userId: number): {
     isAllDay: Boolean(e.is_all_day),
   }));
 
+  // 1. 固定任务处理 (is_fixed = 1)：时间固定，不参与自动重排，其他任务自动避让
+  const fixedTasks = activeTasks.filter(t => t.is_fixed === 1 && t.scheduled_start && t.scheduled_end);
+  const nonFixedTasks = activeTasks.filter(t => t.is_fixed !== 1);
+
+  const taskAllocations = new Map<number, ScheduledTaskBlock[]>();
+
+  for (const ft of fixedTasks) {
+    parsedFixedEvents.push({
+      id: `fixed-task-${ft.id}`,
+      title: `[固定] ${ft.title}`,
+      start: new Date(ft.scheduled_start!),
+      end: new Date(ft.scheduled_end!),
+      isAllDay: false,
+    });
+    taskAllocations.set(ft.id, [{
+      id: `sched-fixed-${ft.id}`,
+      taskId: ft.id,
+      title: ft.title,
+      start: new Date(ft.scheduled_start!),
+      end: new Date(ft.scheduled_end!),
+      durationMinutes: ft.duration_minutes,
+      isSplit: false,
+      quadrant: 'q1',
+      importance: ft.importance,
+      urgency: ft.urgency,
+    }]);
+  }
+
   // 对齐当前时间至 5 分钟刻度下界
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
 
-  const taskMap = new Map<number, Task>(activeTasks.map(t => [t.id, t]));
-  const taskAllocations = new Map<number, ScheduledTaskBlock[]>();
-
-  let remainingTaskIds = new Set<number>(activeTasks.map(t => t.id));
+  const taskMap = new Map<number, Task>(nonFixedTasks.map(t => [t.id, { ...t }]));
+  let remainingTaskIds = new Set<number>(nonFixedTasks.map(t => t.id));
   let rolloverTaskIds = new Set<number>();
+  const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
 
   for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
     if (remainingTaskIds.size === 0) break;
@@ -809,6 +855,7 @@ export function replanUserTasks(userId: number): {
       dinnerEndHour: 19.0,
       minChunkMinutes: 30,
       allowSplit: true,
+      advanceDeadlineDays,
       releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
       rolloverTaskIds,
     });
@@ -830,6 +877,10 @@ export function replanUserTasks(userId: number): {
     for (const unsched of dayResult.unscheduledTaskIds) {
       if (!unsched.reason.includes('象限 IV')) {
         nextRollover.add(unsched.taskId);
+        const tRef = taskMap.get(unsched.taskId);
+        if (tRef) {
+          tRef.duration_minutes = unsched.remainingMinutes;
+        }
       }
     }
     rolloverTaskIds = nextRollover;
@@ -1024,5 +1075,89 @@ export function scheduleTask(
   return {
     success: false,
     message: '在未来14天的工作时间与空闲槽范围内，未找到合适的时间段。',
+  };
+}
+
+/**
+ * 完成分段任务或指定时长的部分任务（如 5 小时完成 2 小时，剩余自动扣减为 3 小时并自适应重排）
+ */
+export function completeTaskPart(
+  userId: number,
+  taskId: number,
+  completedMinutes?: number,
+  partIndex?: number
+): {
+  success: boolean;
+  message: string;
+  remainingMinutes: number;
+  isAllCompleted: boolean;
+  task?: Task;
+} {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) as Task | undefined;
+  if (!task) {
+    return { success: false, message: '未找到指定任务', remainingMinutes: 0, isAllCompleted: false };
+  }
+
+  let blocks: any[] = [];
+  if (task.schedule_blocks) {
+    try {
+      blocks = JSON.parse(task.schedule_blocks);
+    } catch {}
+  }
+
+  let minutesDeducted = completedMinutes || 0;
+
+  if (partIndex !== undefined && Array.isArray(blocks) && blocks.length > 0) {
+    const block = blocks.find((b: any) => b.partIndex === partIndex && !b.completed);
+    if (block) {
+      block.completed = true;
+      if (!minutesDeducted) {
+        minutesDeducted = block.duration || 30;
+      }
+    }
+  } else if (!minutesDeducted && Array.isArray(blocks) && blocks.length > 0) {
+    const block = blocks.find((b: any) => !b.completed);
+    if (block) {
+      block.completed = true;
+      minutesDeducted = block.duration || 30;
+    }
+  }
+
+  if (minutesDeducted <= 0) {
+    minutesDeducted = Math.min(task.duration_minutes, 60);
+  }
+
+  const remaining = Math.max(0, task.duration_minutes - minutesDeducted);
+  const isAllCompleted = remaining === 0;
+
+  if (isAllCompleted) {
+    db.prepare(`
+      UPDATE tasks
+      SET duration_minutes = 0,
+          status = 'completed',
+          schedule_blocks = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(blocks), taskId);
+  } else {
+    db.prepare(`
+      UPDATE tasks
+      SET duration_minutes = ?,
+          schedule_blocks = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(remaining, JSON.stringify(blocks), taskId);
+    replanUserTasks(userId);
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Task;
+  return {
+    success: true,
+    message: isAllCompleted
+      ? `🎉 恭喜！任务「${task.title}」已全部完成！`
+      : `✅ 已完成「${task.title}」本次专注节（消耗 ${minutesDeducted} 分钟），剩余 ${remaining} 分钟已自动扣减并重新自适应排程！`,
+    remainingMinutes: remaining,
+    isAllCompleted,
+    task: updated,
   };
 }

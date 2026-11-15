@@ -16,6 +16,10 @@ export interface TaskItem {
   dueDate?: string | null;    // 截止日期 (YYYY-MM-DD)
   tags: string[];             // 自定义标签
   estimatedMinutes?: number;  // 预计耗时 (分钟)
+  isFixed?: boolean;          // 固定任务
+  isConcurrent?: boolean;     // 双线程任务
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
   createdAt: string;          // ISO 字符串
   completedAt?: string | null;// 完成时间
   algorithmStatusText?: string;// 算法给出的时间迫近描述

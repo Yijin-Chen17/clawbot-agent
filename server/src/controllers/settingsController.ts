@@ -39,6 +39,7 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     reminder_before_start_minutes,
     reminder_before_end_minutes,
     calendar_sync_interval_minutes,
+    advance_deadline_days,
   } = req.body;
 
   // Validate work_slots JSON or human-friendly string (e.g. "00:00-02:00, 13:00-18:00")
@@ -74,9 +75,9 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       clawbot_outbound_url, clawbot_outbound_key, clawbot_to_wxid,
       work_slots, task_buffer_minutes, reminder_before_start_minutes,
       reminder_before_end_minutes, calendar_sync_interval_minutes,
-      updated_at
+      advance_deadline_days, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET
       llm_endpoint = COALESCE(excluded.llm_endpoint, user_settings.llm_endpoint),
       llm_api_key = COALESCE(excluded.llm_api_key, user_settings.llm_api_key),
@@ -89,6 +90,7 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       reminder_before_start_minutes = COALESCE(excluded.reminder_before_start_minutes, user_settings.reminder_before_start_minutes),
       reminder_before_end_minutes = COALESCE(excluded.reminder_before_end_minutes, user_settings.reminder_before_end_minutes),
       calendar_sync_interval_minutes = COALESCE(excluded.calendar_sync_interval_minutes, user_settings.calendar_sync_interval_minutes),
+      advance_deadline_days = COALESCE(excluded.advance_deadline_days, user_settings.advance_deadline_days),
       updated_at = CURRENT_TIMESTAMP
   `).run(
     userId,
@@ -102,7 +104,8 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     task_buffer_minutes ?? 10,
     reminder_before_start_minutes ?? 5,
     reminder_before_end_minutes ?? 5,
-    calendar_sync_interval_minutes ?? 60
+    calendar_sync_interval_minutes ?? 60,
+    advance_deadline_days ?? 1
   );
 
   res.json({ message: '配置已保存成功！' });

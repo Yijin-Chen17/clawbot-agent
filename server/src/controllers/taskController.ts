@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task } from '../models/types.js';
-import { scheduleTask, replanUserTasks } from '../services/scheduler.js';
+import { scheduleTask, replanUserTasks, completeTaskPart } from '../services/scheduler.js';
 
 export function listTasks(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -35,6 +35,10 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     urgency = 3,
     importance = 3,
     deadline,
+    scheduled_start,
+    scheduled_end,
+    is_fixed = 0,
+    is_concurrent = 0,
     auto_schedule = true,
     notes,
   } = req.body;
@@ -44,12 +48,15 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  let scheduledStart: string | null = null;
-  let scheduledEnd: string | null = null;
+  let finalStart: string | null = scheduled_start || null;
+  let finalEnd: string | null = scheduled_end || null;
   let status = 'pending_slot';
   let scheduleMsg = '';
 
-  if (auto_schedule) {
+  if (is_fixed && finalStart && finalEnd) {
+    status = 'scheduled';
+    scheduleMsg = '固定任务已创建并锁定时间段！';
+  } else if (auto_schedule) {
     const plan = scheduleTask(userId, {
       title,
       duration_minutes: Number(duration_minutes),
@@ -59,8 +66,8 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     });
 
     if (plan.success && plan.scheduled_start && plan.scheduled_end) {
-      scheduledStart = plan.scheduled_start;
-      scheduledEnd = plan.scheduled_end;
+      finalStart = plan.scheduled_start;
+      finalEnd = plan.scheduled_end;
       status = 'scheduled';
       scheduleMsg = '任务已成功自动排程！';
     } else {
@@ -70,27 +77,28 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
 
   const result = db.prepare(`
     INSERT INTO tasks (
-      user_id, title, duration_minutes, urgency, importance,
-      deadline, scheduled_start, scheduled_end, status, notes
+      user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+      deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
     Number(duration_minutes),
+    Number(duration_minutes),
     Number(urgency),
     Number(importance),
     deadline || null,
-    scheduledStart,
-    scheduledEnd,
+    finalStart,
+    finalEnd,
+    is_fixed ? 1 : 0,
+    is_concurrent ? 1 : 0,
     status,
     notes || null
   );
 
   const newId = result.lastInsertRowid;
-  if (auto_schedule) {
-    replanUserTasks(userId);
-  }
+  replanUserTasks(userId);
   const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId);
 
   res.status(201).json({
@@ -110,6 +118,8 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     deadline,
     scheduled_start,
     scheduled_end,
+    is_fixed,
+    is_concurrent,
     status,
     notes,
     auto_schedule,
@@ -131,6 +141,8 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
       deadline = ?,
       scheduled_start = ?,
       scheduled_end = ?,
+      is_fixed = COALESCE(?, is_fixed),
+      is_concurrent = COALESCE(?, is_concurrent),
       status = COALESCE(?, status),
       notes = ?,
       updated_at = CURRENT_TIMESTAMP
@@ -143,18 +155,31 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     deadline !== undefined ? deadline : existing.deadline,
     scheduled_start !== undefined ? scheduled_start : existing.scheduled_start,
     scheduled_end !== undefined ? scheduled_end : existing.scheduled_end,
+    is_fixed !== undefined ? (is_fixed ? 1 : 0) : existing.is_fixed,
+    is_concurrent !== undefined ? (is_concurrent ? 1 : 0) : existing.is_concurrent,
     status,
     notes !== undefined ? notes : existing.notes,
     id,
     userId
   );
 
-  if (auto_schedule || (auto_schedule === undefined && scheduled_start === undefined && (duration_minutes !== undefined || urgency !== undefined || importance !== undefined || deadline !== undefined))) {
-    replanUserTasks(userId);
-  }
+  replanUserTasks(userId);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
   res.json({ message: '任务更新成功并已排程入日历', task: updated });
+}
+
+export function completePartTask(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { completed_minutes, part_index } = req.body;
+
+  const result = completeTaskPart(userId, Number(id), completed_minutes, part_index);
+  if (!result.success) {
+    res.status(400).json({ error: result.message });
+    return;
+  }
+  res.json(result);
 }
 
 export function deleteTask(req: AuthenticatedRequest, res: Response): void {

@@ -119,6 +119,9 @@ export function initDatabase() {
   addCol('weixin_sync_buf', 'TEXT', "''");
   addCol('weixin_nickname', 'TEXT', "''");
   addCol('weixin_context_token', 'TEXT', "''");
+  addCol('advance_deadline_days', 'INTEGER', '1');
+  addCol('weixin_activated', 'INTEGER', '0');
+  addCol('weixin_last_active_at', 'DATETIME', 'NULL');
 
   // Migrate users table columns if missing (nickname, avatar_url)
   const userCols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map(c => c.name);
@@ -133,6 +136,15 @@ export function initDatabase() {
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
   if (!taskCols.includes('schedule_blocks')) {
     db.exec('ALTER TABLE tasks ADD COLUMN schedule_blocks TEXT DEFAULT NULL;');
+  }
+  if (!taskCols.includes('is_fixed')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN is_fixed INTEGER DEFAULT 0;');
+  }
+  if (!taskCols.includes('is_concurrent')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN is_concurrent INTEGER DEFAULT 0;');
+  }
+  if (!taskCols.includes('original_duration_minutes')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN original_duration_minutes INTEGER DEFAULT 0;');
   }
 
   // Seed initial admin if database has no users

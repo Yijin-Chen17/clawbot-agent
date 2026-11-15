@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
-import { UserSettings, Task, ConversationState } from '../models/types.js';
+import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
 import { parseUserMessageWithLLM } from './llm.js';
-import { scheduleTask, replanUserTasks } from './scheduler.js';
+import { scheduleTask, replanUserTasks, completeTaskPart } from './scheduler.js';
 import { syncAllUserSubscriptions } from './calendarSync.js';
 import { renderCalendarImage, renderWeekCalendarImage, renderTodoListImage } from './cardRenderer.js';
 import { templates } from './clawbot.js';
@@ -363,6 +363,34 @@ export async function sendWeixinImageMessage(
 }
 
 /**
+ * Build rich WeChat help instructions
+ */
+function getHelpMessage(isActivation = false): string {
+  const prefix = isActivation
+    ? `🎉【微信助手激活成功】\n欢迎使用 Clawbot 智能日程管家！\n外部推送通道已打通。\n\n⚠️ 重要须知：根据微信平台规则，外部机器人仅能在您发送消息后的 24 小时内主动下发提醒；请保持每 24 小时至少向我发送一条消息（如回复“查看日历”），以确保每日规划与任务提醒准时送达。\n\n`
+    : `📖【Clawbot 微信使用指南与指令集】\n\n`;
+
+  return (
+    prefix +
+    `📅【查询日程与日历】\n` +
+    `• 发送“查看日历”/“日历”/“周日历”：获取完整周 24小时亮色日程网格图\n` +
+    `• 发送“查看任务”/“待办清单”/“todo”：查看待办事项清单图\n` +
+    `• 发送“重新排程”/“智能排程”：按最新紧急度与时间自动重排\n\n` +
+    `✏️【智能添加任务】\n` +
+    `• 常规任务：如“明天下午写代码2小时，重要且紧急，周三前交”\n` +
+    `• 固定任务：如“安排固定任务 明天下午2点到4点部门开会”（固定时段，不参与自动重排）\n` +
+    `• 双线程任务：如“安排双线程任务 听英文播客1小时”（允许与其他日程时间重叠）\n` +
+    `• 长期/考试任务：如“15天后期末考复习20小时”（系统将自动按每天1~2小时均衡分段并在截止前完成）\n\n` +
+    `🔄【任务修改与删除】\n` +
+    `• 删除：发送“删除任务 开会”或“删掉下午的复习”\n` +
+    `• 修改：发送“把明天的复习改成固定任务：明天上午10点”或“把周报时长改成1小时”\n` +
+    `• 分段完成：发送“完成任务 [名称]”或“完成第1段任务”（自动扣减总耗时，如 5h-2h=3h）\n` +
+    `• 延长时长：发送“时间不够，延半小时”\n\n` +
+    `💡 提示：随时回复“help”或“帮助”可重新查看本指令清单。`
+  );
+}
+
+/**
  * 4. Process incoming user WeChat message through LLM & Scheduler
  */
 export async function processWeChatMessage(
@@ -381,7 +409,43 @@ export async function processWeChatMessage(
 
   addDebugLog('Weixin', 'info', `📩 接收到微信用户 #${userId} 文本: "${content}"`);
 
+  // Track activation & last active timestamp for 24h interactive window
+  const isFirstActivation = !settings.weixin_activated;
+  db.prepare(`
+    UPDATE user_settings
+    SET weixin_activated = 1,
+        weixin_last_active_at = datetime('now', 'localtime')
+    WHERE user_id = ?
+  `).run(userId);
+
   const trimmed = content.trim();
+
+  // First message activation welcome
+  if (isFirstActivation) {
+    addDebugLog('Weixin', 'success', `🎉 用户 #${userId} 发送首条消息完成激活`);
+    return {
+      replyText: getHelpMessage(true),
+      diagnostics: { intent: 'activation' },
+    };
+  }
+
+  // Help command
+  if (
+    trimmed.toLowerCase() === 'help' ||
+    trimmed === '帮助' ||
+    trimmed === '查看帮助' ||
+    trimmed === '指令' ||
+    trimmed === '指令集' ||
+    trimmed === '使用指南' ||
+    trimmed === '使用方法' ||
+    trimmed === '菜单' ||
+    trimmed.toLowerCase() === '/help'
+  ) {
+    return {
+      replyText: getHelpMessage(false),
+      diagnostics: { intent: 'help' },
+    };
+  }
 
   // 1. Direct Trigger Command: "查看日历" / "今日日程" / "刷新日历" / "我的日历" / "周日历" / "本周日历"
   if (
@@ -526,19 +590,35 @@ export async function processWeChatMessage(
       db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
       const action = parsed.status_action || 'complete';
 
-      const activeTask = db.prepare(`
-        SELECT * FROM tasks
-        WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
-        ORDER BY CASE status WHEN 'in_progress' THEN 1 ELSE 2 END, scheduled_start ASC
-        LIMIT 1
-      `).get(userId) as Task | undefined;
+      let activeTask: Task | undefined;
+      if (parsed.target_task_name) {
+        activeTask = db.prepare(`
+          SELECT * FROM tasks
+          WHERE user_id = ? AND title LIKE ? AND status IN ('scheduled', 'in_progress', 'pending_slot')
+          ORDER BY id DESC LIMIT 1
+        `).get(userId, `%${parsed.target_task_name}%`) as Task | undefined;
+      }
+      if (!activeTask) {
+        activeTask = db.prepare(`
+          SELECT * FROM tasks
+          WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
+          ORDER BY CASE status WHEN 'in_progress' THEN 1 ELSE 2 END, scheduled_start ASC
+          LIMIT 1
+        `).get(userId) as Task | undefined;
+      }
 
       if (!activeTask) {
         const reply = '💡 当前没有正在进行或排程中的待办任务，无需更新状态。';
         return { replyText: reply, diagnostics: { intent: parsed.intent, parsed } };
       }
 
-      if (action === 'complete') {
+      if (action === 'complete_part') {
+        const partIdx = parsed.completed_part_index ?? undefined;
+        const compMin = parsed.completed_minutes ?? undefined;
+        const res = completeTaskPart(userId, activeTask.id, compMin, partIdx);
+        addDebugLog('Scheduler', 'success', `待办 #${activeTask.id} (${activeTask.title}) 完成部分分段: 剩余 ${res.remainingMinutes}m`);
+        return { replyText: res.message, diagnostics: { intent: parsed.intent, parsed, res } };
+      } else if (action === 'complete') {
         db.prepare("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(activeTask.id);
         const reply = templates.taskCompleted(activeTask.title);
         addDebugLog('Scheduler', 'success', `待办 #${activeTask.id} (${activeTask.title}) 标记为已完成`);
@@ -587,6 +667,132 @@ export async function processWeChatMessage(
       } else {
         return { replyText: '已了解您的状态更新。', diagnostics: { intent: parsed.intent, parsed } };
       }
+    } else if (parsed.intent === 'delete_item') {
+      db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+      const targetName = (
+        parsed.delete_target?.name ||
+        parsed.title ||
+        trimmed.replace(/^(删除|取消|删掉|移除)(任务|日程)?/, '').trim()
+      );
+
+      if (!targetName) {
+        return { replyText: '⚠️ 请告诉我您要删除哪项任务或日程，例如：“删除任务 开会”。' };
+      }
+
+      // 1. 先查找匹配待办任务
+      const matchedTask = db.prepare(`
+        SELECT * FROM tasks
+        WHERE user_id = ? AND title LIKE ? AND status != 'completed'
+        ORDER BY id DESC LIMIT 1
+      `).get(userId, `%${targetName}%`) as Task | undefined;
+
+      if (matchedTask) {
+        db.prepare('DELETE FROM tasks WHERE id = ?').run(matchedTask.id);
+        replanUserTasks(userId);
+        addDebugLog('Scheduler', 'success', `用户 #${userId} 删除了任务 #${matchedTask.id} (${matchedTask.title})`);
+        return {
+          replyText: `🗑️【任务已删除】\n已为您成功删除待办任务「${matchedTask.title}」，并自适应重新规划了您的周日程！`,
+          diagnostics: { intent: 'delete_item', deletedTaskId: matchedTask.id }
+        };
+      }
+
+      // 2. 查找匹配外部日历日程
+      const matchedEvent = db.prepare(`
+        SELECT * FROM external_events
+        WHERE user_id = ? AND title LIKE ?
+        ORDER BY id DESC LIMIT 1
+      `).get(userId, `%${targetName}%`) as ExternalEvent | undefined;
+
+      if (matchedEvent) {
+        db.prepare('DELETE FROM external_events WHERE id = ?').run(matchedEvent.id);
+        replanUserTasks(userId);
+        addDebugLog('Scheduler', 'success', `用户 #${userId} 删除了日程 #${matchedEvent.id} (${matchedEvent.title})`);
+        return {
+          replyText: `🗑️【日程已删除】\n已为您成功删除日历日程「${matchedEvent.title}」！`,
+          diagnostics: { intent: 'delete_item', deletedEventId: matchedEvent.id }
+        };
+      }
+
+      return {
+        replyText: `⚠️ 未找到包含「${targetName}」的任务或日程。\n您可以发送“查看任务”或“查看日历”核对具体名称。`,
+        diagnostics: { intent: 'delete_item', targetName, notFound: true }
+      };
+    } else if (parsed.intent === 'modify_item') {
+      db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+      const targetName = parsed.modify_target?.name || parsed.target_task_name || parsed.title || '';
+
+      const matchedTask = db.prepare(`
+        SELECT * FROM tasks
+        WHERE user_id = ? AND title LIKE ? AND status != 'completed'
+        ORDER BY id DESC LIMIT 1
+      `).get(userId, `%${targetName}%`) as Task | undefined;
+
+      if (!matchedTask) {
+        return {
+          replyText: `⚠️ 未找到待修改的任务「${targetName}」。您可发送“查看任务”核对现有名称。`,
+          diagnostics: { intent: 'modify_item', targetName }
+        };
+      }
+
+      const mod = parsed.modify_target || {};
+      const updates: string[] = [];
+      const params: any[] = [];
+
+      if (mod.new_title) {
+        updates.push('title = ?');
+        params.push(mod.new_title);
+      }
+      if (mod.new_duration_minutes) {
+        updates.push('duration_minutes = ?');
+        params.push(mod.new_duration_minutes);
+      }
+      if (mod.new_deadline) {
+        updates.push('deadline = ?');
+        params.push(mod.new_deadline);
+      }
+      if (mod.is_fixed !== undefined && mod.is_fixed !== null) {
+        updates.push('is_fixed = ?');
+        params.push(mod.is_fixed ? 1 : 0);
+      }
+      if (mod.is_concurrent !== undefined && mod.is_concurrent !== null) {
+        updates.push('is_concurrent = ?');
+        params.push(mod.is_concurrent ? 1 : 0);
+      }
+      if (mod.new_start && mod.new_end) {
+        updates.push('scheduled_start = ?', 'scheduled_end = ?', 'is_fixed = 1');
+        params.push(mod.new_start, mod.new_end);
+      } else if (parsed.fixed_start && parsed.fixed_end) {
+        updates.push('scheduled_start = ?', 'scheduled_end = ?', 'is_fixed = 1');
+        params.push(parsed.fixed_start, parsed.fixed_end);
+      }
+
+      if (updates.length === 0) {
+        return { replyText: `💡 已识别到任务「${matchedTask.title}」，但未检测到具体修改内容（可明确说明新时间、新时长或设为固定任务等）。` };
+      }
+
+      updates.push("updated_at = datetime('now', 'localtime')");
+      params.push(matchedTask.id);
+
+      db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      replanUserTasks(userId);
+
+      const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(matchedTask.id) as Task;
+      let extraInfo = '';
+      if (updatedTask.is_fixed) {
+        extraInfo += `\n• 状态：已设为固定任务（指定时间，不参与自动重排）`;
+      }
+      if (updatedTask.is_concurrent) {
+        extraInfo += `\n• 属性：已设为双线程任务（允许与其他日程重叠）`;
+      }
+      if (updatedTask.scheduled_start && updatedTask.scheduled_end) {
+        extraInfo += `\n• 最新排程：${new Date(updatedTask.scheduled_start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} ~ ${new Date(updatedTask.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+      }
+
+      addDebugLog('Scheduler', 'success', `用户 #${userId} 修改了任务 #${matchedTask.id} (${matchedTask.title})`);
+      return {
+        replyText: `✏️【任务修改成功】\n已成功更新任务「${updatedTask.title}」！${extraInfo}`,
+        diagnostics: { intent: 'modify_item', updatedTask }
+      };
     } else if (parsed.intent === 'query_schedule') {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
@@ -662,6 +868,32 @@ export async function processWeChatMessage(
       } else {
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
 
+        const isFixed = parsed.is_fixed ? 1 : 0;
+        const isConcurrent = parsed.is_concurrent ? 1 : 0;
+        const fixedStart = parsed.fixed_start || null;
+        const fixedEnd = parsed.fixed_end || null;
+        const originalDuration = duration || 60;
+
+        if (isFixed && fixedStart && fixedEnd) {
+          db.prepare(`
+            INSERT INTO tasks (
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, fixedStart, fixedEnd, 1, isConcurrent);
+
+          replanUserTasks(userId);
+
+          const sStr = new Date(fixedStart).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          const eStr = new Date(fixedEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+          return {
+            replyText: `📌【固定任务已创建】\n「${title}」已为您固定在：${sStr} ~ ${eStr}\n• 属性：已锁定该时间段，不参与后续自动重排${isConcurrent ? '（双线程模式：允许与其他日程并行）' : ''}。`,
+            diagnostics: { intent: parsed.intent, fixed: true, task: merged }
+          };
+        }
+
         const plan = scheduleTask(userId, {
           title,
           duration_minutes: duration!,
@@ -673,11 +905,11 @@ export async function processWeChatMessage(
         if (plan.success && plan.scheduled_start && plan.scheduled_end) {
           db.prepare(`
             INSERT INTO tasks (
-              user_id, title, duration_minutes, urgency, importance,
-              deadline, scheduled_start, scheduled_end, status
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
-          `).run(userId, title, duration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isFixed, isConcurrent);
 
           // Dynamically optimize and adjust all tasks according to urgency & deadlines
           replanUserTasks(userId);
@@ -689,17 +921,25 @@ export async function processWeChatMessage(
           const sStr = new Date(actualStart).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(actualEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-          const reply = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!);
+          let extraTip = '';
+          if (duration! >= 180) {
+            extraTip = `\n💡 提示：该任务总用时较长（${Math.round((duration! / 60) * 10) / 10}小时），排程引擎已自动将其拆分分段，并在截止前多天均衡规划，避免单日负荷过重！`;
+          }
+          if (isConcurrent) {
+            extraTip += `\n💡 提示：已设为双线程任务，允许与其它日程时间重叠并行。`;
+          }
+
+          const reply = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!) + extraTip;
           addDebugLog('Scheduler', 'success', `新待办规划排程成功: "${title}" (${sStr} ~ ${eStr})`);
           return { replyText: reply, diagnostics: { intent: parsed.intent, plan, task: merged } };
         } else {
           db.prepare(`
             INSERT INTO tasks (
-              user_id, title, duration_minutes, urgency, importance,
-              deadline, status
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              deadline, is_fixed, is_concurrent, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'pending_slot')
-          `).run(userId, title, duration, urgency, importance, deadline);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_slot')
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, isFixed, isConcurrent);
 
           const reply = templates.scheduleFailed(title, duration!, plan.message);
           addDebugLog('Scheduler', 'warn', `新待办规划未找到合适时隙，置为待安排: "${title}" (${plan.message})`);
@@ -707,14 +947,10 @@ export async function processWeChatMessage(
         }
       }
     } else {
-      const reply =
-        `🤖【Clawbot 时间管理助手】\n` +
-        `我是您的个人日程规划管家。您可以直接对我说：\n` +
-        `• "安排明天下午写代码，耗时90分钟，加急5分，周三前交"\n` +
-        `• "今天有哪些待办？"\n` +
-        `• "刚刚的任务搞定了"\n` +
-        `• "时间不够，延长30分钟"`;
-      return { replyText: reply, diagnostics: { intent: 'help' } };
+      return {
+        replyText: getHelpMessage(false),
+        diagnostics: { intent: 'help' }
+      };
     }
   } catch (err: any) {
     addDebugLog('Weixin', 'error', `处理微信指令异常: ${err.message}`, err.stack);

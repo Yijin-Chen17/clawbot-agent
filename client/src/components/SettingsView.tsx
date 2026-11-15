@@ -234,6 +234,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [wxConnected, setWxConnected] = useState(false);
   const [wxUserId, setWxUserId] = useState('');
   const [wxNickname, setWxNickname] = useState('');
+  const [advanceDeadlineDays, setAdvanceDeadlineDays] = useState(1);
   const [, setQrCode] = useState('');
   const [qrCodeImgContent, setQrCodeImgContent] = useState('');
   const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'wait' | 'scaned' | 'confirmed' | 'expired'>('idle');
@@ -454,6 +455,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         setRemindStart(settings.reminder_before_start_minutes ?? 10);
         setRemindEnd(settings.reminder_before_end_minutes ?? 5);
         setCalSyncInterval(settings.calendar_sync_interval_minutes ?? 30);
+        setAdvanceDeadlineDays(settings.advance_deadline_days ?? 1);
       }
 
       if (urls?.icalSubscriptionUrl) {
@@ -591,6 +593,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         reminder_before_start_minutes: Number(remindStart),
         reminder_before_end_minutes: Number(remindEnd),
         calendar_sync_interval_minutes: Number(calSyncInterval),
+        advance_deadline_days: Number(advanceDeadlineDays),
       });
 
       setSaveSuccess(true);
@@ -1431,6 +1434,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
               {wxConnected ? (
                 <div className="space-y-6">
+                  {/* WeChat 24-Hour Active Window Notice */}
+                  <div className="p-4 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/90 dark:border-blue-800 text-xs space-y-1.5 animate-fadeIn">
+                    <div className="font-bold flex items-center gap-2 text-blue-700 dark:text-blue-300 text-xs">
+                      <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping" />
+                      <span>💡 首次对接激活与 24 小时互动机制须知</span>
+                    </div>
+                    <p className="leading-relaxed text-blue-800/90 dark:text-blue-300/90 text-xs">
+                      微信外部通道受平台规则约束，机器人仅能在收到您发信后的 <strong>24 小时内</strong> 主动向您下发提醒与排程卡片。<br />
+                      首次对接成功后，<strong>请立即打开手机微信向助手发送任意消息（如“查看日历”或“你好”）完成激活</strong>；建议保持每天至少向助手发一条消息以维持推送窗口。
+                    </p>
+                  </div>
+
                   {/* Connected Account Info & Actions */}
                   <div className="pb-6 border-b border-gray-100 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3.5">
@@ -1711,6 +1726,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   />
                   <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
                     {t('scheduler.buffer_desc')}
+                  </p>
+                </div>
+              </div>
+
+              {/* 4. Advance Deadline Setting (DDL - N 天) */}
+              <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-neutral-800">
+                <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                  提前完成缓冲天数 (尽可能在截止时间前完成)
+                </label>
+                <div className="max-w-xs">
+                  <select
+                    value={advanceDeadlineDays}
+                    onChange={(e) => setAdvanceDeadlineDays(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none cursor-pointer"
+                  >
+                    <option value={0}>0 天 (截止日当天完成即可)</option>
+                    <option value={1}>1 天 (推荐：截止日前 1 天完成，预留缓冲)</option>
+                    <option value={2}>2 天 (截止日前 2 天完成)</option>
+                    <option value={3}>3 天 (截止日前 3 天完成，极端从容)</option>
+                  </select>
+                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
+                    排程引擎将以「截止时间 - 缓冲天数」作为调度目标，优先将待办任务提前规划，预留容错与复盘缓冲。
                   </p>
                 </div>
               </div>

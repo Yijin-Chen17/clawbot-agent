@@ -24,6 +24,10 @@ interface TaskModalProps {
     dueDate?: string | null;
     tags?: string[];
     estimatedMinutes?: number;
+    isFixed?: boolean;
+    isConcurrent?: boolean;
+    scheduledStart?: string | null;
+    scheduledEnd?: string | null;
   }) => void;
   onToggleComplete?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -51,6 +55,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [estimatedMinutes, setEstimatedMinutes] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [isFixed, setIsFixed] = useState(false);
+  const [isConcurrent, setIsConcurrent] = useState(false);
+  const [fixedStartTime, setFixedStartTime] = useState('09:00');
+  const [fixedEndTime, setFixedEndTime] = useState('10:00');
 
   // 初始化填充数据
   useEffect(() => {
@@ -62,10 +70,24 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setDueDate(initialTask.dueDate || todayStr);
       setEstimatedMinutes(initialTask.estimatedMinutes || '');
       setTags(initialTask.tags || []);
+      setIsFixed(Boolean(initialTask.isFixed));
+      setIsConcurrent(Boolean(initialTask.isConcurrent));
+      if (initialTask.scheduledStart) {
+        const d = new Date(initialTask.scheduledStart);
+        setFixedStartTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+      }
+      if (initialTask.scheduledEnd) {
+        const d = new Date(initialTask.scheduledEnd);
+        setFixedEndTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+      }
     } else {
       setTitle('');
       setDescription('');
       setImportance(defaultImportance);
+      setIsFixed(false);
+      setIsConcurrent(false);
+      setFixedStartTime('09:00');
+      setFixedEndTime('10:00');
       // 如果是通过四象限坐标看板点击空白处打开，按点击位置智能映射初始截止日期
       let initialDueDate = todayStr;
       if (typeof defaultUrgency === 'number') {
@@ -125,6 +147,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     e.preventDefault();
     if (!title.trim() || !effectiveDueDate) return;
 
+    let scheduledStart: string | null = null;
+    let scheduledEnd: string | null = null;
+    if (isFixed && effectiveDueDate) {
+      scheduledStart = `${effectiveDueDate}T${fixedStartTime}:00`;
+      scheduledEnd = `${effectiveDueDate}T${fixedEndTime}:00`;
+    }
+
     onSave({
       title: title.trim(),
       description: description.trim() || undefined,
@@ -134,6 +163,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       dueDate: effectiveDueDate,
       tags,
       estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : undefined,
+      isFixed,
+      isConcurrent,
+      scheduledStart,
+      scheduledEnd,
     });
     onClose();
   };
@@ -280,6 +313,66 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               <span className="text-[11px] text-gray-400 dark:text-neutral-500">
                 {algoResult.statusText}
               </span>
+            </div>
+          </div>
+
+          {/* 高级排程设置 (固定任务 / 双线程重叠) */}
+          <div className="p-3.5 rounded-xl bg-gray-50/70 dark:bg-neutral-800/30 border border-gray-200/70 dark:border-neutral-800 space-y-2.5 text-xs">
+            <span className="font-semibold text-gray-700 dark:text-neutral-300 block text-[11px] uppercase tracking-wider">
+              高级排程模式
+            </span>
+
+            {/* 固定任务 */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isFixed}
+                  onChange={(e) => setIsFixed(e.target.checked)}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                />
+                <span className="font-medium text-gray-800 dark:text-neutral-200">
+                  📌 固定任务 (指定时间段执行，不参与自动重排)
+                </span>
+              </label>
+
+              {isFixed && (
+                <div className="pl-5.5 grid grid-cols-2 gap-2.5 pt-1">
+                  <div>
+                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">开始时间</span>
+                    <input
+                      type="time"
+                      value={fixedStartTime}
+                      onChange={(e) => setFixedStartTime(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-[#232425] dark:text-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">结束时间</span>
+                    <input
+                      type="time"
+                      value={fixedEndTime}
+                      onChange={(e) => setFixedEndTime(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-[#232425] dark:text-gray-100"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 双线程任务 */}
+            <div className="pt-1 border-t border-gray-200/50 dark:border-neutral-800">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isConcurrent}
+                  onChange={(e) => setIsConcurrent(e.target.checked)}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                />
+                <span className="font-medium text-gray-800 dark:text-neutral-200">
+                  ⚡ 双线程任务 (允许与其他任务或外部日程时间重叠并行)
+                </span>
+              </label>
             </div>
           </div>
 

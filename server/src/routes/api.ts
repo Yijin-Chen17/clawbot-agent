@@ -15,7 +15,7 @@ import {
   resetUserSyncBuf,
 } from '../controllers/adminController.js';
 import { getSettings, updateSettings, regenerateWebhookToken, testLlmApiKey } from '../controllers/settingsController.js';
-import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask } from '../controllers/taskController.js';
+import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask, completePartTask } from '../controllers/taskController.js';
 import {
   listSubscriptions,
   createSubscription,
@@ -67,6 +67,7 @@ router.put('/tasks/:id', requireAuth, updateTask);
 router.delete('/tasks/:id', requireAuth, deleteTask);
 router.post('/tasks/:id/reschedule', requireAuth, rescheduleTask);
 router.post('/tasks/:id/action', requireAuth, quickActionTask);
+router.post('/tasks/:id/complete-part', requireAuth, completePartTask);
 
 // Calendar Management
 router.get('/calendar/subscriptions', requireAuth, listSubscriptions);
