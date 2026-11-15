@@ -24,6 +24,8 @@ import {
   Bell,
   ChevronRight,
   Sparkles,
+  Coins,
+  Zap,
   Menu,
   Lock,
   Upload,
@@ -295,6 +297,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       setLlmTestResult({ success: true, msg: res.data.message || 'API Key 验证有效！' });
       setLlmApiKeyValid(true);
       localStorage.setItem(`clawbot_llm_valid_${userId}`, 'true');
+      fetchLlmUsage();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
       const msg = error.response?.data?.error || error.message || '验证失败，请检查 API Key';
@@ -305,6 +308,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       setLlmTesting(false);
     }
   };
+
+  // API Usage Monitoring State
+  const [llmUsageLoading, setLlmUsageLoading] = useState(false);
+  const [llmUsageData, setLlmUsageData] = useState<{
+    summary: {
+      totalRequests: number;
+      totalTokens: number;
+      promptTokens: number;
+      cacheHitTokens: number;
+      cacheMissTokens: number;
+      completionTokens: number;
+      totalCostCny: number;
+      inputCostCny: number;
+      outputCostCny: number;
+      savedCostCny: number;
+      cacheHitRate: number;
+    };
+    currentStatus: {
+      isPeak: boolean;
+      periodLabel: string;
+      beijingTimeStr: string;
+      rates: {
+        cacheHitPerMillion: number;
+        cacheMissPerMillion: number;
+        outputPerMillion: number;
+      };
+    };
+    recentLogs: Array<{
+      id: number;
+      model: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      cache_hit_tokens: number;
+      cache_miss_tokens: number;
+      is_peak: number;
+      cost_cny: number;
+      input_cost_cny: number;
+      output_cost_cny: number;
+      request_type: string;
+      created_at: string;
+    }>;
+  } | null>(null);
+
+  const fetchLlmUsage = async () => {
+    setLlmUsageLoading(true);
+    try {
+      const res = await api.get('/settings/llm-usage');
+      if (res.data.success) {
+        setLlmUsageData(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch LLM usage:', err);
+    } finally {
+      setLlmUsageLoading(false);
+    }
+  };
+
+  const handleClearLlmUsage = async () => {
+    if (!confirm(t('llm.clear_confirm'))) return;
+    try {
+      await api.delete('/settings/llm-usage');
+      fetchLlmUsage();
+    } catch (err: any) {
+      alert(err.response?.data?.error || '清空失败');
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'llm') {
+      fetchLlmUsage();
+    }
+  }, [activeSection]);
 
   // 头像上传处理 (限制 2MB，并即时更新全局上下文)
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1954,6 +2030,221 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <span>{llmTestResult.msg}</span>
                   </div>
                 )}
+
+                {/* 用量与资费监控卡片 */}
+                <div className="pt-6 border-t border-gray-100 dark:border-neutral-800 space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Coins className="w-4 h-4 text-amber-500" />
+                        <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                          {t('llm.usage_title')}
+                        </h3>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
+                        {t('llm.usage_subtitle')}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={fetchLlmUsage}
+                        disabled={llmUsageLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${llmUsageLoading ? 'animate-spin' : ''}`} />
+                        <span>{t('llm.refresh_usage')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearLlmUsage}
+                        disabled={!llmUsageData?.summary?.totalRequests}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{t('llm.clear_usage')}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 当前时段计费规则横幅 */}
+                  {llmUsageData?.currentStatus && (
+                    <div className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                      llmUsageData.currentStatus.isPeak
+                        ? 'bg-amber-50/70 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50'
+                        : 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50'
+                    }`}>
+                      <div className="flex items-start sm:items-center gap-3">
+                        <div className={`p-2 rounded-xl shrink-0 ${
+                          llmUsageData.currentStatus.isPeak
+                            ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'
+                            : 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300'
+                        }`}>
+                          <Zap className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              llmUsageData.currentStatus.isPeak
+                                ? 'bg-amber-200/80 dark:bg-amber-900 text-amber-900 dark:text-amber-200'
+                                : 'bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200'
+                            }`}>
+                              {llmUsageData.currentStatus.isPeak ? t('llm.peak_period') : t('llm.off_peak_period')}
+                            </span>
+                            <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">
+                              北京时间: {llmUsageData.currentStatus.beijingTimeStr}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-600 dark:text-neutral-400 mt-1">
+                            {llmUsageData.currentStatus.isPeak ? t('llm.peak_desc') : t('llm.off_peak_desc')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] font-mono text-gray-700 dark:text-neutral-300 bg-white/70 dark:bg-neutral-900/60 p-2.5 rounded-xl border border-gray-200/50 dark:border-neutral-800 shrink-0">
+                        <div>
+                          <span className="text-gray-400 block text-[10px]">缓存命中</span>
+                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                            ¥{llmUsageData.currentStatus.rates.cacheHitPerMillion}/1M
+                          </span>
+                        </div>
+                        <div className="w-px h-6 bg-gray-200 dark:bg-neutral-700" />
+                        <div>
+                          <span className="text-gray-400 block text-[10px]">未命中</span>
+                          <span className="font-semibold">
+                            ¥{llmUsageData.currentStatus.rates.cacheMissPerMillion}/1M
+                          </span>
+                        </div>
+                        <div className="w-px h-6 bg-gray-200 dark:bg-neutral-700" />
+                        <div>
+                          <span className="text-gray-400 block text-[10px]">输出</span>
+                          <span className="font-semibold">
+                            ¥{llmUsageData.currentStatus.rates.outputPerMillion}/1M
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4 块核心统计指标卡片 */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
+                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
+                        {t('llm.total_cost')}
+                      </span>
+                      <div className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1">
+                        ¥{(llmUsageData?.summary?.totalCostCny || 0).toFixed(4)}
+                      </div>
+                      <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
+                        共 {llmUsageData?.summary?.totalRequests || 0} 次 API 调用
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
+                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
+                        {t('llm.hit_rate')} & 节省
+                      </span>
+                      <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+                        {(llmUsageData?.summary?.cacheHitRate || 0).toFixed(1)}%
+                      </div>
+                      <div className="text-[10px] text-emerald-700 dark:text-emerald-300 mt-1 font-mono">
+                        已省 ¥{(llmUsageData?.summary?.savedCostCny || 0).toFixed(4)}
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
+                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
+                        输入 Tokens (Prompt)
+                      </span>
+                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
+                        {(llmUsageData?.summary?.promptTokens || 0).toLocaleString()}
+                      </div>
+                      <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-mono flex items-center gap-1.5">
+                        <span className="text-emerald-600 dark:text-emerald-400">命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
+                        <span>·</span>
+                        <span>未中 {(llmUsageData?.summary?.cacheMissTokens || 0).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
+                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
+                        输出 Tokens (Output)
+                      </span>
+                      <div className="text-xl font-bold font-mono text-purple-600 dark:text-purple-400 mt-1">
+                        {(llmUsageData?.summary?.completionTokens || 0).toLocaleString()}
+                      </div>
+                      <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">
+                        总消耗 {(llmUsageData?.summary?.totalTokens || 0).toLocaleString()} Tokens
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 调用记录明细表 */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
+                      {t('llm.history_title')}
+                    </div>
+                    {(!llmUsageData?.recentLogs || llmUsageData.recentLogs.length === 0) ? (
+                      <div className="p-8 text-center border border-dashed border-gray-200 dark:border-neutral-800 rounded-2xl text-xs text-gray-400 dark:text-neutral-500">
+                        {t('llm.no_records')}
+                      </div>
+                    ) : (
+                      <div className="border border-gray-200 dark:border-neutral-800 rounded-2xl overflow-hidden shadow-2xs">
+                        <div className="max-h-64 overflow-y-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-gray-50/90 dark:bg-neutral-800/90 sticky top-0 text-[11px] font-semibold text-gray-600 dark:text-neutral-400 border-b border-gray-200 dark:border-neutral-800 backdrop-blur-xs">
+                              <tr>
+                                <th className="py-2.5 px-3 font-medium">{t('llm.time')}</th>
+                                <th className="py-2.5 px-3 font-medium">{t('llm.period')}</th>
+                                <th className="py-2.5 px-3 font-medium">模型</th>
+                                <th className="py-2.5 px-3 font-medium">{t('llm.prompt_breakdown')}</th>
+                                <th className="py-2.5 px-3 font-medium">{t('llm.output')}</th>
+                                <th className="py-2.5 px-3 font-medium text-right">{t('llm.cost')}</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/60 font-mono">
+                              {llmUsageData.recentLogs.map((log) => (
+                                <tr key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-neutral-800/30 transition-colors">
+                                  <td className="py-2 px-3 text-[11px] text-gray-500 dark:text-neutral-400 whitespace-nowrap">
+                                    {new Date(log.created_at).toLocaleString('zh-CN', {
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      second: '2-digit',
+                                    })}
+                                  </td>
+                                  <td className="py-2 px-3 whitespace-nowrap">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                      log.is_peak === 1
+                                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                                    }`}>
+                                      {log.is_peak === 1 ? '峰时' : '谷时 (5折)'}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3 text-[11px] text-gray-700 dark:text-neutral-300 whitespace-nowrap">
+                                    {log.model}
+                                  </td>
+                                  <td className="py-2 px-3 text-[11px] whitespace-nowrap">
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{log.cache_hit_tokens}</span>
+                                    <span className="text-gray-400 mx-1">/</span>
+                                    <span className="text-gray-700 dark:text-neutral-300">{log.cache_miss_tokens}</span>
+                                  </td>
+                                  <td className="py-2 px-3 text-[11px] text-purple-600 dark:text-purple-400 whitespace-nowrap">
+                                    {log.completion_tokens}
+                                  </td>
+                                  <td className="py-2 px-3 text-[11px] font-bold text-gray-900 dark:text-gray-100 text-right whitespace-nowrap">
+                                    ¥{log.cost_cny < 0.0001 ? log.cost_cny.toFixed(6) : log.cost_cny.toFixed(4)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

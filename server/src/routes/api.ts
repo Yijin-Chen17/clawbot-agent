@@ -14,7 +14,7 @@ import {
   restartUserWorker,
   resetUserSyncBuf,
 } from '../controllers/adminController.js';
-import { getSettings, updateSettings, regenerateWebhookToken, testLlmApiKey } from '../controllers/settingsController.js';
+import { getSettings, updateSettings, regenerateWebhookToken, testLlmApiKey, getLlmUsage, clearLlmUsage } from '../controllers/settingsController.js';
 import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask, completePartTask } from '../controllers/taskController.js';
 import {
   listSubscriptions,
@@ -52,6 +52,8 @@ router.put('/auth/password', requireAuth, changePassword);
 router.get('/settings', requireAuth, getSettings);
 router.put('/settings', requireAuth, updateSettings);
 router.post('/settings/test-llm', requireAuth, testLlmApiKey);
+router.get('/settings/llm-usage', requireAuth, getLlmUsage);
+router.delete('/settings/llm-usage', requireAuth, clearLlmUsage);
 router.post('/settings/regenerate-token', requireAuth, regenerateWebhookToken);
 
 // WeChat Clawbot iLink Gateway & QR Code Scan

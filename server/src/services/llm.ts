@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { LLMExtractionResult, UserSettings } from '../models/types.js';
+import { recordApiUsage } from './llmPricing.js';
 
 export async function parseUserMessageWithLLM(
   message: string,
@@ -113,6 +114,10 @@ JSON 格式规范：
     const content = response.choices[0]?.message?.content?.trim();
     if (!content) {
       throw new Error('LLM 返回内容为空');
+    }
+
+    if (response.usage && settings.user_id) {
+      recordApiUsage(settings.user_id, model, response.usage, 'weixin_chat');
     }
 
     const parsed = JSON.parse(content) as LLMExtractionResult;

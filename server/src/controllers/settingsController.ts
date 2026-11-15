@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { UserSettings } from '../models/types.js';
+import { recordApiUsage, getUserUsageStats, clearUserUsageLogs } from '../services/llmPricing.js';
 
 export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -147,15 +148,23 @@ export async function testLlmApiKey(req: AuthenticatedRequest, res: Response): P
       timeout: 12000,
     });
 
-    await client.chat.completions.create({
+    const testRes = await client.chat.completions.create({
       model: llm_model || 'deepseek-chat',
       messages: [{ role: 'user', content: 'hi' }],
       max_tokens: 5,
     });
 
+    let usageNote = '';
+    if (testRes.usage) {
+      const rec = recordApiUsage(userId, llm_model || 'deepseek-chat', testRes.usage, 'key_test');
+      if (rec) {
+        usageNote = ` (消耗 ${rec.totalTokens} Tokens，折合 ¥${rec.costCny.toFixed(6)})`;
+      }
+    }
+
     res.json({
       success: true,
-      message: 'DeepSeek API Key 验证有效！模型连接正常。',
+      message: `DeepSeek API Key 验证有效！模型连接正常${usageNote}。`,
     });
   } catch (err: any) {
     const errorMsg =
@@ -167,4 +176,24 @@ export async function testLlmApiKey(req: AuthenticatedRequest, res: Response): P
       error: errorMsg,
     });
   }
+}
+
+export function getLlmUsage(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const settings = db.prepare('SELECT llm_model FROM user_settings WHERE user_id = ?').get(userId) as any;
+  const model = settings?.llm_model || 'deepseek-chat';
+  const stats = getUserUsageStats(userId, model);
+  res.json({
+    success: true,
+    ...stats,
+  });
+}
+
+export function clearLlmUsage(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  clearUserUsageLogs(userId);
+  res.json({
+    success: true,
+    message: 'API 用量记录已清空',
+  });
 }

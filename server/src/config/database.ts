@@ -102,6 +102,23 @@ export function initDatabase() {
       missing_fields TEXT,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS api_usage_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      model TEXT NOT NULL,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+      is_peak INTEGER NOT NULL DEFAULT 0,
+      cost_cny REAL NOT NULL DEFAULT 0,
+      input_cost_cny REAL NOT NULL DEFAULT 0,
+      output_cost_cny REAL NOT NULL DEFAULT 0,
+      request_type TEXT DEFAULT 'weixin_chat',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migrate user_settings columns if missing
