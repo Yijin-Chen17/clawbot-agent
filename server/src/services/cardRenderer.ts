@@ -64,39 +64,141 @@ function getWeekNumber(d: Date): number {
   return 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
 }
 
-interface CalendarWeekItem {
-  timeStr: string;
-  startTimeVal: number;
-  type: 'external' | 'task';
+interface TimedCalendarSegment {
+  id: string;
+  kind: 'external' | 'task';
   title: string;
-  badge: string;
-  badgeBg: string;
-  badgeColor: string;
-  borderColor: string;
+  start: string; // ISO
+  end: string;   // ISO
   isCompleted?: boolean;
-  subText: string;
+  color: string;
+  bg: string;
+  border: string;
+  timeColor: string;
+  titleColor: string;
+  badge: string;
+  badgeColor: string;
+  durationMinutes: number;
+}
+
+interface PositionedSegment {
+  item: TimedCalendarSegment;
+  column: number;
+  columns: number;
+}
+
+// Overlap detection and multi-column greedy layout (matching CalendarView.tsx)
+function layoutDaySegments(items: TimedCalendarSegment[]): PositionedSegment[] {
+  const sorted = [...items].sort(
+    (a, b) =>
+      new Date(a.start).getTime() - new Date(b.start).getTime() ||
+      new Date(a.end).getTime() - new Date(b.end).getTime()
+  );
+
+  const result: PositionedSegment[] = [];
+  let cluster: TimedCalendarSegment[] = [];
+  let clusterEnd = 0;
+
+  const flush = () => {
+    if (cluster.length === 0) return;
+    const columnEnds: number[] = [];
+    const placed: Array<{ item: TimedCalendarSegment; column: number }> = [];
+
+    for (const item of cluster) {
+      const start = new Date(item.start).getTime();
+      const end = new Date(item.end).getTime();
+      let col = columnEnds.findIndex((val) => val <= start);
+      if (col === -1) {
+        col = columnEnds.length;
+        columnEnds.push(end);
+      } else {
+        columnEnds[col] = end;
+      }
+      placed.push({ item, column: col });
+    }
+
+    const columns = Math.max(1, columnEnds.length);
+    for (const entry of placed) {
+      result.push({ ...entry, columns });
+    }
+    cluster = [];
+    clusterEnd = 0;
+  };
+
+  for (const item of sorted) {
+    const start = new Date(item.start).getTime();
+    const end = new Date(item.end).getTime();
+    if (cluster.length > 0 && start >= clusterEnd) {
+      flush();
+    }
+    cluster.push(item);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flush();
+
+  return result;
+}
+
+function segmentRange(
+  start: string,
+  end: string,
+  dayStart: string,
+  dayEnd: string
+): { start: string; end: string } | null {
+  const s = new Date(start).getTime();
+  const e = new Date(end).getTime();
+  const ds = new Date(dayStart).getTime();
+  const de = new Date(dayEnd).getTime();
+  if (s >= de || e <= ds) return null;
+  return {
+    start: new Date(Math.max(s, ds)).toISOString(),
+    end: new Date(Math.min(e, de)).toISOString(),
+  };
+}
+
+function formatHour(hour: number): string {
+  return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 /**
- * 1. Render modern "Full Week Schedule & Calendar" (完整周日历) PNG Image
+ * 1. Render modern "Full Week Schedule & Calendar" (完整周日历) Light-Mode PNG Image
+ * Matching Web UI CalendarView.tsx 24-Hour Time Grid
  */
 export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const now = new Date();
   const monday = getMondayOfWeek(now);
   const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6, 23, 59, 59, 999);
 
-  const weekStartIso = monday.toISOString();
-  const weekEndIso = sunday.toISOString();
+  // Calendar starts at 07:00 of Monday, goes to 07:00 of next Monday (24h daily grid starting at 07:00)
+  const CALENDAR_START_HOUR = 7;
+  const CALENDAR_END_HOUR = 24;
+  const REST_END_HOUR = 7;
+  const GRID_HOURS = CALENDAR_END_HOUR - CALENDAR_START_HOUR + REST_END_HOUR; // 24 hours
+  const HOUR_HEIGHT = 40; // Pixels per hour
 
-  // 1. Fetch external events for the entire week
+  const searchStartIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).toISOString();
+  const searchEndIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7, 23, 59, 59, 999).toISOString();
+
+  // 1. Fetch external events
   const externalEvents = db.prepare(`
-    SELECT title, start_time, end_time, is_all_day
+    SELECT title, start_time, end_time, is_all_day, subscription_id
     FROM external_events
     WHERE user_id = ? AND end_time >= ? AND start_time <= ?
     ORDER BY start_time ASC
-  `).all(userId, weekStartIso, weekEndIso) as { title: string; start_time: string; end_time: string; is_all_day: number }[];
+  `).all(userId, searchStartIso, searchEndIso) as {
+    title: string;
+    start_time: string;
+    end_time: string;
+    is_all_day: number;
+    subscription_id?: number | null;
+  }[];
 
-  // 2. Fetch scheduled tasks for the entire week
+  // 2. Fetch tasks
   const scheduledTasks = db.prepare(`
     SELECT * FROM tasks
     WHERE user_id = ?
@@ -105,290 +207,479 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       AND scheduled_end >= ?
       AND scheduled_start <= ?
     ORDER BY scheduled_start ASC
-  `).all(userId, weekStartIso, weekEndIso) as Task[];
+  `).all(userId, searchStartIso, searchEndIso) as Task[];
 
   const weekdaysZh = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const weekdaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  const days: {
+  interface DayScheduleData {
     index: number;
     date: Date;
-    dayStart: Date;
-    dayEnd: Date;
+    dayDateStr: string;
     weekdayZh: string;
     weekdayEn: string;
-    dateStr: string;
     isToday: boolean;
-    items: CalendarWeekItem[];
-  }[] = [];
+    windowStart: Date;
+    windowEnd: Date;
+    windowStartMs: number;
+    allDay: Array<{ id: string; title: string; color: string; bg: string; text: string }>;
+    timed: PositionedSegment[];
+  }
+
+  const days: DayScheduleData[] = [];
+  let totalExternal = 0;
+  let totalTasks = 0;
+  let totalCompleted = 0;
+  let hasAnyAllDay = false;
 
   for (let i = 0; i < 7; i++) {
     const dayDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-    const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0, 0);
-    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59, 999);
+    const windowStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), CALENDAR_START_HOUR, 0, 0, 0);
+    const windowEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, CALENDAR_START_HOUR, 0, 0, 0);
     const isToday =
       now.getFullYear() === dayDate.getFullYear() &&
       now.getMonth() === dayDate.getMonth() &&
       now.getDate() === dayDate.getDate();
 
+    const wStartIso = windowStart.toISOString();
+    const wEndIso = windowEnd.toISOString();
+
+    const dayAllDay: DayScheduleData['allDay'] = [];
+    const dayTimed: TimedCalendarSegment[] = [];
+
+    // Process External Events for this day
+    for (const ev of externalEvents) {
+      if (ev.is_all_day) {
+        const evStart = new Date(ev.start_time).getTime();
+        const evEnd = new Date(ev.end_time).getTime();
+        const dStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0).getTime();
+        const dEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59).getTime();
+
+        if (evEnd >= dStart && evStart <= dEnd) {
+          dayAllDay.push({
+            id: `ext-allday-${ev.title}-${i}`,
+            title: ev.title,
+            color: '#0284c7',
+            bg: '#e0f2fe',
+            text: '#0369a1',
+          });
+          hasAnyAllDay = true;
+          if (i === 0) totalExternal++;
+        }
+      } else {
+        const range = segmentRange(ev.start_time, ev.end_time, wStartIso, wEndIso);
+        if (range) {
+          totalExternal++;
+          const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
+          dayTimed.push({
+            id: `ext-${ev.title}-${range.start}`,
+            kind: 'external',
+            title: ev.title,
+            start: range.start,
+            end: range.end,
+            durationMinutes: dur,
+            color: '#0284c7',
+            bg: '#f0f9ff',
+            border: '#bae6fd',
+            timeColor: '#0369a1',
+            titleColor: '#0c4a6e',
+            badge: '外部日程',
+            badgeColor: '#0284c7',
+          });
+        }
+      }
+    }
+
+    // Process Scheduled Tasks for this day
+    for (const t of scheduledTasks) {
+      let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
+      if (t.schedule_blocks) {
+        try {
+          blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+        } catch {}
+      }
+      if (!Array.isArray(blocks) || blocks.length === 0) {
+        if (t.scheduled_start && t.scheduled_end) {
+          blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+        }
+      }
+
+      const isCompleted = t.status === 'completed';
+      if (isCompleted && i === 0) totalCompleted++;
+
+      blocks.forEach((b, bIdx) => {
+        const range = segmentRange(b.start, b.end, wStartIso, wEndIso);
+        if (range) {
+          totalTasks++;
+          const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
+          const partSuffix = b.totalParts && b.totalParts > 1 ? ` (${b.partIndex || bIdx + 1}/${b.totalParts})` : '';
+
+          // Quadrant coloring matching Web UI CalendarView
+          let color = '#3b82f6';
+          let bg = '#eff6ff';
+          let border = '#bfdbfe';
+          let timeColor = '#1d4ed8';
+          let titleColor = '#1e3a8a';
+          let badge = 'Schedule';
+          let badgeColor = '#3b82f6';
+
+          if (isCompleted) {
+            color = '#10b981';
+            bg = '#ecfdf5';
+            border = '#a7f3d0';
+            timeColor = '#047857';
+            titleColor = '#065f46';
+            badge = '已完成';
+            badgeColor = '#10b981';
+          } else {
+            const imp = (t.importance ?? 5) >= 5;
+            const urg = (t.urgency ?? 5) >= 5;
+            if (imp && urg) {
+              color = '#ef4444';
+              bg = '#fef2f2';
+              border = '#fecaca';
+              timeColor = '#b91c1c';
+              titleColor = '#7f1d1d';
+              badge = 'Do First';
+              badgeColor = '#ef4444';
+            } else if (imp && !urg) {
+              color = '#3b82f6';
+              bg = '#eff6ff';
+              border = '#bfdbfe';
+              timeColor = '#1d4ed8';
+              titleColor = '#1e3a8a';
+              badge = 'Schedule';
+              badgeColor = '#3b82f6';
+            } else if (!imp && urg) {
+              color = '#f59e0b';
+              bg = '#fffbeb';
+              border = '#fde68a';
+              timeColor = '#b45309';
+              titleColor = '#78350f';
+              badge = 'Delegate';
+              badgeColor = '#f59e0b';
+            } else {
+              color = '#9ca3af';
+              bg = '#f9fafb';
+              border = '#e5e7eb';
+              timeColor = '#4b5563';
+              titleColor = '#1f2937';
+              badge = 'Eliminate';
+              badgeColor = '#9ca3af';
+            }
+          }
+
+          dayTimed.push({
+            id: `task-${t.id}-${bIdx}-${range.start}`,
+            kind: 'task',
+            title: `${t.title}${partSuffix}`,
+            start: range.start,
+            end: range.end,
+            isCompleted,
+            durationMinutes: dur,
+            color,
+            bg,
+            border,
+            timeColor,
+            titleColor,
+            badge,
+            badgeColor,
+          });
+        }
+      });
+    }
+
     days.push({
       index: i,
       date: dayDate,
-      dayStart,
-      dayEnd,
+      dayDateStr: `${dayDate.getMonth() + 1}/${dayDate.getDate()}`,
       weekdayZh: weekdaysZh[i],
       weekdayEn: weekdaysEn[i],
-      dateStr: `${String(dayDate.getMonth() + 1).padStart(2, '0')}/${String(dayDate.getDate()).padStart(2, '0')}`,
       isToday,
-      items: [],
+      windowStart,
+      windowEnd,
+      windowStartMs: windowStart.getTime(),
+      allDay: dayAllDay,
+      timed: layoutDaySegments(dayTimed),
     });
   }
 
-  let totalExternal = 0;
-  let totalTasks = 0;
-  let totalCompleted = 0;
-
-  // Distribute external events into corresponding days
-  for (const ext of externalEvents) {
-    const sDate = new Date(ext.start_time);
-    const eDate = new Date(ext.end_time);
-    totalExternal++;
-
-    for (const d of days) {
-      if (eDate.getTime() >= d.dayStart.getTime() && sDate.getTime() <= d.dayEnd.getTime()) {
-        const timeStr = ext.is_all_day
-          ? '全天'
-          : `${sDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}~${eDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-
-        d.items.push({
-          timeStr,
-          startTimeVal: sDate.getTime(),
-          type: 'external',
-          title: ext.title,
-          badge: '外部',
-          badgeBg: '#3b0764',
-          badgeColor: '#c084fc',
-          borderColor: '#8b5cf6',
-          subText: '订阅日历同步',
-        });
-      }
-    }
-  }
-
-  // Distribute scheduled tasks into corresponding days
-  for (const t of scheduledTasks) {
-    const sDate = new Date(t.scheduled_start!);
-    const eDate = new Date(t.scheduled_end!);
-    totalTasks++;
-    const isCompleted = t.status === 'completed';
-    if (isCompleted) totalCompleted++;
-
-    for (const d of days) {
-      if (eDate.getTime() >= d.dayStart.getTime() && sDate.getTime() <= d.dayEnd.getTime()) {
-        const timeStr = `${sDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}~${eDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-
-        let badge = 'Schedule';
-        let badgeBg = '#1e3a8a';
-        let badgeColor = '#60a5fa';
-        let borderColor = '#3b82f6';
-
-        if (isCompleted) {
-          badge = '已完成';
-          badgeBg = '#064e3b';
-          badgeColor = '#34d399';
-          borderColor = '#10b981';
-        } else {
-          const imp = (t.importance ?? 5) >= 5;
-          const urg = (t.urgency ?? 5) >= 5;
-          if (imp && urg) {
-            badge = 'Do First';
-            badgeBg = '#4c0519';
-            badgeColor = '#fb7185';
-            borderColor = '#f43f5e';
-          } else if (imp && !urg) {
-            badge = 'Schedule';
-            badgeBg = '#1e3a8a';
-            badgeColor = '#60a5fa';
-            borderColor = '#3b82f6';
-          } else if (!imp && urg) {
-            badge = 'Delegate';
-            badgeBg = '#451a03';
-            badgeColor = '#fbbf24';
-            borderColor = '#f59e0b';
-          } else {
-            badge = 'Eliminate';
-            badgeBg = '#111827';
-            badgeColor = '#9ca3af';
-            borderColor = '#6b7280';
-          }
-        }
-
-        d.items.push({
-          timeStr,
-          startTimeVal: sDate.getTime(),
-          type: 'task',
-          title: t.title,
-          badge,
-          badgeBg,
-          badgeColor,
-          borderColor,
-          isCompleted,
-          subText: `${t.duration_minutes || 60}m · 智能排程`,
-        });
-      }
-    }
-  }
-
-  // Sort each day's items
-  for (const d of days) {
-    d.items.sort((a, b) => a.startTimeVal - b.startTimeVal);
-  }
-
-  const maxItems = Math.max(...days.map((d) => d.items.length), 3);
-  const columnWidth = 166;
-  const columnGap = 10;
-  const leftMargin = 27;
-  const headerBannerHeight = 110;
-  const dayHeaderHeight = 54;
-  const itemCardHeight = 66;
-  const itemCardGap = 8;
-  const contentHeight = maxItems * (itemCardHeight + itemCardGap) + 16;
-  const footerHeight = 44;
-
+  // Dimension calculations
   const width = 1280;
-  const height = 24 + headerBannerHeight + 16 + dayHeaderHeight + 10 + contentHeight + footerHeight;
+  const paddingX = 24;
+  const paddingY = 20;
+  const containerW = width - paddingX * 2; // 1232px
+  const timeAxisW = 54;
+  const dayColW = Math.floor((containerW - timeAxisW) / 7); // 168px
+  const gridW = timeAxisW + dayColW * 7; // 1230px
+  const gridLeft = paddingX + (containerW - gridW) / 2; // centered inside container
+
+  const headerH = 72;
+  const dayHeaderH = 48;
+  const allDayH = hasAnyAllDay ? 32 : 0;
+  const gridH = GRID_HOURS * HOUR_HEIGHT; // 24 * 40 = 960px
+  const restTopY = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * HOUR_HEIGHT; // 17 * 40 = 680px
+  const restH = REST_END_HOUR * HOUR_HEIGHT; // 7 * 40 = 280px
+  const footerH = 44;
+
+  const height = paddingY * 2 + headerH + dayHeaderH + allDayH + gridH + footerH;
 
   const weekNum = getWeekNumber(now);
   const weekRangeTitle = `${monday.getFullYear()}年${monday.getMonth() + 1}月${monday.getDate()}日 – ${sunday.getMonth() + 1}月${sunday.getDate()}日 (第${weekNum}周)`;
 
-  // Generate SVG for columns
-  let columnsSvg = '';
-  const colY = 24 + headerBannerHeight + 16;
+  // Generate SVG parts
+  let dayHeadersSvg = '';
+  let allDaySvg = '';
+  let dayColumnsSvg = '';
+  let clipPathsSvg = '';
 
-  days.forEach((day, idx) => {
-    const colX = leftMargin + idx * (columnWidth + columnGap);
+  const dayHeaderY = paddingY + headerH;
+  const allDayY = dayHeaderY + dayHeaderH;
+  const gridTopY = allDayY + allDayH;
+
+  // 1. Time axis column headers & background
+  dayHeadersSvg += `
+    <!-- Top-left corner time axis header -->
+    <rect x="${gridLeft}" y="${dayHeaderY}" width="${timeAxisW}" height="${dayHeaderH}" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="${gridLeft + timeAxisW / 2}" y="${dayHeaderY + 28}" text-anchor="middle" font-size="11" font-weight="bold" fill="#64748b">时段</text>
+  `;
+
+  if (hasAnyAllDay) {
+    allDaySvg += `
+      <!-- All day row header -->
+      <rect x="${gridLeft}" y="${allDayY}" width="${timeAxisW}" height="${allDayH}" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="${gridLeft + timeAxisW / 2}" y="${allDayY + 20}" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">全天</text>
+    `;
+  }
+
+  // 2. 7 Days columns headers and grids
+  days.forEach((d) => {
+    const colX = gridLeft + timeAxisW + d.index * dayColW;
 
     // Day Header
-    const headerBg = day.isToday ? 'url(#todayHeaderGrad)' : '#1e293b';
-    const headerStroke = day.isToday ? '#60a5fa' : '#334155';
-    const headerStrokeW = day.isToday ? 1.5 : 1;
-    const weekdayColor = day.isToday ? '#ffffff' : '#f1f5f9';
-    const dateColor = day.isToday ? '#bfdbfe' : '#94a3b8';
+    const headerBg = d.isToday ? '#eff6ff' : '#ffffff';
+    const headerBorder = d.isToday ? '#93c5fd' : '#e2e8f0';
+    const weekdayFill = d.isToday ? '#2563eb' : '#64748b';
+    const dateFill = d.isToday ? '#1d4ed8' : '#0f172a';
 
-    columnsSvg += `
-      <!-- Column ${idx} Header: ${day.weekdayZh} -->
-      <g transform="translate(${colX}, ${colY})">
-        <rect width="${columnWidth}" height="${dayHeaderHeight}" rx="12" fill="${headerBg}" stroke="${headerStroke}" stroke-width="${headerStrokeW}"/>
-        <text x="14" y="24" fill="${weekdayColor}" font-size="14" font-weight="bold">${day.weekdayZh}</text>
-        <text x="14" y="42" fill="${dateColor}" font-size="11" font-weight="500">${day.dateStr} ${day.weekdayEn}</text>
-        ${
-          day.isToday
-            ? `
-          <rect x="${columnWidth - 52}" y="12" width="40" height="20" rx="6" fill="#1d4ed8"/>
-          <text x="${columnWidth - 32}" y="26" fill="#ffffff" font-size="10" font-weight="bold" text-anchor="middle">今日</text>
-        `
-            : ''
-        }
+    dayHeadersSvg += `
+      <g transform="translate(${colX}, ${dayHeaderY})">
+        <rect width="${dayColW}" height="${dayHeaderH}" fill="${headerBg}" stroke="${headerBorder}" stroke-width="${d.isToday ? 1.5 : 1}"/>
+        <text x="${dayColW / 2}" y="20" text-anchor="middle" font-size="11.5" font-weight="bold" fill="${weekdayFill}">
+          ${d.weekdayZh} ${d.isToday ? '· 今日' : ''}
+        </text>
+        <text x="${dayColW / 2}" y="38" text-anchor="middle" font-size="13" font-weight="bold" font-family="monospace" fill="${dateFill}">
+          ${d.dayDateStr}
+        </text>
       </g>
     `;
 
-    // Column items
-    const itemsY = colY + dayHeaderHeight + 10;
-    if (day.items.length === 0) {
-      columnsSvg += `
-        <g transform="translate(${colX}, ${itemsY})">
-          <rect width="${columnWidth}" height="${Math.min(contentHeight - 16, 120)}" rx="10" fill="#0f172a" opacity="0.4" stroke="#1e293b" stroke-dasharray="4,4"/>
-          <text x="${columnWidth / 2}" y="52" fill="#64748b" font-size="11" text-anchor="middle">暂无排程</text>
-          <text x="${columnWidth / 2}" y="70" fill="#475569" font-size="9.5" text-anchor="middle">休息 / 自由时间</text>
+    // All Day Row for this day
+    if (hasAnyAllDay) {
+      allDaySvg += `
+        <rect x="${colX}" y="${allDayY}" width="${dayColW}" height="${allDayH}" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+      `;
+      if (d.allDay.length > 0) {
+        d.allDay.forEach((ad, adIdx) => {
+          const pillW = dayColW - 8;
+          const pillX = colX + 4;
+          const pillY = allDayY + 4 + adIdx * 24;
+          allDaySvg += `
+            <rect x="${pillX}" y="${pillY}" width="${pillW}" height="22" rx="4" fill="${ad.bg}" stroke="${ad.color}" stroke-width="1"/>
+            <text x="${pillX + 6}" y="${pillY + 15}" font-size="10" font-weight="bold" fill="${ad.text}">
+              ${escapeXml(ad.title.length > 11 ? ad.title.slice(0, 10) + '…' : ad.title)}
+            </text>
+          `;
+        });
+      }
+    }
+
+    // Day Column Grid Body
+    let itemsSvg = '';
+    d.timed.forEach((pos, itemIdx) => {
+      const seg = pos.item;
+      const minutesIntoGrid = Math.max(0, (new Date(seg.start).getTime() - d.windowStartMs) / 60000);
+      const durMinutes = seg.durationMinutes;
+
+      const top = gridTopY + (minutesIntoGrid / 60) * HOUR_HEIGHT;
+      const height = Math.max(22, (durMinutes / 60) * HOUR_HEIGHT);
+      const colWidth = (dayColW - 6) / pos.columns;
+      const left = colX + 3 + pos.column * colWidth;
+      const cardW = colWidth - 2;
+
+      const clipId = `clip-${d.index}-${itemIdx}`;
+      clipPathsSvg += `
+        <clipPath id="${clipId}">
+          <rect x="${left}" y="${top}" width="${cardW}" height="${height}" rx="5"/>
+        </clipPath>
+      `;
+
+      const timeRange = `${formatTime(seg.start)} - ${formatTime(seg.end)}`;
+      const shortTitle = seg.title.length > 12 ? seg.title.slice(0, 11) + '…' : seg.title;
+
+      itemsSvg += `
+        <!-- Card: ${escapeXml(seg.title)} -->
+        <g clip-path="url(#${clipId})">
+          <rect x="${left}" y="${top}" width="${cardW}" height="${height}" rx="5" fill="${seg.bg}" stroke="${seg.border}" stroke-width="1"/>
+          <!-- Left accent line -->
+          <rect x="${left}" y="${top}" width="3.5" height="${height}" rx="1.5" fill="${seg.color}"/>
+          
+          <!-- Content -->
+          ${
+            height < 34
+              ? `
+            <text x="${left + 7}" y="${top + 14}" font-size="9" font-family="monospace" font-weight="bold" fill="${seg.timeColor}">${formatTime(seg.start)}</text>
+            <text x="${left + 38}" y="${top + 14}" font-size="10" font-weight="bold" fill="${seg.titleColor}">${escapeXml(shortTitle)}</text>
+          `
+              : height < 50
+              ? `
+            <text x="${left + 7}" y="${top + 13}" font-size="8.5" font-family="monospace" font-weight="bold" fill="${seg.timeColor}">${timeRange}</text>
+            <text x="${left + 7}" y="${top + 28}" font-size="10.5" font-weight="bold" fill="${seg.titleColor}">${escapeXml(shortTitle)}</text>
+          `
+              : `
+            <text x="${left + 7}" y="${top + 13}" font-size="8.5" font-family="monospace" font-weight="bold" fill="${seg.timeColor}">${timeRange}</text>
+            <text x="${left + 7}" y="${top + 28}" font-size="10.5" font-weight="bold" fill="${seg.titleColor}">${escapeXml(shortTitle)}</text>
+            <rect x="${left + 7}" y="${top + 34}" width="54" height="15" rx="3" fill="#ffffff" fill-opacity="0.8"/>
+            <text x="${left + 10}" y="${top + 45}" font-size="8.5" font-weight="bold" fill="${seg.badgeColor}">${escapeXml(seg.badge)}</text>
+          `
+          }
         </g>
       `;
-    } else {
-      day.items.forEach((item, itemIdx) => {
-        const itemY = itemsY + itemIdx * (itemCardHeight + itemCardGap);
-        const titleColor = item.isCompleted ? '#64748b' : '#f8fafc';
-        const textDecor = item.isCompleted ? 'text-decoration="line-through"' : '';
-        const shortTitle = item.title.length > 11 ? item.title.slice(0, 10) + '…' : item.title;
+    });
 
-        columnsSvg += `
-          <g transform="translate(${colX}, ${itemY})">
-            <!-- Item Card -->
-            <rect width="${columnWidth}" height="${itemCardHeight}" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-            
-            <!-- Left accent color line -->
-            <rect x="0" y="0" width="4" height="${itemCardHeight}" rx="2" fill="${item.borderColor}"/>
-            
-            <!-- Time badge -->
-            <rect x="8" y="7" width="80" height="18" rx="5" fill="#0f172a"/>
-            <text x="48" y="19.5" fill="#38bdf8" font-size="9" font-weight="bold" font-family="monospace" text-anchor="middle">${escapeXml(item.timeStr)}</text>
-            
-            <!-- Category badge -->
-            <rect x="92" y="7" width="${columnWidth - 100}" height="18" rx="5" fill="${item.badgeBg}"/>
-            <text x="${92 + (columnWidth - 100) / 2}" y="19.5" fill="${item.badgeColor}" font-size="8.5" font-weight="bold" text-anchor="middle">${escapeXml(item.badge)}</text>
-            
-            <!-- Title -->
-            <text x="8" y="42" fill="${titleColor}" font-size="11" font-weight="600" ${textDecor}>${escapeXml(shortTitle)}</text>
-            
-            <!-- SubText / Duration -->
-            <text x="8" y="56" fill="#94a3b8" font-size="9.5">${escapeXml(item.subText)}</text>
-          </g>
+    // Today current time indicator
+    let todayLineSvg = '';
+    if (d.isToday) {
+      const currentMinutes = ((now.getHours() - CALENDAR_START_HOUR + 24) % 24) * 60 + now.getMinutes();
+      const currentY = gridTopY + (currentMinutes / 60) * HOUR_HEIGHT;
+      if (currentY >= gridTopY && currentY <= gridTopY + gridH) {
+        todayLineSvg = `
+          <!-- Current Time Line -->
+          <line x1="${colX}" y1="${currentY}" x2="${colX + dayColW}" y2="${currentY}" stroke="#ef4444" stroke-width="2"/>
+          <circle cx="${colX + 4}" cy="${currentY}" r="3.5" fill="#ef4444"/>
         `;
-      });
+      }
     }
+
+    dayColumnsSvg += `
+      <!-- Column: ${d.weekdayZh} -->
+      <g>
+        <!-- Column Background -->
+        <rect x="${colX}" y="${gridTopY}" width="${dayColW}" height="${gridH}" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+        
+        <!-- Rest Band (00:00 - 07:00) -->
+        <rect x="${colX}" y="${gridTopY + restTopY}" width="${dayColW}" height="${restH}" fill="url(#restHatch)"/>
+        
+        <!-- Hourly divider lines -->
+        ${Array.from({ length: GRID_HOURS }, (_, hIdx) => {
+          const lineY = gridTopY + hIdx * HOUR_HEIGHT;
+          const isRestLine = hIdx === (CALENDAR_END_HOUR - CALENDAR_START_HOUR);
+          return `<line x1="${colX}" y1="${lineY}" x2="${colX + dayColW}" y2="${lineY}" stroke="${isRestLine ? '#cbd5e1' : '#f1f5f9'}" stroke-width="${isRestLine ? 1.5 : 1}" ${isRestLine ? 'stroke-dasharray="4,3"' : ''}/>`;
+        }).join('')}
+        
+        <!-- Cards -->
+        ${itemsSvg}
+        
+        <!-- Today Line -->
+        ${todayLineSvg}
+      </g>
+    `;
   });
+
+  // 3. Time Axis labels
+  let timeAxisSvg = '';
+  // Daytime hours 07:00 to 24:00
+  for (let h = CALENDAR_START_HOUR; h <= CALENDAR_END_HOUR; h++) {
+    const y = gridTopY + (h - CALENDAR_START_HOUR) * HOUR_HEIGHT;
+    const isEnd = h === CALENDAR_END_HOUR;
+    timeAxisSvg += `
+      <text x="${gridLeft + timeAxisW - 8}" y="${y + 4}" text-anchor="end" font-size="10" font-family="monospace" font-weight="${isEnd ? 'bold' : 'normal'}" fill="${isEnd ? '#334155' : '#94a3b8'}">
+        ${formatHour(h)}
+      </text>
+    `;
+  }
+  // Rest hours 01:00 to 06:00
+  for (let h = 1; h < REST_END_HOUR; h++) {
+    const y = gridTopY + restTopY + h * HOUR_HEIGHT;
+    timeAxisSvg += `
+      <text x="${gridLeft + timeAxisW - 8}" y="${y + 4}" text-anchor="end" font-size="9" font-family="monospace" fill="#cbd5e1">
+        ${formatHour(h)}
+      </text>
+    `;
+  }
 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#1e3a8a"/>
-          <stop offset="50%" stop-color="#2563eb"/>
-          <stop offset="100%" stop-color="#4338ca"/>
-        </linearGradient>
-        <linearGradient id="todayHeaderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#2563eb"/>
-          <stop offset="100%" stop-color="#1d4ed8"/>
-        </linearGradient>
-        <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stop-color="#0b0f19"/>
-          <stop offset="50%" stop-color="#0f172a"/>
-          <stop offset="100%" stop-color="#020617"/>
-        </linearGradient>
+        <!-- Rest hours diagonal pattern -->
+        <pattern id="restHatch" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="10" stroke="#e2e8f0" stroke-width="1.2" opacity="0.6"/>
+        </pattern>
+        ${clipPathsSvg}
       </defs>
 
-      <!-- Main Canvas Background -->
-      <rect width="${width}" height="${height}" rx="24" fill="url(#cardGrad)"/>
+      <!-- Overall Canvas Background -->
+      <rect width="${width}" height="${height}" fill="#f8fafc"/>
 
-      <!-- Header Banner -->
-      <g transform="translate(${leftMargin}, 24)">
-        <rect width="${width - leftMargin * 2}" height="${headerBannerHeight}" rx="18" fill="url(#headerGrad)"/>
+      <!-- Main Card Container (White) -->
+      <rect x="${paddingX}" y="${paddingY}" width="${containerW}" height="${height - paddingY * 2}" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+      <!-- Top Toolbar -->
+      <g transform="translate(${gridLeft}, ${paddingY + 14})">
+        <!-- Calendar Icon & Title -->
+        <rect x="0" y="2" width="36" height="36" rx="10" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+        <text x="18" y="25" text-anchor="middle" font-size="18">📅</text>
         
-        <!-- Logo / Title -->
-        <text x="24" y="42" fill="#ffffff" font-size="21" font-weight="bold" letter-spacing="0.5">📅 完整周智能日历 (Weekly Schedule)</text>
-        <text x="24" y="74" fill="#dbeafe" font-size="14" font-weight="500">${escapeXml(weekRangeTitle)}</text>
-        
-        <!-- Right stats chips -->
-        <g transform="translate(${width - leftMargin * 2 - 470}, 30)">
-          <!-- External -->
-          <rect x="0" y="0" width="140" height="42" rx="10" fill="#000000" opacity="0.22"/>
-          <text x="70" y="26" fill="#e0e7ff" font-size="12" font-weight="bold" text-anchor="middle">外部日程 ${totalExternal} 项</text>
-          
-          <!-- Scheduled -->
-          <rect x="150" y="0" width="140" height="42" rx="10" fill="#000000" opacity="0.22"/>
-          <text x="220" y="26" fill="#e0e7ff" font-size="12" font-weight="bold" text-anchor="middle">智能排程 ${totalTasks} 项</text>
-          
-          <!-- Completed -->
-          <rect x="300" y="0" width="140" height="42" rx="10" fill="#000000" opacity="0.22"/>
-          <text x="370" y="26" fill="#a7f3d0" font-size="12" font-weight="bold" text-anchor="middle">已完成 ${totalCompleted} 项</text>
+        <text x="46" y="20" font-size="17" font-weight="bold" fill="#0f172a">日历日程 · 智能周排程</text>
+        <text x="46" y="38" font-size="12.5" font-weight="500" fill="#64748b">${escapeXml(weekRangeTitle)}</text>
+
+        <!-- Right Stats Chips -->
+        <g transform="translate(${gridW - 410}, 4)">
+          <!-- External chip -->
+          <rect x="0" y="0" width="126" height="32" rx="8" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1"/>
+          <circle cx="16" cy="16" r="4" fill="#0284c7"/>
+          <text x="26" y="20" font-size="11" font-weight="bold" fill="#0369a1">外部日程 ${totalExternal}</text>
+
+          <!-- Tasks chip -->
+          <rect x="136" y="0" width="126" height="32" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+          <circle cx="152" cy="16" r="4" fill="#3b82f6"/>
+          <text x="162" y="20" font-size="11" font-weight="bold" fill="#1d4ed8">智能排程 ${totalTasks}</text>
+
+          <!-- Completed chip -->
+          <rect x="272" y="0" width="126" height="32" rx="8" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1"/>
+          <circle cx="288" cy="16" r="4" fill="#10b981"/>
+          <text x="298" y="20" font-size="11" font-weight="bold" fill="#047857">已完成 ${totalCompleted}</text>
         </g>
       </g>
 
-      <!-- 7 Days Columns -->
-      ${columnsSvg}
+      <!-- Day Headers Row -->
+      ${dayHeadersSvg}
 
-      <!-- Footer Info -->
-      <g transform="translate(${leftMargin}, ${height - 24})">
-        <text x="8" y="0" fill="#64748b" font-size="11.5">✨ 由 Clawbot 智能排程引擎生成 · 自动同步外部日历并完成全周自适应排布</text>
-        <text x="${width - leftMargin * 2 - 8}" y="0" fill="#64748b" font-size="11.5" text-anchor="end">${now.toLocaleString('zh-CN', { hour12: false })} 实时更新</text>
+      <!-- All-Day Row (if any) -->
+      ${allDaySvg}
+
+      <!-- Time Axis Background & Labels -->
+      <g>
+        <rect x="${gridLeft}" y="${gridTopY}" width="${timeAxisW}" height="${gridH}" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+        ${timeAxisSvg}
+      </g>
+
+      <!-- 7 Days Grid Columns -->
+      ${dayColumnsSvg}
+
+      <!-- Rest Zone Label at bottom right -->
+      <text x="${gridLeft + timeAxisW + 10}" y="${gridTopY + restTopY + 16}" font-size="9.5" font-weight="bold" fill="#94a3b8">
+        🌙 夜间休息时段 (00:00 - 07:00)
+      </text>
+
+      <!-- Footer Bar -->
+      <g transform="translate(${gridLeft}, ${gridTopY + gridH + 26})">
+        <text x="4" y="0" font-size="10.5" fill="#94a3b8">
+          ✨ Clawbot 智能排程引擎 · 亮色日程视图 · 24小时自适应时间网格
+        </text>
+        <text x="${gridW - 4}" y="0" text-anchor="end" font-size="10.5" font-family="monospace" fill="#94a3b8">
+          ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', { hour12: false })} 生成
+        </text>
       </g>
     </svg>
   `;
