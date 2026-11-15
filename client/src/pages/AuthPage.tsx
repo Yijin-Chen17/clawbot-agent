@@ -268,24 +268,15 @@ export const AuthPage: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300">
-                {isRegister
-                  ? language === 'zh'
-                    ? '用户名 (3位以上)'
-                    : 'Username (min 3 chars)'
-                  : language === 'zh'
-                  ? '账号 / 注册邮箱'
-                  : 'Username / Email'}
-              </label>
-
-              {isRegister && usernameStatus.status === 'checking' && (
-                <span className="flex items-center gap-1 text-[11px] text-gray-400">
-                  <RefreshCw className="w-3 h-3 animate-spin text-blue-500" />
-                  {language === 'zh' ? '正在检查...' : 'Checking...'}
-                </span>
-              )}
-            </div>
+            <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
+              {isRegister
+                ? language === 'zh'
+                  ? '用户名 (3位以上)'
+                : 'Username (min 3 chars)'
+                : language === 'zh'
+                ? '账号 / 注册邮箱'
+                : 'Username / Email'}
+            </label>
 
             <div className="relative">
               <UserIcon className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
@@ -321,23 +312,34 @@ export const AuthPage: React.FC = () => {
               )}
             </div>
 
-            {/* 实时查重反馈提示信息 */}
-            {isRegister && usernameStatus.status === 'taken' && (
-              <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium animate-fadeIn">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                <span>{usernameStatus.message}</span>
-              </p>
-            )}
-            {isRegister && usernameStatus.status === 'available' && (
-              <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium animate-fadeIn">
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                <span>{usernameStatus.message}</span>
-              </p>
-            )}
-            {isRegister && usernameStatus.status === 'too_short' && (
-              <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 animate-fadeIn">
-                {usernameStatus.message}
-              </p>
+            {/* 预留固定高度提示区域，避免显示查重状态时改变布局高度 (防止 CLS 抖动) */}
+            {isRegister && (
+              <div className="h-5 mt-1.5 flex items-center text-xs overflow-hidden">
+                {usernameStatus.status === 'checking' && (
+                  <p className="text-gray-400 dark:text-neutral-500 flex items-center gap-1.5 animate-fadeIn">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+                    <span>{language === 'zh' ? '正在检查用户名...' : 'Checking availability...'}</span>
+                  </p>
+                )}
+                {usernameStatus.status === 'taken' && (
+                  <p className="text-rose-600 dark:text-rose-400 flex items-center gap-1.5 font-medium animate-fadeIn">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{usernameStatus.message}</span>
+                  </p>
+                )}
+                {usernameStatus.status === 'available' && (
+                  <p className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-medium animate-fadeIn">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>{usernameStatus.message}</span>
+                  </p>
+                )}
+                {usernameStatus.status === 'too_short' && (
+                  <p className="text-amber-600 dark:text-amber-400 flex items-center gap-1.5 animate-fadeIn">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{usernameStatus.message}</span>
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
