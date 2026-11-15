@@ -70,8 +70,30 @@ export async function sendEmailVerificationCode(
     },
   });
 
+  // 严格规范发件人 (From)，防止 163/QQ/网易企业邮等报 553 Mail from must equal authorized user
+  let senderFrom = `"Clawbot Tasks" <${user}>`;
+  if (from && from.trim()) {
+    const trimmedFrom = from.trim();
+    if (trimmedFrom.includes('<') && trimmedFrom.includes('>')) {
+      const match = trimmedFrom.match(/^(.*?)\s*<([^>]+)>/);
+      if (match) {
+        const displayName = match[1].trim() || 'Clawbot Tasks';
+        // 保证尖括号内的邮箱与 SMTP 认证账号一致
+        senderFrom = `"${displayName.replace(/"/g, '')}" <${user}>`;
+      } else {
+        senderFrom = `"${trimmedFrom.replace(/"/g, '')}" <${user}>`;
+      }
+    } else if (trimmedFrom.includes('@')) {
+      // 若仅填写了邮箱
+      senderFrom = `"Clawbot Tasks" <${user}>`;
+    } else {
+      // 若仅填写了发信昵称（如 "Clawbot"）
+      senderFrom = `"${trimmedFrom.replace(/"/g, '')}" <${user}>`;
+    }
+  }
+
   const mailOptions = {
-    from: from || `"Clawbot Agent" <${user}>`,
+    from: senderFrom,
     to: trimmedEmail,
     subject: `【Clawbot】您的注册验证码：${code}`,
     html: `
