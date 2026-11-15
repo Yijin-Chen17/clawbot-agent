@@ -271,28 +271,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
   const userId = user?.id ? String(user.id) : 'default';
 
-  // Visited sections for "日程规划/提醒通知点开过"
-  const [visitedSections, setVisitedSections] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem(`clawbot_visited_${userId}`);
-      return saved ? new Set(JSON.parse(saved)) : new Set(['account', 'weixin']);
-    } catch {
-      return new Set(['account', 'weixin']);
-    }
-  });
-
-  // Track activeSection visit
-  useEffect(() => {
-    setVisitedSections((prev) => {
-      if (prev.has(activeSection)) return prev;
-      const next = new Set(prev).add(activeSection);
-      try {
-        localStorage.setItem(`clawbot_visited_${userId}`, JSON.stringify([...next]));
-      } catch {}
-      return next;
-    });
-  }, [activeSection, userId]);
-
   // LLM testing state
   const [llmTesting, setLlmTesting] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{ success: boolean; msg: string } | null>(null);
@@ -684,12 +662,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     );
   }
 
-  const isAccountDone = Boolean(user?.nickname || user?.avatar_url);
   const isWeixinDone = Boolean(wxConnected);
-  const isSchedulerDone = visitedSections.has('scheduler');
-  const isNotificationDone = visitedSections.has('notification');
   const isLlmDone = Boolean(llmApiKeyValid);
-  const isCalendarDone = subs.length > 0;
 
   const navMenuItems = [
     {
@@ -697,21 +671,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       label: t('set.tab_account'),
       desc: t('set.tab_account_desc'),
       icon: User,
-      isDone: isAccountDone,
+      showStatus: false,
     },
     {
       id: 'general' as const,
       label: t('set.tab_general'),
       desc: t('set.tab_general_desc'),
       icon: Sliders,
-      isDone: true,
+      showStatus: false,
     },
     {
       id: 'appearance' as const,
       label: t('set.tab_appearance'),
       desc: t('set.tab_appearance_desc'),
       icon: Palette,
-      isDone: true,
+      showStatus: false,
     },
     {
       id: 'weixin' as const,
@@ -719,20 +693,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       desc: t('set.tab_weixin_desc'),
       icon: Bot,
       isDone: isWeixinDone,
+      showStatus: true,
     },
     {
       id: 'scheduler' as const,
       label: t('set.tab_scheduler'),
       desc: t('set.tab_scheduler_desc'),
       icon: Clock,
-      isDone: isSchedulerDone,
+      showStatus: false,
     },
     {
       id: 'notification' as const,
       label: t('set.tab_notification'),
       desc: t('set.tab_notification_desc'),
       icon: Bell,
-      isDone: isNotificationDone,
+      showStatus: false,
     },
     {
       id: 'llm' as const,
@@ -740,13 +715,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       desc: t('set.tab_llm_desc'),
       icon: Brain,
       isDone: isLlmDone,
+      showStatus: true,
     },
     {
       id: 'calendar' as const,
       label: t('set.tab_calendar'),
       desc: t('set.tab_calendar_desc'),
       icon: Calendar,
-      isDone: isCalendarDone,
+      showStatus: false,
     },
   ];
 
@@ -832,7 +808,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{item.label.split(' ')[0]}</span>
-              <span className={`w-2 h-2 rounded-full ${item.isDone ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              {item.showStatus && (
+                <span className={`w-2 h-2 rounded-full ${item.isDone ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              )}
             </button>
           );
         })}
@@ -844,9 +822,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         <aside className="hidden lg:flex flex-col w-72 xl:w-80 shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-3 shadow-xs space-y-1.5 overflow-y-auto scrollbar-thin">
           <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5 flex items-center justify-between">
             <span>{t('set.catalog')}</span>
-            <span className="font-mono text-[10px] text-gray-500 dark:text-neutral-400">
-              {navMenuItems.filter((i) => i.isDone).length}/{navMenuItems.length} {t('common.configured')}
-            </span>
           </div>
           {navMenuItems.map((item) => {
             const Icon = item.icon;
@@ -873,16 +848,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-bold truncate">{item.label}</span>
-                    {item.isDone ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300/70 dark:border-emerald-800 shrink-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {t('common.completed')}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800 shrink-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        {t('common.pending')}
-                      </span>
+                    {item.showStatus && (
+                      item.isDone ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300/70 dark:border-emerald-800 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          {t('common.completed')}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          {t('common.pending')}
+                        </span>
+                      )
                     )}
                   </div>
                   <p className="text-[10px] text-gray-400 dark:text-neutral-500 truncate mt-0.5 font-normal">
@@ -926,7 +903,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               )}
 
               {/* 1. 头像上传 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('account.avatar')}
                 </div>
@@ -936,10 +913,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       <img
                         src={user.avatar_url}
                         alt="Avatar"
-                        className="w-20 h-20 rounded-full object-cover ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md"
+                        className="w-18 h-18 rounded-full object-cover ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-xs"
                       />
                     ) : (
-                      <div className="w-20 h-20 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-2xl shadow-md">
+                      <div className="w-18 h-18 rounded-full bg-blue-600 dark:bg-blue-500 text-white font-bold flex items-center justify-center text-xl shadow-xs">
                         {(user?.nickname || user?.username || 'U').slice(0, 1).toUpperCase()}
                       </div>
                     )}
@@ -963,7 +940,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={avatarUploading}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+                        className="flex items-center gap-2 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
                       >
                         {avatarUploading ? (
                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -981,7 +958,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 2. 账号与昵称设置 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('account.user_info')}
                 </div>
@@ -996,7 +973,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         type="text"
                         value={user?.username || ''}
                         disabled
-                        className="w-full pl-3 pr-8 py-2 text-xs bg-gray-200/60 dark:bg-neutral-800/80 border border-gray-300/80 dark:border-neutral-700 text-gray-500 dark:text-neutral-400 rounded-xl cursor-not-allowed font-mono select-none"
+                        className="w-full pl-3 pr-8 py-2 text-xs bg-gray-100 dark:bg-neutral-800/80 border border-gray-200 dark:border-neutral-700 text-gray-500 dark:text-neutral-400 rounded-xl cursor-not-allowed font-mono select-none"
                       />
                       <Lock className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
                     </div>
@@ -1023,7 +1000,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         type="button"
                         onClick={handleSaveNickname}
                         disabled={savingProfile || nickname === user?.nickname}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer shrink-0"
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer shrink-0"
                       >
                         {savingProfile ? t('common.saving') : t('account.save_nickname')}
                       </button>
@@ -1036,7 +1013,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 3. 修改密码 (服务器只保存不可逆哈希) */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-4">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -1114,7 +1091,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <button
                       type="submit"
                       disabled={changingPassword || !oldPassword || !newPassword}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-semibold rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
                     >
                       {changingPassword ? t('account.updating_password') : t('account.change_password_btn')}
                     </button>
@@ -1123,9 +1100,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 4. 退出登录 */}
-              <div className="p-5 rounded-2xl bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h4 className="text-xs font-bold text-rose-800 dark:text-rose-300">
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-gray-100">
                     {t('account.logout_title')}
                   </h4>
                   <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
@@ -1135,7 +1112,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <button
                   type="button"
                   onClick={logout}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>{t('account.logout_btn')}</span>
@@ -1160,7 +1137,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               )}
 
               {/* 1. 界面语言 (下拉选择框) */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-2 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>{t('general.lang_title')}</span>
@@ -1181,7 +1158,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 2. 默认起始视图 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('general.view_title')}
                 </div>
@@ -1212,7 +1189,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 3. 默认新建任务耗时 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('general.duration_title')}
                 </div>
@@ -1225,7 +1202,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       key={mins}
                       type="button"
                       onClick={() => setDefaultTaskDuration(mins)}
-                      className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                         defaultTaskDuration === mins
                           ? 'bg-indigo-600 text-white shadow-xs'
                           : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
@@ -1238,9 +1215,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 4. 声音与音效反馈 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 flex items-center justify-between gap-4">
+              <div className="pb-6 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-gray-200/70 dark:bg-neutral-800 flex items-center justify-center text-gray-600 dark:text-neutral-300 shrink-0">
+                  <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-neutral-800 flex items-center justify-center text-gray-600 dark:text-neutral-300 shrink-0">
                     {soundEnabled ? <Volume2 className="w-4 h-4 text-indigo-600" /> : <VolumeX className="w-4 h-4" />}
                   </div>
                   <div>
@@ -1268,27 +1245,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 5. 键盘快捷键速查 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pt-1">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   <Keyboard className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>{t('general.shortcuts_title')}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                  <div className="p-3 rounded-xl bg-gray-50/70 dark:bg-[#252728] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
                     <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_new')}</span>
-                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                    <kbd className="px-2 py-0.5 rounded bg-white dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       N
                     </kbd>
                   </div>
-                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                  <div className="p-3 rounded-xl bg-gray-50/70 dark:bg-[#252728] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
                     <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_close')}</span>
-                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                    <kbd className="px-2 py-0.5 rounded bg-white dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       Esc
                     </kbd>
                   </div>
-                  <div className="p-3 rounded-xl bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
+                  <div className="p-3 rounded-xl bg-gray-50/70 dark:bg-[#252728] border border-gray-200/80 dark:border-neutral-700 flex items-center justify-between">
                     <span className="text-xs text-gray-700 dark:text-neutral-300">{t('general.shortcut_submit')}</span>
-                    <kbd className="px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
+                    <kbd className="px-2 py-0.5 rounded bg-white dark:bg-neutral-800 text-[10px] font-mono border border-gray-200 dark:border-neutral-700">
                       Enter
                     </kbd>
                   </div>
@@ -1306,14 +1283,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>,
                 t('appearance.title'),
                 t('appearance.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300">
-                  {t('appearance.preview_badge')}
-                </span>,
+                undefined,
                 true
               )}
 
               {/* 1. 亮暗模式切换 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('appearance.mode_title')}
                 </div>
@@ -1330,7 +1305,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         key={item.id}
                         type="button"
                         onClick={() => setThemeMode(item.id)}
-                        className={`p-4 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        className={`p-3.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
                           isSelected
                             ? 'border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-2xs font-semibold'
                             : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
@@ -1351,7 +1326,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 2. 主题强调配色 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('appearance.accent_title')}
                 </div>
@@ -1391,7 +1366,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
 
               {/* 3. 界面排版紧凑度风格 */}
-              <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#28292a]/70 border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
+              <div className="space-y-3 pt-1">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('appearance.density_title')}
                 </div>
@@ -1435,7 +1410,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
           {/* 1. WeChat Pairing Section */}
           {activeSection === 'weixin' && (
-            <div className="space-y-5 animate-fadeIn">
+            <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
                 <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                   <Bot className="w-5 h-5" />
@@ -1455,23 +1430,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               )}
 
               {wxConnected ? (
-                <div className="bg-gray-50 dark:bg-[#28292a] border border-gray-200/80 dark:border-neutral-700/80 rounded-2xl p-5 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-6">
+                  {/* Connected Account Info & Actions */}
+                  <div className="pb-6 border-b border-gray-100 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3.5">
-                      <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-base shadow-xs">
+                      <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-base shadow-xs shrink-0">
                         {wxNickname ? wxNickname.slice(0, 1).toUpperCase() : 'W'}
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">
                           {wxNickname ? `${t('weixin.bound_account')}：${wxNickname}` : t('weixin.bound_account')}
                         </h3>
-                        <p className="text-xs font-mono text-gray-500 dark:text-neutral-400 mt-0.5 truncate max-w-sm">
+                        <p className="text-xs font-mono text-gray-500 dark:text-neutral-400 mt-0.5 truncate">
                           {t('weixin.comm_id')}: {wxUserId || t('weixin.encrypted')}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap shrink-0">
                       <button
                         type="button"
                         onClick={handleSendTestMessage}
@@ -1493,17 +1469,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </div>
 
                   {testResult && (
-                    <div className="text-xs p-3 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-700 dark:text-neutral-200 flex items-center gap-2">
+                    <div className="text-xs p-3 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 flex items-center gap-2 animate-fadeIn">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>{testResult}</span>
                     </div>
                   )}
 
-                  <div className="text-xs text-gray-600 dark:text-neutral-400 bg-white/80 dark:bg-[#1e1f20]/60 p-4 rounded-xl border border-gray-200/50 dark:border-neutral-700/50 leading-relaxed space-y-2">
-                    <div className="font-semibold text-gray-800 dark:text-neutral-200 flex items-center gap-1.5">
-                      <span>{t('weixin.guide_title')}</span>
+                  {/* Usage Guide */}
+                  <div className="space-y-3 pt-1">
+                    <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                      {t('weixin.guide_title')}
                     </div>
-                    <ul className="list-disc list-inside space-y-1 text-xs pl-1">
+                    <ul className="list-disc list-inside space-y-1.5 text-xs text-gray-600 dark:text-neutral-400 leading-relaxed pl-1">
                       <li>{t('weixin.guide_schedule')}</li>
                       <li>{t('weixin.guide_cal')}</li>
                       <li>{t('weixin.guide_task')}</li>
@@ -1512,7 +1489,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col md:flex-row items-center gap-6 bg-gray-50/70 dark:bg-[#28292a]/50 border border-gray-200/80 dark:border-neutral-700/80 rounded-2xl p-6">
+                <div className="flex flex-col md:flex-row items-center gap-8 py-2">
                   {/* QR Container */}
                   <div className="flex flex-col items-center shrink-0">
                     <div className="w-48 h-48 bg-white p-3 rounded-2xl border-2 border-dashed border-gray-300 shadow-2xs flex items-center justify-center relative overflow-hidden">
@@ -1571,7 +1548,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </div>
 
                   {/* Steps */}
-                  <div className="space-y-3 text-xs flex-1">
+                  <div className="space-y-4 text-xs flex-1 max-w-lg">
                     <div>
                       <div className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-gray-100 mb-1">
                         <QrCode className="w-4 h-4 text-emerald-600" />
@@ -1582,7 +1559,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       </p>
                     </div>
 
-                    <ol className="space-y-1.5 text-xs text-gray-600 dark:text-neutral-300 list-decimal list-inside leading-relaxed pl-1">
+                    <ol className="space-y-2 text-xs text-gray-600 dark:text-neutral-300 list-decimal list-inside leading-relaxed pl-1">
                       <li>{t('weixin.qr_step1')}</li>
                       <li>{t('weixin.qr_step2')}</li>
                       <li>{t('weixin.qr_step3')}</li>
@@ -1600,34 +1577,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
           {/* 2. Scheduler Work Slots & Visual Timeline */}
           {activeSection === 'scheduler' && (
-            <div className="space-y-5 animate-fadeIn">
+            <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Clock className="w-5 h-5" />
                 </div>,
                 t('scheduler.title'),
                 t('scheduler.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  {t('scheduler.active_badge')}
-                </span>
+                undefined
               )}
 
-              {/* Manual Work Slots Input */}
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 mb-1.5">
-                    <span>{t('scheduler.work_slots_title')}</span>
-                  </label>
+              {/* 1. Manual Work Slots Input */}
+              <div className="space-y-2 pb-6 border-b border-gray-100 dark:border-neutral-800">
+                <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                  {t('scheduler.work_slots_title')}
+                </label>
+                <div className="max-w-xl">
                   <input
                     type="text"
                     value={workSlotsText}
                     onChange={(e) => setWorkSlotsText(e.target.value)}
                     placeholder={t('scheduler.work_slots_placeholder')}
-                    className={`w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 focus:bg-white dark:focus:bg-[#232425] outline-none transition ${
+                    className={`w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition ${
                       parsedSlotsInfo.error
                         ? 'border-rose-300 dark:border-rose-700 focus:ring-2 focus:ring-rose-400/20'
-                        : 'border-gray-200 dark:border-neutral-700/80 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                        : 'border-gray-300 dark:border-neutral-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
                     }`}
                   />
                   {parsedSlotsInfo.error ? (
@@ -1641,97 +1615,101 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     </p>
                   )}
                 </div>
+              </div>
 
-                {/* 24-Hour Timeline Visual Progress Bar */}
-                <div className="p-4 bg-gray-50/90 dark:bg-[#28292a]/60 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-gray-800 dark:text-gray-200">{t('scheduler.preview_24h')}</span>
-                      <div className="flex items-center gap-3 text-xs">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 dark:bg-blue-500 inline-block shadow-2xs" />
-                          <span className="font-semibold text-blue-700 dark:text-blue-300">Active</span>
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-xs bg-gray-300 dark:bg-neutral-700 border border-gray-400/40 inline-block" />
-                          <span className="text-gray-500 dark:text-neutral-400">Rest</span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {!parsedSlotsInfo.error && (
-                      <div className="text-xs text-gray-500 dark:text-neutral-400 font-medium">
-                        {t('scheduler.total_available')}：<span className="font-bold text-blue-600 dark:text-blue-400">{(parsedSlotsInfo.totalMinutes / 60).toFixed(1)}{t('scheduler.hours')}</span> / 24h
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Visual Bar */}
-                  <div className="relative w-full h-8 bg-gray-200 dark:bg-neutral-800 rounded-xl overflow-hidden shadow-inner flex items-center select-none border border-gray-300/80 dark:border-neutral-700">
-                    {parsedSlotsInfo.visualSlots.map((slot, idx) => {
-                      const leftPct = (slot.startMin / 1440) * 100;
-                      const widthPct = ((slot.endMin - slot.startMin) / 1440) * 100;
-                      const durationHours = ((slot.endMin - slot.startMin) / 60).toFixed(1);
-
-                      return (
-                        <div
-                          key={idx}
-                          style={{
-                            left: `${leftPct}%`,
-                            width: `${widthPct}%`,
-                          }}
-                          title={`${slot.label} (${durationHours}h)`}
-                          className="absolute top-0 bottom-0 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
-                        >
-                          {widthPct >= 6 && (
-                            <span className="text-[10px] text-white font-mono font-bold truncate px-1 text-center select-none drop-shadow-2xs">
-                              {slot.label}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Grid Lines at 3h intervals */}
-                    {[3, 6, 9, 12, 15, 18, 21].map((hour) => (
-                      <div
-                        key={hour}
-                        style={{ left: `${(hour / 24) * 100}%` }}
-                        className="absolute top-0 bottom-0 w-px bg-gray-400/40 dark:bg-neutral-600/50 pointer-events-none"
-                      />
-                    ))}
-                  </div>
-
-                  {/* Hour Scale */}
-                  <div className="relative w-full h-4 overflow-hidden">
-                    {[0, 3, 6, 9, 12, 15, 18, 21, 24].map((hour) => (
-                      <span
-                        key={hour}
-                        style={{ left: `${(hour / 24) * 100}%` }}
-                        className={`absolute text-[10px] font-mono text-gray-400 dark:text-neutral-500 -translate-x-1/2 ${
-                          hour === 0 ? 'translate-x-0' : hour === 24 ? '-translate-x-full' : ''
-                        }`}
-                      >
-                        {String(hour).padStart(2, '0')}:00
+              {/* 2. 24-Hour Timeline Visual Progress Bar */}
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
+                      {t('scheduler.preview_24h')}
+                    </span>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 dark:bg-blue-500 inline-block shadow-2xs" />
+                        <span className="font-semibold text-blue-700 dark:text-blue-300">Active</span>
                       </span>
-                    ))}
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-gray-300 dark:bg-neutral-700 border border-gray-400/40 inline-block" />
+                        <span className="text-gray-500 dark:text-neutral-400">Rest</span>
+                      </span>
+                    </div>
                   </div>
+
+                  {!parsedSlotsInfo.error && (
+                    <div className="text-xs text-gray-500 dark:text-neutral-400 font-medium">
+                      {t('scheduler.total_available')}：<span className="font-bold text-blue-600 dark:text-blue-400">{(parsedSlotsInfo.totalMinutes / 60).toFixed(1)}{t('scheduler.hours')}</span> / 24h
+                    </div>
+                  )}
                 </div>
 
-                {/* Buffer Setting */}
-                <div className="pt-2">
-                  <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1 text-xs">
-                    {t('scheduler.buffer_title')}
-                  </label>
+                {/* Visual Bar */}
+                <div className="relative w-full h-8 bg-gray-200 dark:bg-neutral-800 rounded-xl overflow-hidden shadow-inner flex items-center select-none border border-gray-300/80 dark:border-neutral-700">
+                  {parsedSlotsInfo.visualSlots.map((slot, idx) => {
+                    const leftPct = (slot.startMin / 1440) * 100;
+                    const widthPct = ((slot.endMin - slot.startMin) / 1440) * 100;
+                    const durationHours = ((slot.endMin - slot.startMin) / 60).toFixed(1);
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${widthPct}%`,
+                        }}
+                        title={`${slot.label} (${durationHours}h)`}
+                        className="absolute top-0 bottom-0 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
+                      >
+                        {widthPct >= 6 && (
+                          <span className="text-[10px] text-white font-mono font-bold truncate px-1 text-center select-none drop-shadow-2xs">
+                            {slot.label}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Grid Lines at 3h intervals */}
+                  {[3, 6, 9, 12, 15, 18, 21].map((hour) => (
+                    <div
+                      key={hour}
+                      style={{ left: `${(hour / 24) * 100}%` }}
+                      className="absolute top-0 bottom-0 w-px bg-gray-400/40 dark:bg-neutral-600/50 pointer-events-none"
+                    />
+                  ))}
+                </div>
+
+                {/* Hour Scale */}
+                <div className="relative w-full h-4 overflow-hidden">
+                  {[0, 3, 6, 9, 12, 15, 18, 21, 24].map((hour) => (
+                    <span
+                      key={hour}
+                      style={{ left: `${(hour / 24) * 100}%` }}
+                      className={`absolute text-[10px] font-mono text-gray-400 dark:text-neutral-500 -translate-x-1/2 ${
+                        hour === 0 ? 'translate-x-0' : hour === 24 ? '-translate-x-full' : ''
+                      }`}
+                    >
+                      {String(hour).padStart(2, '0')}:00
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Buffer Setting */}
+              <div className="space-y-2 pt-1">
+                <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                  {t('scheduler.buffer_title')}
+                </label>
+                <div className="max-w-xs">
                   <input
                     type="number"
                     min="0"
                     max="120"
                     value={taskBuffer}
                     onChange={(e) => setTaskBuffer(Number(e.target.value))}
-                    className="w-full sm:w-60 px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                   />
-                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1">
+                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
                     {t('scheduler.buffer_desc')}
                   </p>
                 </div>
@@ -1741,100 +1719,99 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
           {/* 3. Notification & Reminder Cycles */}
           {activeSection === 'notification' && (
-            <div className="space-y-5 animate-fadeIn">
+            <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
                 <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
                   <Bell className="w-5 h-5" />
                 </div>,
                 t('notification.title'),
                 t('notification.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  {t('notification.active_badge')}
-                </span>
+                undefined
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
-                {/* Start reminder */}
-                <div className="p-4 bg-gray-50/80 dark:bg-[#28292a]/50 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
-                  <div>
-                    <label className="block font-bold text-gray-800 dark:text-gray-200 mb-1">
-                      {t('notification.start_title')}
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2">
-                      {t('notification.start_desc')}
-                    </p>
+              {/* 1. Start reminder */}
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800 text-xs">
+                <div>
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                    {t('notification.start_title')}
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2.5">
+                    {t('notification.start_desc')}
+                  </p>
+                  <div className="max-w-xs">
                     <input
                       type="number"
                       min="1"
                       max="60"
                       value={remindStart}
                       onChange={(e) => setRemindStart(Number(e.target.value))}
-                      className="w-full px-3.5 py-2 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs"
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                     />
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {[5, 10, 15, 30].map((mins) => (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => setRemindStart(mins)}
-                        className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition cursor-pointer ${
-                          remindStart === mins
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300'
-                        }`}
-                      >
-                        {mins} {t('general.minutes')}
-                      </button>
-                    ))}
-                  </div>
                 </div>
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  {[5, 10, 15, 30].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setRemindStart(mins)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition cursor-pointer ${
+                        remindStart === mins
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      {mins} {t('general.minutes')}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                {/* End reminder */}
-                <div className="p-4 bg-gray-50/80 dark:bg-[#28292a]/50 rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-3">
-                  <div>
-                    <label className="block font-bold text-gray-800 dark:text-gray-200 mb-1">
-                      {t('notification.end_title')}
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2">
-                      {t('notification.end_desc')}
-                    </p>
+              {/* 2. End reminder */}
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800 text-xs">
+                <div>
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                    {t('notification.end_title')}
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2.5">
+                    {t('notification.end_desc')}
+                  </p>
+                  <div className="max-w-xs">
                     <input
                       type="number"
                       min="1"
                       max="60"
                       value={remindEnd}
                       onChange={(e) => setRemindEnd(Number(e.target.value))}
-                      className="w-full px-3.5 py-2 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs"
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                     />
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {[3, 5, 10, 15].map((mins) => (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => setRemindEnd(mins)}
-                        className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition cursor-pointer ${
-                          remindEnd === mins
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300'
-                        }`}
-                      >
-                        {mins} {t('general.minutes')}
-                      </button>
-                    ))}
-                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  {[3, 5, 10, 15].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setRemindEnd(mins)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition cursor-pointer ${
+                        remindEnd === mins
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      {mins} {t('general.minutes')}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Notification Mechanism Card */}
-              <div className="p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 rounded-2xl space-y-2 text-xs">
-                <div className="font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+              {/* 3. Notification Mechanism Strategy */}
+              <div className="space-y-2 pt-1 text-xs">
+                <div className="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                   <span>{t('notification.strategy_title')}</span>
                 </div>
-                <p className="text-blue-800/80 dark:text-blue-300/80 leading-relaxed">
+                <p className="text-gray-600 dark:text-neutral-400 leading-relaxed max-w-2xl">
                   {t('notification.strategy_desc')}
                 </p>
               </div>
@@ -1843,7 +1820,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
           {/* 4. LLM Config Section */}
           {activeSection === 'llm' && (
-            <div className="space-y-5 animate-fadeIn">
+            <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
                 <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                   <Brain className="w-5 h-5" />
@@ -1862,9 +1839,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 )
               )}
 
-              <div className="space-y-4 text-xs max-w-xl">
-                <div>
-                  <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
+              <div className="space-y-5 text-xs max-w-xl">
+                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
                     {t('llm.endpoint')}
                   </label>
                   <input
@@ -1872,13 +1849,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     value={llmEndpoint}
                     onChange={(e) => setLlmEndpoint(e.target.value)}
                     placeholder="https://api.deepseek.com/v1"
-                    className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                   <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: DeepSeek Official Endpoint</span>
                 </div>
 
-                <div>
-                  <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
+                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
                     {t('llm.api_key')}
                   </label>
                   <input
@@ -1892,13 +1869,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       }
                     }}
                     placeholder={t('llm.api_key_placeholder')}
-                    className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                   <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Stored securely in SQLite database and isolated per account</span>
                 </div>
 
-                <div>
-                  <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
+                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
                     {t('llm.model')}
                   </label>
                   <input
@@ -1906,12 +1883,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     value={llmModel}
                     onChange={(e) => setLlmModel(e.target.value)}
                     placeholder="deepseek-chat"
-                    className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:bg-white dark:focus:bg-[#232425] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                   <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
                 </div>
 
-                <div className="flex items-center gap-2.5 pt-2">
+                <div className="flex items-center gap-3 pt-1">
                   <button
                     type="button"
                     onClick={handleTestLlmKey}
@@ -1946,41 +1923,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
           {/* 5. External Calendar Subscriptions & Export */}
           {activeSection === 'calendar' && (
-            <div className="space-y-5 animate-fadeIn">
+            <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
                 <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
                 </div>,
                 t('calendar.title'),
                 t('calendar.subtitle'),
-                isCalendarDone ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    {t('common.configured')} ({subs.length})
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    {t('common.pending')}
-                  </span>
-                )
+                undefined
               )}
 
-              {/* Export TODO link */}
-              <div className="p-4 bg-gray-50 dark:bg-[#28292a] rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-2 text-xs">
-                <label className="block font-bold text-gray-800 dark:text-neutral-200 text-xs">
+              {/* 1. Export TODO link */}
+              <div className="space-y-2 pb-6 border-b border-gray-100 dark:border-neutral-800 text-xs">
+                <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
                   {t('calendar.export_title')}
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 max-w-2xl">
                   <input
                     type="text"
                     readOnly
                     value={icalExportUrl}
-                    className="w-full px-3.5 py-2 bg-white dark:bg-[#232425] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all"
                   />
                   <button
                     type="button"
                     onClick={copyIcal}
-                    className="px-4 py-2 bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-neutral-200 text-xs font-medium rounded-xl shrink-0 flex items-center gap-1.5 transition cursor-pointer"
+                    className="px-4 py-2.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-800 dark:text-neutral-200 text-xs font-medium rounded-xl shrink-0 flex items-center gap-1.5 transition cursor-pointer border border-gray-200 dark:border-neutral-700"
                   >
                     {copiedIcal ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
@@ -1988,84 +1956,93 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* Add external sub */}
-              <form onSubmit={handleAddSubscription} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 text-xs">
-                <input
-                  type="text"
-                  value={newSubName}
-                  onChange={(e) => setNewSubName(e.target.value)}
-                  placeholder={t('calendar.name_placeholder')}
-                  className="w-full sm:w-48 px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-800 dark:text-gray-100 outline-none"
-                  required
-                />
-                <input
-                  type="text"
-                  value={newSubUrl}
-                  onChange={(e) => setNewSubUrl(e.target.value)}
-                  placeholder={t('calendar.url_placeholder')}
-                  className="w-full px-3.5 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none"
-                  required
-                />
-                <button
-                  type="submit"
-                  disabled={addingSub}
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shrink-0 transition disabled:opacity-50 cursor-pointer"
-                >
-                  {addingSub ? t('calendar.adding') : t('calendar.add_btn')}
-                </button>
-              </form>
+              {/* 2. Add external sub */}
+              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800 text-xs">
+                <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                  {t('calendar.add_btn')}
+                </label>
+                <form onSubmit={handleAddSubscription} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 text-xs max-w-2xl">
+                  <input
+                    type="text"
+                    value={newSubName}
+                    onChange={(e) => setNewSubName(e.target.value)}
+                    placeholder={t('calendar.name_placeholder')}
+                    className="w-full sm:w-48 px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl text-gray-800 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    required
+                  />
+                  <input
+                    type="text"
+                    value={newSubUrl}
+                    onChange={(e) => setNewSubUrl(e.target.value)}
+                    placeholder={t('calendar.url_placeholder')}
+                    className="w-full flex-1 px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={addingSub}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shrink-0 transition disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    {addingSub ? t('calendar.adding') : t('calendar.add_btn')}
+                  </button>
+                </form>
+              </div>
 
-              {/* Subscriptions list */}
-              <div className="space-y-2.5 text-xs">
-                <div className="font-semibold text-gray-700 dark:text-neutral-300">{t('calendar.list_title')}</div>
+              {/* 3. Subscriptions list */}
+              <div className="space-y-3 text-xs">
+                <div className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
+                  {t('calendar.list_title')}
+                </div>
                 {subs.length === 0 ? (
-                  <div className="p-6 text-center text-gray-400 dark:text-neutral-500 bg-gray-50 dark:bg-[#28292a]/50 rounded-2xl border border-dashed border-gray-200 dark:border-neutral-800 text-xs">
+                  <div className="p-6 text-center text-gray-400 dark:text-neutral-500 bg-gray-50/50 dark:bg-neutral-800/20 rounded-2xl border border-dashed border-gray-200 dark:border-neutral-800 text-xs">
                     {t('calendar.empty_list')}
                   </div>
                 ) : (
-                  subs.map((sub) => (
-                    <div
-                      key={sub.id}
-                      className="flex items-center justify-between p-3.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200/80 dark:border-neutral-700/80 rounded-xl"
-                    >
-                      <div className="space-y-1 max-w-xs sm:max-w-md truncate">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-gray-900 dark:text-gray-100 text-xs">{sub.name}</span>
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              sub.sync_status === 'ok'
-                                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                                : 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
-                            }`}
-                          >
-                            {sub.sync_status === 'ok' ? `OK (${sub.event_count})` : 'Error'}
-                          </span>
+                  <div className="space-y-2">
+                    {subs.map((sub) => (
+                      <div
+                        key={sub.id}
+                        className="flex items-center justify-between p-3.5 bg-gray-50/70 dark:bg-neutral-800/40 border border-gray-200/80 dark:border-neutral-700/80 rounded-xl"
+                      >
+                        <div className="space-y-1 max-w-xs sm:max-w-md truncate">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900 dark:text-gray-100 text-xs">{sub.name}</span>
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                sub.sync_status === 'ok'
+                                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                                  : 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                              }`}
+                            >
+                              {sub.sync_status === 'ok' ? `OK (${sub.event_count})` : 'Error'}
+                            </span>
+                          </div>
+                          <div className="font-mono text-[10px] text-gray-400 dark:text-neutral-500 truncate">
+                            {sub.url}
+                          </div>
                         </div>
-                        <div className="font-mono text-[10px] text-gray-400 dark:text-neutral-500 truncate">
-                          {sub.url}
-                        </div>
-                      </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleSyncNow(sub.id)}
-                          className="p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-full transition cursor-pointer"
-                          title={t('calendar.sync_now')}
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSubscription(sub.id)}
-                          className="p-2 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-full transition cursor-pointer"
-                          title={t('common.delete')}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleSyncNow(sub.id)}
+                            className="p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-full transition cursor-pointer"
+                            title={t('calendar.sync_now')}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSubscription(sub.id)}
+                            className="p-2 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-full transition cursor-pointer"
+                            title={t('common.delete')}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
