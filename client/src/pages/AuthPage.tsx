@@ -270,9 +270,6 @@ export const AuthPage: React.FC = () => {
                   required
                 />
               </div>
-              <p className="text-[11px] text-blue-700 dark:text-blue-400 mt-2 bg-blue-50 dark:bg-blue-950/40 p-2.5 rounded-xl border border-blue-200 dark:border-blue-900/60">
-                ✨ 提示：输入邮箱验证码即可直接完成注册并登录系统，无需等待管理员人工审核。
-              </p>
             </div>
           )}
 
