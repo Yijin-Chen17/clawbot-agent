@@ -11,36 +11,30 @@ import {
   Copy,
   Check,
   Clock,
-  AlertTriangle,
   Download,
   ExternalLink,
   Share2,
   Menu,
+  Plus,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
 
-// Grid Constants matching calcury/eisenhower-matrix
-const CALENDAR_START_HOUR = 7;
-const CALENDAR_END_HOUR = 24;
-const REST_END_HOUR = 7;
-const GRID_HOURS = CALENDAR_END_HOUR - CALENDAR_START_HOUR + REST_END_HOUR; // 24 hours
-const GRID_MINUTES = GRID_HOURS * 60;
-const REST_START_MINUTES = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 60;
-const HOUR_HEIGHT = 42; // standard row height
-
-const DAY_HOURS = Array.from(
-  { length: CALENDAR_END_HOUR - CALENDAR_START_HOUR },
-  (_, index) => CALENDAR_START_HOUR + index
-);
-const REST_HOURS = Array.from({ length: REST_END_HOUR }, (_, index) => index + 1);
+// Google Calendar standard 24-hour grid constants
+const CALENDAR_HOURS = 24;
+const HOUR_HEIGHT = 48; // Google Calendar standard row height
+const GRID_HEIGHT = CALENDAR_HOURS * HOUR_HEIGHT; // 1152px
 
 const CALENDAR_PALETTE = [
-  '#4EA8FF',
-  '#B388FF',
-  '#3DDC97',
-  '#FFC857',
-  '#FF7A90',
-  '#9AA4B2',
-  '#FF9F43',
+  '#039BE5', // Peacock / Google Blue
+  '#33B679', // Sage / Green
+  '#8E24AA', // Grape / Purple
+  '#E67C73', // Flamingo / Coral
+  '#F6BF26', // Banana / Amber
+  '#F4511E', // Tangerine / Orange
+  '#3F51B5', // Indigo
+  '#009688', // Teal
+  '#616161', // Graphite
 ];
 
 interface CalendarSubscription {
@@ -121,12 +115,11 @@ interface PositionedItem<T> {
   conflict: boolean;
 }
 
+// Start of week on Sunday matching Google Calendar default and reference
 function startOfWeek(date: Date): Date {
   const next = new Date(date);
-  const day = next.getDay();
-  // Monday as first day of week (ISO-8601)
-  const diff = next.getDate() - day + (day === 0 ? -6 : 1);
-  next.setDate(diff);
+  const day = next.getDay(); // 0 is Sunday
+  next.setDate(next.getDate() - day);
   next.setHours(0, 0, 0, 0);
   return next;
 }
@@ -148,8 +141,14 @@ function dateKeyFromIso(iso: string): string {
   return localDateKey(new Date(iso));
 }
 
-function formatHour(hour: number): string {
-  return `${String(hour).padStart(2, '0')}:00`;
+function formatHourLabel(hour: number, locale: string): string {
+  if (hour === 0) return '';
+  if (locale.startsWith('zh')) {
+    return `${String(hour).padStart(2, '0')}:00`;
+  }
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return '12 PM';
+  return `${hour - 12} PM`;
 }
 
 function formatTime(iso: string): string {
@@ -157,11 +156,23 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function weekLabel(start: Date): string {
+function formatMonthHeading(start: Date, locale: string): string {
   const end = addDays(start, 6);
-  const startStr = `${start.getMonth() + 1}月${start.getDate()}日`;
-  const endStr = `${end.getMonth() + 1}月${end.getDate()}日, ${end.getFullYear()}`;
-  return `${startStr} – ${endStr}`;
+  if (locale.startsWith('zh')) {
+    if (start.getFullYear() === end.getFullYear()) {
+      if (start.getMonth() === end.getMonth()) {
+        return `${start.getFullYear()}年${start.getMonth() + 1}月`;
+      }
+      return `${start.getFullYear()}年${start.getMonth() + 1}月 – ${end.getMonth() + 1}月`;
+    }
+    return `${start.getFullYear()}年${start.getMonth() + 1}月 – ${end.getFullYear()}年${end.getMonth() + 1}月`;
+  }
+  const startMonth = start.toLocaleDateString('en-US', { month: 'long' });
+  const endMonth = end.toLocaleDateString('en-US', { month: 'long' });
+  if (start.getFullYear() === end.getFullYear() && startMonth === endMonth) {
+    return `${startMonth} ${start.getFullYear()}`;
+  }
+  return `${start.toLocaleDateString('en-US', { month: 'short' })} – ${endMonth} ${end.getFullYear()}`;
 }
 
 function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
@@ -184,7 +195,7 @@ function segmentRange(
   };
 }
 
-// Greedy layout assigning columns for overlapping day items (matching eisenhower-matrix)
+// Assign columns for overlapping items in calendar
 function layoutDayItems<T extends { start: string; end: string }>(items: T[]): PositionedItem<T>[] {
   const sorted = [...items].sort(
     (a, b) =>
@@ -275,16 +286,26 @@ function safeCopyToClipboard(text: string): boolean {
 
 interface CalendarViewProps {
   onOpenMobileMenu?: () => void;
+  onNewTask?: () => void;
 }
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
+export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, onNewTask }) => {
   const { user } = useAuth();
-  const { isDark, t } = useTheme();
+  const { isDark, t, language } = useTheme();
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subscriptions, setSubscriptions] = useState<CalendarSubscription[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Left sidebar collapse toggle (Google Calendar main drawer toggle)
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Mini calendar month cursor
+  const [miniMonthDate, setMiniMonthDate] = useState(() => new Date(weekStart));
+
+  // Current live time for red indicator line
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   // Dialogs & Modals
   const [showCalendarsModal, setShowCalendarsModal] = useState(false);
@@ -311,6 +332,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   const icalExportUrl = serverExportUrls?.http || (effectiveToken ? `${window.location.origin}/api/calendar/subscribe/${effectiveToken}.ics` : '');
   const webcalUrl = serverExportUrls?.webcal || (effectiveToken ? `webcal://${window.location.host}/api/calendar/subscribe/${effectiveToken}.ics` : '');
   const downloadUrl = serverExportUrls?.download || (effectiveToken ? `${window.location.origin}/api/calendar/export/${effectiveToken}.ics` : '');
+
+  // Live timer for red current time line
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Sync mini calendar month when weekStart changes
+  useEffect(() => {
+    setMiniMonthDate(new Date(weekStart));
+  }, [weekStart]);
 
   const handleCopyLink = (linkToCopy: string, type: string) => {
     const ok = safeCopyToClipboard(linkToCopy);
@@ -346,6 +378,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     fetchData();
   }, []);
 
+  // Auto-scroll to morning hours (08:00) on mount / week change
+  useEffect(() => {
+    if (scrollRef.current) {
+      const now = new Date();
+      const targetHour = Math.max(7, now.getHours() - 1);
+      scrollRef.current.scrollTop = targetHour * HOUR_HEIGHT;
+    }
+  }, [weekStart]);
+
   // Map subscriptions to colors
   const subColorMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -355,22 +396,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     return map;
   }, [subscriptions]);
 
-  // Today key
   const todayKey = localDateKey(new Date());
   const weekStartKey = localDateKey(weekStart);
 
-  // 7 Days Data
+  // 7 Days Data (Sunday through Saturday)
   const dayData = useMemo(() => {
     return Array.from({ length: 7 }, (_, index) => {
       const date = addDays(weekStart, index);
       const key = localDateKey(date);
 
-      // Window: 07:00 of this date to 07:00 of next date
+      // Window: 00:00:00 of this date to 00:00:00 of next date (standard 24h day)
       const windowStart = new Date(date);
-      windowStart.setHours(CALENDAR_START_HOUR, 0, 0, 0);
+      windowStart.setHours(0, 0, 0, 0);
 
       const windowEnd = new Date(addDays(date, 1));
-      windowEnd.setHours(CALENDAR_START_HOUR, 0, 0, 0);
+      windowEnd.setHours(0, 0, 0, 0);
 
       const windowStartIso = windowStart.toISOString();
       const windowEndIso = windowEnd.toISOString();
@@ -383,7 +423,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
         .filter((ev) => ev.extendedProps?.type === 'external')
         .forEach((ev) => {
           const color =
-            (ev.subscriptionId && subColorMap.get(ev.subscriptionId)) || '#0284C7';
+            (ev.subscriptionId && subColorMap.get(ev.subscriptionId)) || '#039BE5';
           if (ev.allDay) {
             const startsOn = dateKeyFromIso(ev.start);
             const endsOn = dateKeyFromIso(ev.end);
@@ -421,7 +461,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
       tasks
         .filter((t) => (t.schedule_blocks || (t.scheduled_start && t.scheduled_end)) && t.status !== 'completed')
         .forEach((t) => {
-          let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; strategyLabel?: string }[] = [];
+          let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
           if (t.schedule_blocks) {
             try {
               blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
@@ -480,7 +520,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     });
   }, [weekStart, events, tasks, subColorMap]);
 
-  // Overdue tasks (deadline before this weekStart)
+  // Overdue tasks
   const overdueTasks = useMemo(() => {
     return tasks
       .filter(
@@ -492,12 +532,41 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
       .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
   }, [tasks, weekStartKey]);
 
-  // Due groups this week with at least 1 task
+  // Due groups this week
   const dueGroups = useMemo(() => {
     return dayData.filter((d) => d.due.length > 0);
   }, [dayData]);
 
-  // Add external subscription handler
+  // Mini calendar matrix calculation
+  const miniCalendarGrid = useMemo(() => {
+    const year = miniMonthDate.getFullYear();
+    const month = miniMonthDate.getMonth();
+    const firstDayOfMonth = new Date(year, month, 1);
+    const startDay = firstDayOfMonth.getDay(); // 0 is Sun
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const days: { date: Date; isCurrentMonth: boolean; key: string }[] = [];
+
+    // Prev month days
+    for (let i = startDay - 1; i >= 0; i--) {
+      const d = new Date(year, month, -i);
+      days.push({ date: d, isCurrentMonth: false, key: localDateKey(d) });
+    }
+    // Current month days
+    for (let i = 1; i <= daysInMonth; i++) {
+      const d = new Date(year, month, i);
+      days.push({ date: d, isCurrentMonth: true, key: localDateKey(d) });
+    }
+    // Next month days to fill 35 or 42 slots
+    const remaining = 42 - days.length;
+    for (let i = 1; i <= remaining; i++) {
+      const d = new Date(year, month + 1, i);
+      days.push({ date: d, isCurrentMonth: false, key: localDateKey(d) });
+    }
+    return days;
+  }, [miniMonthDate]);
+
+  // Handlers for subscriptions & replanning
   const handleAddSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubName.trim() || !newSubUrl.trim()) return;
@@ -586,58 +655,80 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const gridHeight = (GRID_MINUTES / 60) * HOUR_HEIGHT;
-  const restTop = (REST_START_MINUTES / 60) * HOUR_HEIGHT;
-  const restHeight = ((GRID_MINUTES - REST_START_MINUTES) / 60) * HOUR_HEIGHT;
+  // Current time position in minutes from midnight
+  const currentMinutesFromMidnight = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const currentLineTop = (currentMinutesFromMidnight / 60) * HOUR_HEIGHT;
+
+  const weekDayLabels = language.startsWith('zh')
+    ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    : ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
   return (
-    <div className="w-full flex-1 min-h-0 flex flex-col space-y-3 overflow-hidden">
-      {/* Top Toolbar matching calcury/eisenhower-matrix */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 px-1">
-        {/* Navigation Group */}
-        <div className="flex items-center gap-2">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
+      {/* 1. Google Calendar 经典顶部工具栏 */}
+      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+        {/* 左侧：菜单切换 + 今天按钮 + 翻周箭头 + 月份年份 */}
+        <div className="flex items-center gap-2 sm:gap-3">
           {onOpenMobileMenu && (
             <button
               type="button"
               onClick={onOpenMobileMenu}
-              className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-              title="打开侧边导航"
+              className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              title="打开侧边菜单"
             >
               <Menu className="w-5 h-5" />
             </button>
           )}
-          <div className="flex items-center bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-700/80 rounded-full shadow-2xs overflow-hidden">
+
+          {/* 桌面端切换左抽屉 */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="hidden md:flex p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+            title={sidebarOpen ? '收起左侧面板' : '展开左侧面板'}
+          >
+            {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
+          </button>
+
+          {/* Google 经典圆角药丸 Today 按钮 */}
+          <button
+            type="button"
+            onClick={() => setWeekStart(startOfWeek(new Date()))}
+            className="px-4 py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-xs font-medium text-gray-700 dark:text-neutral-200 transition cursor-pointer"
+          >
+            {t('common.today', '今天')}
+          </button>
+
+          {/* 上一周 / 下一周 翻页按钮 */}
+          <div className="flex items-center">
             <button
+              type="button"
               onClick={() => setWeekStart((prev) => addDays(prev, -7))}
               aria-label="Previous week"
-              className="p-1.5 px-2 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-5 h-5" />
             </button>
             <button
-              onClick={() => setWeekStart(startOfWeek(new Date()))}
-              className="px-3 py-1 text-xs font-semibold text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 border-x border-gray-200/80 dark:border-neutral-700/80 transition cursor-pointer"
-            >
-              {t('common.today')}
-            </button>
-            <button
+              type="button"
               onClick={() => setWeekStart((prev) => addDays(prev, 7))}
               aria-label="Next week"
-              className="p-1.5 px-2 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-5 h-5" />
             </button>
           </div>
 
-          <span className="text-xs sm:text-sm font-bold text-gray-900 dark:text-gray-100 font-mono">
-            {weekLabel(weekStart)}
-          </span>
+          {/* 月份年份标题 (如: November 2026 / 2026年11月) */}
+          <h2 className="text-lg sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight ml-1 sm:ml-2">
+            {formatMonthHeading(weekStart, language)}
+          </h2>
         </div>
 
-        {/* Actions Group */}
+        {/* 右侧：同步重排、日历管理、导出与刷新 */}
         <div className="flex items-center gap-2">
           {loading && (
-            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1.5">
+            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium hidden sm:flex items-center gap-1.5">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
               <span>{t('common.loading')}</span>
             </span>
@@ -647,7 +738,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
             title={t('calendar.replan')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span>{replanLoading ? t('calendar.replanning') : t('calendar.replan')}</span>
@@ -656,20 +747,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           <button
             onClick={() => setShowExportModal(true)}
             title={t('calendar.export_btn')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1"
           >
-            <Share2 className="w-3.5 h-3.5" />
-            <span>{t('calendar.export_btn')}</span>
+            <Share2 className="w-4 h-4 text-gray-600 dark:text-neutral-300" />
+            <span className="hidden sm:inline">{t('calendar.export_btn')}</span>
           </button>
 
           <button
             onClick={() => setShowCalendarsModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 border border-gray-200/80 dark:border-neutral-700/80 rounded-full text-xs font-semibold shadow-2xs transition cursor-pointer"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
+            title={t('calendar.manage_btn')}
           >
-            <CalendarIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-            <span>{t('calendar.manage_btn')}</span>
+            <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <span className="hidden sm:inline">{t('calendar.manage_btn')}</span>
             {subscriptions.length > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
                 {subscriptions.length}
               </span>
             )}
@@ -677,179 +769,260 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
           <button
             onClick={() => fetchData()}
-            className="p-2 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 border border-gray-200/80 dark:border-neutral-700/80 rounded-full shadow-2xs transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
             title={t('calendar.refresh_btn')}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Main Body: 左右排版: Left Due Column + Right Cal Grid */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-3.5 min-h-0 overflow-hidden">
-        {/* Left Column: Due Column (截止待办) matching calcury/eisenhower-matrix */}
-        <aside className="w-full lg:w-56 xl:w-64 shrink-0 flex flex-col bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-800/80 rounded-2xl shadow-xs overflow-hidden transition-colors">
-          <div className="px-3.5 py-2.5 border-b border-gray-100 dark:border-neutral-800 flex items-baseline justify-between bg-gray-50/50 dark:bg-[#252627]/50">
-            <h3 className="text-xs font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-              <span>{t('calendar.due_title')}</span>
-              <span className="text-[10px] text-gray-400 font-normal">Due</span>
-            </h3>
-            <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 font-semibold font-mono">
-              {t('calendar.week_schedule')}
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2.5 space-y-3 scrollbar-thin">
-            {/* Overdue Section */}
-            {overdueTasks.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 px-1 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" />
-                  <span>{t('calendar.overdue')} ({overdueTasks.length})</span>
+      {/* 2. 主体区：左侧 Google Calendar 抽屉 + 右侧周视图网格 */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* 左侧抽屉 (Google Calendar Left Sidebar: 新建按钮 + 迷你月历 + 待办清单) */}
+        {sidebarOpen && (
+          <aside className="w-64 xl:w-72 shrink-0 border-r border-gray-200/80 dark:border-neutral-800 overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin hidden md:flex flex-col bg-white dark:bg-[#1e1f20]">
+            {/* Google 风格超大 "+ 新建待办" 药丸按钮 */}
+            {onNewTask && (
+              <button
+                type="button"
+                onClick={onNewTask}
+                className="w-full flex items-center gap-3 px-5 py-3 rounded-2xl bg-white dark:bg-[#282a2d] hover:bg-gray-50 dark:hover:bg-[#303337] border border-gray-200 dark:border-neutral-700 shadow-md hover:shadow-lg transition-all cursor-pointer group"
+              >
+                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-xs group-hover:scale-105 transition-transform">
+                  <Plus className="w-5 h-5 stroke-[2.5]" />
                 </div>
-                {overdueTasks.map((t) => {
-                  const quad = getTaskQuadrant(t.importance, t.urgency);
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                  {t('workspace.add_task', '新建事项')}
+                </span>
+              </button>
+            )}
+
+            {/* Google Calendar 经典迷你月历组件 */}
+            <div className="bg-transparent select-none">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                  {miniMonthDate.getFullYear()}年 {miniMonthDate.getMonth() + 1}月
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() - 1, 1))}
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() + 1, 1))}
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 星期缩写行 */}
+              <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-neutral-500 mb-1">
+                <span>日</span>
+                <span>一</span>
+                <span>二</span>
+                <span>三</span>
+                <span>四</span>
+                <span>五</span>
+                <span>六</span>
+              </div>
+
+              {/* 日期网格 */}
+              <div className="grid grid-cols-7 gap-y-0.5 text-center text-xs">
+                {miniCalendarGrid.map((item, idx) => {
+                  const isToday = item.key === todayKey;
+                  const itemTime = item.date.getTime();
+                  const weekStartTime = weekStart.getTime();
+                  const weekEndTime = addDays(weekStart, 7).getTime();
+                  const isCurrentWeek = itemTime >= weekStartTime && itemTime < weekEndTime;
+
                   return (
                     <button
-                      key={t.id}
-                      onClick={() => setSelectedDueTask(t)}
-                      className="w-full text-left p-2 rounded-xl bg-rose-50/60 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer group"
+                      key={`mini-${idx}-${item.key}`}
+                      type="button"
+                      onClick={() => setWeekStart(startOfWeek(item.date))}
+                      className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center text-[11px] transition cursor-pointer ${
+                        isToday
+                          ? 'bg-blue-600 text-white font-bold'
+                          : isCurrentWeek
+                          ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-semibold'
+                          : item.isCurrentMonth
+                          ? 'text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                          : 'text-gray-300 dark:text-neutral-600'
+                      }`}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: quad.color }}
-                        />
-                        <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate group-hover:text-rose-600 dark:group-hover:text-rose-400">
-                          {t.title}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5 font-mono">
-                        {t.deadline ? new Date(t.deadline).toLocaleDateString() : '逾期'} · {t.duration_minutes}m
-                      </div>
+                      {item.date.getDate()}
                     </button>
                   );
                 })}
               </div>
-            )}
+            </div>
 
-            {/* Daily Due Sections */}
-            {dueGroups.length > 0 &&
-              dueGroups.map((group) => {
-                const dayLabel = `${group.date.getMonth() + 1}月${group.date.getDate()}日`;
-                const weekDayName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][
-                  group.date.getDay()
-                ];
-                const isToday = group.key === todayKey;
-
-                return (
-                  <div key={group.key} className="space-y-1.5">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400 px-1 flex items-center justify-between">
-                      <span className={isToday ? 'text-blue-600 dark:text-blue-400 font-bold' : ''}>
-                        {weekDayName} · {dayLabel}
-                      </span>
-                      <span className="font-mono text-[9px] text-gray-400">
-                        {group.due.length} 项
+            {/* 我的日历列表 (Google Calendar 经典抽屉列表) */}
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
+                <span>我的日历</span>
+                <span className="text-[10px] text-gray-400 font-normal">
+                  {subscriptions.length + 1} 个源
+                </span>
+              </div>
+              <div className="space-y-1 text-xs">
+                {/* Clawbot 主待办 */}
+                <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60">
+                  <span className="w-3 h-3 rounded-sm bg-blue-600 shrink-0" />
+                  <span className="text-gray-700 dark:text-neutral-300 truncate">Clawbot 待办日程</span>
+                </div>
+                {/* 订阅外部日历 */}
+                {subscriptions.map((sub, idx) => {
+                  const color = CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
+                  return (
+                    <div
+                      key={sub.id}
+                      className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group"
+                    >
+                      <div className="flex items-center gap-2.5 truncate min-w-0">
+                        <span
+                          className="w-3 h-3 rounded-sm shrink-0"
+                          style={{ backgroundColor: color }}
+                        />
+                        <span className="text-gray-700 dark:text-neutral-300 truncate">{sub.name}</span>
+                      </div>
+                      <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                        {sub.event_count}
                       </span>
                     </div>
-
-                    {group.due.map((t) => {
-                      const quad = getTaskQuadrant(t.importance, t.urgency);
-                      return (
-                        <button
-                          key={t.id}
-                          onClick={() => setSelectedDueTask(t)}
-                          className="w-full text-left p-2 rounded-xl bg-gray-50 dark:bg-[#28292a] hover:bg-blue-50/70 dark:hover:bg-blue-950/40 border border-gray-200/80 dark:border-neutral-700/80 transition cursor-pointer group"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: quad.color }}
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                              {t.title}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">
-                            <span>{t.duration_minutes} 分钟</span>
-                            <span>{quad.name.slice(0, 2)}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-            {overdueTasks.length === 0 && dueGroups.length === 0 && (
-              <div className="p-6 text-center text-gray-400 dark:text-neutral-500 text-xs">
-                {t('calendar.no_due')}
+                  );
+                })}
               </div>
-            )}
-          </div>
-        </aside>
+            </div>
 
-        {/* Right Main: Calendar Time Grid matching calcury/eisenhower-matrix */}
+            {/* 截止待办提醒 (Due Tasks) */}
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800 flex-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
+                <span>{t('calendar.due_title', '截止待办')}</span>
+                {overdueTasks.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
+                    逾期 {overdueTasks.length}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                {overdueTasks.slice(0, 4).map((t) => (
+                  <button
+                    key={`overdue-${t.id}`}
+                    type="button"
+                    onClick={() => setSelectedDueTask(t)}
+                    className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
+                  >
+                    <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
+                      {t.title}
+                    </div>
+                    <div className="text-[10px] text-rose-500 font-mono mt-0.5">
+                      {t.deadline ? new Date(t.deadline).toLocaleDateString() : '已逾期'} · {t.duration_minutes}m
+                    </div>
+                  </button>
+                ))}
+
+                {dueGroups.slice(0, 3).map((group) => (
+                  <div key={`due-grp-${group.key}`} className="space-y-1">
+                    <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
+                      {group.date.getMonth() + 1}月{group.date.getDate()}日 ({weekDayLabels[group.date.getDay()]})
+                    </div>
+                    {group.due.slice(0, 3).map((t) => (
+                      <button
+                        key={`due-${t.id}`}
+                        type="button"
+                        onClick={() => setSelectedDueTask(t)}
+                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer flex items-center justify-between text-xs"
+                      >
+                        <span className="truncate text-gray-700 dark:text-neutral-300">{t.title}</span>
+                        <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
+                          {t.duration_minutes}m
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
         <div
           ref={scrollRef}
-          className="flex-1 bg-white dark:bg-[#1e1f20] border border-gray-200/80 dark:border-neutral-800/80 rounded-2xl shadow-xs overflow-y-auto overflow-x-auto relative transition-colors"
+          className="flex-1 bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto relative transition-colors scrollbar-thin"
         >
           <div
-            className="grid min-w-[760px] bg-white dark:bg-[#1e1f20]"
+            className="grid min-w-[780px] bg-white dark:bg-[#1e1f20]"
             style={{
-              gridTemplateColumns: '54px repeat(7, minmax(0, 1fr))',
+              gridTemplateColumns: '56px repeat(7, minmax(0, 1fr))',
             }}
           >
-            {/* Row 1: Sticky Day Headers */}
-            <div className="sticky top-0 z-30 h-11 bg-white dark:bg-[#1e1f20] border-b border-gray-200 dark:border-neutral-800" />
+            {/* ================= Row 1: Sticky Day Headers ================= */}
+            {/* 时区单元格 (左上角) */}
+            <div className="sticky top-0 z-30 h-18 bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-neutral-800 flex items-end justify-end pr-2 pb-1 text-[11px] font-mono text-gray-400 dark:text-neutral-500 select-none">
+              GMT+8
+            </div>
+
+            {/* 7 个日期列表头 (Google Calendar 经典星期 + 圆圈日期) */}
             {dayData.map((d) => {
               const isToday = d.key === todayKey;
-              const weekDayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+              const dayOfWeek = d.date.getDay(); // 0 is Sun
               return (
                 <div
                   key={`head-${d.key}`}
-                  className={`sticky top-0 z-30 h-11 flex flex-col items-center justify-center border-l border-b border-gray-200 dark:border-neutral-800 transition-colors ${
-                    isToday
-                      ? 'bg-blue-50 dark:bg-[#1e2738]'
-                      : 'bg-white dark:bg-[#1e1f20]'
-                  }`}
+                  className="sticky top-0 z-30 h-18 flex flex-col items-center justify-center border-l border-b border-gray-200/80 dark:border-neutral-800 bg-white dark:bg-[#1e1f20] select-none py-1"
                 >
+                  {/* 星期简写 (SUN / 周日) */}
                   <span
-                    className={`text-[10px] uppercase font-bold tracking-wider ${
+                    className={`text-[11px] uppercase tracking-wider font-medium leading-none ${
                       isToday
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-gray-400 dark:text-neutral-400'
+                        ? 'text-blue-600 dark:text-blue-400 font-bold'
+                        : 'text-gray-500 dark:text-neutral-400'
                     }`}
                   >
-                    {weekDayNames[d.date.getDay()]}
+                    {weekDayLabels[dayOfWeek]}
                   </span>
-                  <span
-                    className={`text-sm font-extrabold leading-none font-mono ${
+
+                  {/* Google 经典圆圈日期号 */}
+                  <button
+                    type="button"
+                    onClick={() => setWeekStart(startOfWeek(d.date))}
+                    className={`w-10 h-10 mt-1 rounded-full flex items-center justify-center text-xl transition cursor-pointer ${
                       isToday
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-gray-900 dark:text-gray-100'
+                        ? 'bg-blue-600 text-white font-medium shadow-xs'
+                        : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-neutral-800 font-normal'
                     }`}
                   >
                     {d.date.getDate()}
-                  </span>
+                  </button>
                 </div>
               );
             })}
 
-            {/* Row 2: Sticky All-Day Row */}
-            <div className="sticky top-[44px] z-20 min-h-[28px] bg-gray-50 dark:bg-[#252627] border-b border-gray-200 dark:border-neutral-800 flex items-center justify-end px-2 text-[9px] uppercase font-bold text-gray-400 font-mono tracking-wider">
-              {t('calendar.all_day')}
+            {/* ================= Row 2: Sticky All-Day Row ================= */}
+            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-neutral-500 font-medium">
+              {t('calendar.all_day', '全天')}
             </div>
+
             {dayData.map((d) => (
               <div
                 key={`allday-${d.key}`}
-                className="sticky top-[44px] z-20 min-h-[28px] bg-gray-50 dark:bg-[#252627] border-l border-b border-gray-200 dark:border-neutral-800 p-1 flex flex-col gap-1"
+                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-l border-b border-gray-200/80 dark:border-neutral-800 p-1 flex flex-col gap-1"
               >
                 {d.allDay.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => setSelectedItem(item)}
-                    className="w-full text-left text-[10px] font-medium px-2 py-0.5 rounded truncate text-white shadow-2xs transition cursor-pointer"
+                    className="w-full text-left text-[11px] font-medium px-2 py-0.5 rounded-[4px] truncate text-white shadow-2xs hover:brightness-95 transition cursor-pointer"
                     style={{ backgroundColor: item.color }}
                   >
                     {item.title}
@@ -858,161 +1031,142 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
             ))}
 
-            {/* Row 3: Time Axis (07:00 to 24:00 + Rest Hours 01:00-07:00) */}
+            {/* ================= Row 3: 24-Hour Time Grid (00:00 to 23:59) ================= */}
+            {/* 时间轴刻度栏 */}
             <div
-              className="relative border-r border-gray-200 dark:border-neutral-800 select-none bg-white dark:bg-[#1e1f20]"
-              style={{ height: gridHeight }}
+              className="relative select-none bg-white dark:bg-[#1e1f20]"
+              style={{ height: GRID_HEIGHT }}
             >
-              {DAY_HOURS.map((hour) => (
+              {Array.from({ length: CALENDAR_HOURS }, (_, hour) => (
                 <span
-                  key={hour}
-                  className="absolute right-2 text-[10px] font-mono text-gray-400 dark:text-neutral-500 -translate-y-2"
-                  style={{ top: (hour - CALENDAR_START_HOUR) * HOUR_HEIGHT }}
+                  key={`hour-label-${hour}`}
+                  className="absolute right-2 text-[10px] sm:text-[11px] text-gray-400 dark:text-neutral-500 font-normal -translate-y-1/2 pr-1"
+                  style={{ top: hour * HOUR_HEIGHT }}
                 >
-                  {formatHour(hour)}
+                  {formatHourLabel(hour, language)}
                 </span>
               ))}
-
-              {/* 24:00 Split Hour */}
-              <span
-                className="absolute right-2 text-[10px] font-mono font-bold text-gray-700 dark:text-neutral-300 -translate-y-2"
-                style={{ top: restTop }}
-              >
-                24:00
-              </span>
-
-              {/* Rest Hours */}
-              {REST_HOURS.map((hour) => (
-                <span
-                  key={`rest-${hour}`}
-                  className="absolute right-2 text-[9px] font-mono text-gray-400/60 dark:text-neutral-600 -translate-y-2"
-                  style={{
-                    top: (CALENDAR_END_HOUR - CALENDAR_START_HOUR + hour) * HOUR_HEIGHT,
-                  }}
-                >
-                  {formatHour(hour)}
-                </span>
-              ))}
-
-              {/* Rest Band Texture */}
-              <div
-                className="absolute left-0 right-0 pointer-events-none border-t border-dashed border-gray-300 dark:border-neutral-700 opacity-60"
-                style={{
-                  top: restTop,
-                  height: restHeight,
-                  backgroundImage: isDark
-                    ? 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(255,255,255,0.04) 6px, rgba(255,255,255,0.04) 12px)'
-                    : 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(150,150,150,0.08) 6px, rgba(150,150,150,0.08) 12px)',
-                }}
-              />
             </div>
 
-            {/* Row 3: 7 Day Columns with Event and Task Blocks */}
-            {dayData.map((d) => (
-              <div
-                key={`col-${d.key}`}
-                className="relative border-l border-gray-200 dark:border-neutral-800 bg-white dark:bg-[#1e1f20]"
-                style={{ height: gridHeight }}
-              >
-                {/* Hourly faint divider lines */}
-                {Array.from({ length: GRID_HOURS }, (_, i) => (
-                  <div
-                    key={`line-${i}`}
-                    className="absolute left-0 right-0 border-b border-gray-100 dark:border-neutral-800/60 pointer-events-none"
-                    style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
-                  />
-                ))}
+            {/* 7 个日历天的主体列 */}
+            {dayData.map((d) => {
+              const isToday = d.key === todayKey;
 
-                {/* Nighttime Rest Zone */}
+              return (
                 <div
-                  className="absolute left-0 right-0 pointer-events-none border-t border-dashed border-gray-300 dark:border-neutral-700/80"
-                  style={{
-                    top: restTop,
-                    height: restHeight,
-                    backgroundImage: isDark
-                      ? 'repeating-linear-gradient(-45deg, transparent, transparent 7px, rgba(255,255,255,0.04) 7px, rgba(255,255,255,0.04) 14px)'
-                      : 'repeating-linear-gradient(-45deg, transparent, transparent 7px, rgba(150,150,150,0.07) 7px, rgba(150,150,150,0.07) 14px)',
-                  }}
-                />
+                  key={`col-${d.key}`}
+                  className="relative border-l border-gray-200/80 dark:border-neutral-800 bg-white dark:bg-[#1e1f20]"
+                  style={{ height: GRID_HEIGHT }}
+                >
+                  {/* 水平整点网格细线 */}
+                  {Array.from({ length: CALENDAR_HOURS }, (_, i) => (
+                    <div
+                      key={`line-${i}`}
+                      className="absolute left-0 right-0 border-b border-gray-100 dark:border-neutral-800/70 pointer-events-none"
+                      style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                    />
+                  ))}
 
-                {/* Timed Segments */}
-                {d.timed.map((pos) => {
-                  const seg = pos.item;
-                  const minutesIntoGrid = Math.max(
-                    0,
-                    (new Date(seg.start).getTime() - d.windowStartMs) / 60000
-                  );
-                  const durationMinutes = Math.max(
-                    15,
-                    (new Date(seg.end).getTime() - new Date(seg.start).getTime()) / 60000
-                  );
-
-                  const top = (minutesIntoGrid / 60) * HOUR_HEIGHT;
-                  const height = Math.max(18, (durationMinutes / 60) * HOUR_HEIGHT);
-                  const widthPct = 100 / pos.columns;
-                  const leftPct = pos.column * widthPct;
-
-                  const isTask = seg.kind === 'task';
-
-                  return (
-                    <button
-                      key={seg.id}
-                      onClick={() => setSelectedItem(seg)}
-                      title={`${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`}
-                      className={`absolute rounded-md p-1.5 text-left transition-all z-10 hover:z-20 shadow-xs cursor-pointer overflow-hidden ${
-                        pos.conflict ? 'ring-1 ring-rose-500' : ''
-                      }`}
-                      style={{
-                        top: `${top}px`,
-                        height: `${height}px`,
-                        left: `${leftPct}%`,
-                        width: `calc(${widthPct}% - 3px)`,
-                        borderLeft: `3.5px solid ${seg.color}`,
-                        backgroundColor: isDark
-                          ? `color-mix(in srgb, ${seg.color} 24%, #232426)`
-                          : `color-mix(in srgb, ${seg.color} 15%, #ffffff)`,
-                      }}
+                  {/* Google Calendar 经典当前时间红线与红点指示器 */}
+                  {isToday && (
+                    <div
+                      className="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
+                      style={{ top: `${currentLineTop}px` }}
                     >
-                      <div className="flex items-center gap-1 font-mono text-[9px] text-gray-500 dark:text-neutral-400 font-semibold truncate leading-none">
-                        <span>{formatTime(seg.start)}</span>
-                        <span>-</span>
-                        <span>{formatTime(seg.end)}</span>
-                      </div>
-                      <div className="text-[11px] font-bold text-gray-900 dark:text-gray-100 truncate leading-snug mt-0.5">
-                        {seg.title}
-                      </div>
-                      {height >= 46 && (
-                        <div className="text-[9px] text-gray-500 dark:text-neutral-400 truncate mt-0.5 font-medium">
-                          {isTask ? seg.qName : seg.event.subscriptionName || '外部日程'}
+                      <div className="w-3 h-3 rounded-full bg-[#EA4335] -ml-1.5 shrink-0 shadow-xs" />
+                      <div className="flex-1 h-[2px] bg-[#EA4335]" />
+                    </div>
+                  )}
+
+                  {/* Google Calendar 风格日程与待办卡片 */}
+                  {d.timed.map((pos) => {
+                    const seg = pos.item;
+                    const startD = new Date(seg.start);
+                    const endD = new Date(seg.end);
+
+                    const startMinutes = startD.getHours() * 60 + startD.getMinutes();
+                    const endMinutes = endD.getHours() * 60 + endD.getMinutes();
+                    const durationMinutes = Math.max(15, endMinutes - startMinutes);
+
+                    const top = (startMinutes / 60) * HOUR_HEIGHT;
+                    const height = Math.max(22, (durationMinutes / 60) * HOUR_HEIGHT - 2);
+                    const widthPct = 100 / pos.columns;
+                    const leftPct = pos.column * widthPct;
+
+                    const isTask = seg.kind === 'task';
+
+                    return (
+                      <button
+                        key={seg.id}
+                        type="button"
+                        onClick={() => setSelectedItem(seg)}
+                        title={`${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`}
+                        className="absolute rounded-md p-1.5 text-left transition-all z-10 hover:z-20 shadow-xs hover:shadow-md hover:brightness-95 cursor-pointer overflow-hidden border-l-[3.5px] leading-tight"
+                        style={{
+                          top: `${top}px`,
+                          height: `${height}px`,
+                          left: `${leftPct}%`,
+                          width: `calc(${widthPct}% - 2px)`,
+                          borderLeftColor: seg.color,
+                          backgroundColor: isDark
+                            ? `color-mix(in srgb, ${seg.color} 35%, #202124)`
+                            : `color-mix(in srgb, ${seg.color} 18%, #ffffff)`,
+                        }}
+                      >
+                        {/* 标题 */}
+                        <div
+                          className="text-[11px] font-semibold truncate leading-tight"
+                          style={{ color: isDark ? '#ffffff' : '#1f2937' }}
+                        >
+                          {seg.title}
                         </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
+
+                        {/* 时间段 */}
+                        <div
+                          className="text-[10px] font-mono truncate mt-0.5 opacity-80"
+                          style={{ color: isDark ? '#e5e7eb' : '#4b5563' }}
+                        >
+                          {formatTime(seg.start)} – {formatTime(seg.end)}
+                        </div>
+
+                        {/* 附属标签 (高度充足时展示) */}
+                        {height >= 50 && (
+                          <div
+                            className="text-[9px] truncate mt-0.5 opacity-70 font-medium"
+                            style={{ color: isDark ? '#d1d5db' : '#6b7280' }}
+                          >
+                            {isTask ? seg.qName : seg.event.subscriptionName || '外部日程'}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* CalendarsDialog Modal matching calcury/eisenhower-matrix */}
+      {/* ===================== 对话框与模态框 ===================== */}
+      {/* 1. 日历订阅与同步管理模态框 */}
       {showCalendarsModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <CalendarIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 <span>日历订阅与同步源</span>
               </h3>
               <button
                 onClick={() => setShowCalendarsModal(false)}
-                className="w-7 h-7 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Personal Export Link */}
+            {/* Clawbot 导出地址 */}
             <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200/80 dark:border-neutral-700/80 space-y-1.5 text-xs">
               <label className="block font-semibold text-gray-700 dark:text-neutral-300 text-[11px]">
                 Clawbot 专属待办日历 (导出到 Apple / Google / Outlook)
@@ -1035,7 +1189,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
             </div>
 
-            {/* Add external sub */}
+            {/* 添加外部 iCal 订阅 */}
             <form onSubmit={handleAddSubscription} className="space-y-2 pt-1 text-xs">
               <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">
                 + 导入外部 iCal 订阅
@@ -1050,327 +1204,302 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   required
                 />
                 <input
-                  type="text"
+                  type="url"
                   value={newSubUrl}
                   onChange={(e) => setNewSubUrl(e.target.value)}
-                  placeholder="webcal://... 或 https://...ics"
-                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono outline-none"
+                  placeholder="https://... 订阅 URL"
+                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl outline-none"
                   required
                 />
               </div>
-              <button
-                type="submit"
-                disabled={submittingSub}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition cursor-pointer text-xs"
-              >
-                {submittingSub ? '正在添加并同步...' : '添加日历源'}
-              </button>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="submit"
+                  disabled={submittingSub}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-xl transition cursor-pointer shadow-xs"
+                >
+                  {submittingSub ? '添加中...' : '确认添加订阅'}
+                </button>
+              </div>
             </form>
 
-            {/* Subscriptions List */}
-            <div className="space-y-2 max-h-56 overflow-y-auto text-xs pt-2">
-              <span className="font-semibold text-gray-500 dark:text-neutral-400 text-[11px] block">
-                已导入日历 ({subscriptions.length})
-              </span>
+            {/* 已订阅日历列表 */}
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800">
+              <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">已订阅日历</span>
               {subscriptions.length === 0 ? (
-                <div className="text-center py-4 text-gray-400 text-xs border border-dashed border-gray-200 dark:border-neutral-800 rounded-xl">
-                  暂未添加外部日历源
-                </div>
+                <div className="text-gray-400 text-xs py-3 text-center">暂无外部订阅源</div>
               ) : (
-                subscriptions.map((s, idx) => {
-                  const color = CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
-                  return (
-                    <div
-                      key={s.id}
-                      className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200/80 dark:border-neutral-700/80"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="w-3 h-3 rounded-full shrink-0"
-                          style={{ backgroundColor: color }}
-                        />
-                        <div className="truncate">
-                          <div className="font-bold text-gray-900 dark:text-gray-100 text-xs">
-                            {s.name}
-                          </div>
-                          <div className="text-[10px] text-gray-400 truncate font-mono">
-                            {s.event_count} 个事件 · {s.sync_status === 'ok' ? '已同步' : '同步异常'}
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
+                  {subscriptions.map((s, idx) => {
+                    const color = CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 text-xs"
+                      >
+                        <div className="flex items-center gap-2.5 truncate flex-1 min-w-0">
+                          <span
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{ backgroundColor: color }}
+                          />
+                          <div className="truncate">
+                            <span className="font-semibold text-gray-900 dark:text-gray-100">
+                              {s.name}
+                            </span>
+                            <div className="text-[10px] text-gray-400 truncate font-mono">
+                              {s.event_count} 个事件 · {s.sync_status === 'ok' ? '已同步' : '同步异常'}
+                            </div>
                           </div>
                         </div>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSyncSubscription(s.id)}
+                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded-lg transition cursor-pointer"
+                            title="立即同步"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSubscription(s.id)}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
+                            title="删除订阅"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => handleSyncSubscription(s.id)}
-                          className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 rounded-lg transition"
-                          title="立即同步"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSubscription(s.id)}
-                          className="p-1.5 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 rounded-lg transition"
-                          title="删除"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 导出订阅日历专有弹窗 (Export & Subscribe Modal) */}
+      {/* 2. 导出订阅链接模态框 */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-950/60 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                  <Share2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
-                    导出与订阅待办日历
-                  </h3>
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500">
-                    oxoxox 智能排程 · 实时云端同步
-                  </span>
-                </div>
-              </div>
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <span>导出 Clawbot 待办日历</span>
+              </h3>
               <button
                 onClick={() => setShowExportModal(false)}
-                className="w-7 h-7 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* 核心操作方式 1: 直接一键打开系统日历订阅 (Webcal) */}
-            <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 rounded-2xl border border-blue-200/80 dark:border-blue-900/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>方式 1：一键在系统日历中订阅 (推荐)</span>
-                </span>
-                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold bg-blue-100 dark:bg-blue-900/50 px-2 py-0.5 rounded-full">
-                  Mac / iPhone / iPad
-                </span>
+            <p className="text-xs text-gray-500 dark:text-neutral-400 leading-relaxed">
+              将 Clawbot 自动排程待办无缝同步至 Apple Calendar、Google Calendar、Outlook 或其他支持 iCalendar 协议的日历应用中。
+            </p>
+
+            {/* Webcal 一键订阅 */}
+            <div className="p-3 bg-blue-50/60 dark:bg-blue-950/30 rounded-xl border border-blue-200/80 dark:border-blue-900/60 space-y-1 text-xs">
+              <div className="font-semibold text-blue-900 dark:text-blue-200">
+                方法 1：一键同步 (Apple Calendar / Outlook)
               </div>
-              <p className="text-[11px] text-blue-800/80 dark:text-blue-300/80 leading-relaxed">
-                点击下方按钮将直接唤起系统的「日历」应用，无需手动配置即可完成持续自动同步。
+              <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80 mb-2">
+                点击下方按钮可在支持的应用中直接调起系统日历添加订阅：
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = webcalUrl;
-                }}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <CalendarIcon className="w-3.5 h-3.5" />
-                <span>立即打开系统日历添加订阅</span>
-              </button>
-            </div>
-
-            {/* 核心操作方式 2: 下载 .ics 离线文件 */}
-            <div className="p-3.5 bg-gray-50 dark:bg-[#28292a] rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 flex items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-gray-800 dark:text-gray-200 block">
-                  方式 2：下载离线日历文件 (.ics)
-                </span>
-                <span className="text-[11px] text-gray-400 dark:text-neutral-500">
-                  导出为独立 .ics 文件，支持拖入任何日历软件中直接导入
-                </span>
+              <div className="flex gap-2">
+                <a
+                  href={webcalUrl}
+                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>调起日历订阅 (Webcal)</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => handleCopyLink(webcalUrl, 'webcal')}
+                  className="px-3 py-1.5 border border-blue-300 dark:border-blue-800 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1"
+                >
+                  {copiedType === 'webcal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedType === 'webcal' ? '已复制' : '复制 Webcal 链接'}</span>
+                </button>
               </div>
-              <a
-                href={downloadUrl}
-                download="clawbot-todos.ics"
-                target="_blank"
-                rel="noreferrer"
-                className="px-3.5 py-1.5 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-200 text-xs font-semibold rounded-xl shadow-2xs transition flex items-center gap-1.5 shrink-0 cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>下载文件</span>
-              </a>
             </div>
 
-            {/* 核心操作方式 3: 复制订阅链接 */}
-            <div className="p-3.5 bg-gray-50 dark:bg-[#28292a] rounded-2xl border border-gray-200/80 dark:border-neutral-700/80 space-y-2 text-xs">
-              <label className="block font-bold text-gray-800 dark:text-gray-200 text-xs">
-                方式 3：手动复制日历网络订阅链接
-              </label>
+            {/* HTTPS 日历订阅链接 */}
+            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 space-y-1.5 text-xs">
+              <div className="font-semibold text-gray-800 dark:text-neutral-200">
+                方法 2：Google Calendar URL 订阅
+              </div>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   readOnly
                   value={icalExportUrl}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-xl font-mono text-[11px] text-gray-700 dark:text-neutral-300 select-all outline-none"
+                  className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-lg font-mono text-[11px] select-all"
                 />
                 <button
                   type="button"
                   onClick={() => handleCopyLink(icalExportUrl, 'http')}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shrink-0 flex items-center gap-1 transition cursor-pointer"
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer"
                 >
-                  {copiedType === 'http' ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'http' ? '已复制' : '复制链接'}</span>
+                  {copiedType === 'http' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedType === 'http' ? '已复制' : '复制'}</span>
                 </button>
               </div>
+            </div>
 
-              {/* 常用平台操作指引 */}
-              <div className="pt-2 border-t border-gray-200/60 dark:border-neutral-700/60 space-y-1 text-[11px] text-gray-500 dark:text-neutral-400">
-                <div>
-                  <strong className="text-gray-700 dark:text-neutral-300">iPhone / iPad:</strong> 打开「系统设置」→「日历」→「账户」→「添加账户」→「其他」→「添加已订阅的日历」→ 粘贴链接。
+            {/* 静态 .ics 文件下载 */}
+            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 flex items-center justify-between text-xs">
+              <div>
+                <div className="font-semibold text-gray-800 dark:text-neutral-200">
+                  方法 3：下载静态 .ics 文件
                 </div>
-                <div>
-                  <strong className="text-gray-700 dark:text-neutral-300">Google 日历:</strong> 点击左下角「其他日历」旁边的「+」号 → 选择「通过网址添加」→ 粘贴链接。
-                </div>
-                <div>
-                  <strong className="text-gray-700 dark:text-neutral-300">Outlook:</strong> 点击左侧「添加日历」→「从 Web 订阅」→ 粘贴链接。
-                </div>
+                <div className="text-[11px] text-gray-400">单次导入快照，不自动跟随后续更新</div>
               </div>
+              <a
+                href={downloadUrl}
+                download="clawbot-tasks.ics"
+                className="px-3 py-1.5 border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>下载文件</span>
+              </a>
             </div>
           </div>
         </div>
       )}
 
-      {/* Detail Modal for Selected Event/Task */}
-      {(selectedItem || selectedDueTask) && (
+      {/* 3. 日程或待办详情模态框 */}
+      {selectedItem && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-sm w-full p-5 shadow-2xl space-y-3.5 border border-gray-200 dark:border-neutral-800 animate-fadeIn">
-            <div className="flex items-start justify-between gap-3 pb-2 border-b border-gray-100 dark:border-neutral-800">
-              <div>
-                <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                  {selectedItem?.title || selectedDueTask?.title}
-                </h3>
-                <span className="text-[10px] text-gray-400 dark:text-neutral-500">
-                  {selectedItem?.kind === 'event'
-                    ? selectedItem.event.subscriptionName || '外部导入日程'
-                    : 'Clawbot 规划待办'}
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <span
+                  className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold text-white uppercase tracking-wider"
+                  style={{ backgroundColor: selectedItem.color }}
+                >
+                  {selectedItem.kind === 'task' ? `Clawbot · ${selectedItem.qName}` : '外部订阅日程'}
                 </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                  {selectedItem.title}
+                </h3>
               </div>
               <button
-                onClick={() => {
-                  setSelectedItem(null);
-                  setSelectedDueTask(null);
-                }}
-                className="w-6 h-6 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center font-bold text-xs cursor-pointer"
+                onClick={() => setSelectedItem(null)}
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {selectedItem && (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2 text-gray-600 dark:text-neutral-300">
-                  <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  <span className="font-mono">
-                    {formatTime(selectedItem.start)} - {formatTime(selectedItem.end)}
-                  </span>
-                </div>
-
-                {selectedItem.kind === 'task' && (
-                  <div className="space-y-1.5 pt-1">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                        {selectedItem.qName}
-                      </span>
-                      <span className="text-gray-500 text-[11px]">
-                        耗时 {selectedItem.task.duration_minutes} 分钟
-                      </span>
-                    </div>
-                    {selectedItem.task.deadline && (
-                      <div className="text-[11px] text-gray-500 font-mono">
-                        截止: {new Date(selectedItem.task.deadline).toLocaleString()}
-                      </div>
-                    )}
-                    {selectedItem.task.notes && (
-                      <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-[#28292a] p-2 rounded-lg">
-                        {selectedItem.task.notes}
-                      </p>
-                    )}
+            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-gray-600 dark:text-neutral-300">
+                <Clock className="w-4 h-4 text-gray-400" />
+                <span>
+                  {formatTime(selectedItem.start)} – {formatTime(selectedItem.end)} ({selectedItem.allDay ? '全天' : '定时'})
+                </span>
+              </div>
+              {selectedItem.kind === 'task' && (
+                <>
+                  <div className="text-[11px] text-gray-500 dark:text-neutral-400">
+                    四象限分类: <span className="font-semibold text-gray-700 dark:text-neutral-200">{selectedItem.qName}</span>
                   </div>
-                )}
-              </div>
-            )}
+                  {selectedItem.task.notes && (
+                    <div className="mt-1 pt-1 border-t border-gray-200/80 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 text-[11px] whitespace-pre-wrap">
+                      {selectedItem.task.notes}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
-            {selectedDueTask && (
-              <div className="space-y-2 text-xs">
-                <div className="text-rose-600 dark:text-rose-400 font-semibold font-mono">
-                  截止时间: {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString() : '未设'}
-                </div>
-                <div className="text-gray-500">
-                  预计耗时: {selectedDueTask.duration_minutes} 分钟
-                </div>
-                <div className="text-gray-500">
-                  紧急: {selectedDueTask.urgency}/5 · 重要: {selectedDueTask.importance}/5
-                </div>
-                {selectedDueTask.notes && (
-                  <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-[#28292a] p-2 rounded-lg">
-                    {selectedDueTask.notes}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* 操作按钮区 */}
-            <div className="pt-2 border-t border-gray-100 dark:border-neutral-800 space-y-1.5">
-              {selectedItem?.kind === 'task' && (
-                <>
+            {selectedItem.kind === 'task' && (
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
+                  className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
+                >
+                  删除事项
+                </button>
+                <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => handleCompletePart(selectedItem.task.id)}
-                    className="w-full py-1.5 px-3 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    完成此分段 (自动扣减剩余耗时)
+                    完成本节
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleCompleteTask(selectedItem.task.id)}
-                    className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    标记整个待办全部完成
+                    全部完成
                   </button>
-                  <button
-                    onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
-                    className="w-full py-1.5 px-3 bg-red-50 hover:bg-red-100 dark:bg-red-950/60 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    删除该待办任务
-                  </button>
-                </>
-              )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
-              {selectedDueTask && (
-                <>
-                  <button
-                    onClick={() => handleCompleteTask(selectedDueTask.id)}
-                    className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    标记已完成
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCalendarTask(selectedDueTask.id)}
-                    className="w-full py-1.5 px-3 bg-red-50 hover:bg-red-100 dark:bg-red-950/60 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    删除任务
-                  </button>
-                </>
-              )}
-
+      {/* 4. 截止待办详情模态框 */}
+      {selectedDueTask && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                  截止待办
+                </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
+                  {selectedDueTask.title}
+                </h3>
+              </div>
               <button
-                onClick={() => {
-                  setSelectedItem(null);
-                  setSelectedDueTask(null);
-                }}
-                className="w-full py-1.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-xs font-semibold rounded-xl transition cursor-pointer"
+                onClick={() => setSelectedDueTask(null)}
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
-                关闭
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl space-y-1.5 text-xs">
+              <div className="flex items-center justify-between text-gray-600 dark:text-neutral-300">
+                <span>截止时间:</span>
+                <span className="font-mono font-semibold">
+                  {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString() : '未设置'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-gray-600 dark:text-neutral-300">
+                <span>预估耗时:</span>
+                <span className="font-mono">{selectedDueTask.duration_minutes} 分钟</span>
+              </div>
+              {selectedDueTask.notes && (
+                <div className="pt-2 border-t border-gray-200/80 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 whitespace-pre-wrap">
+                  {selectedDueTask.notes}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => handleDeleteCalendarTask(selectedDueTask.id)}
+                className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
+              >
+                删除事项
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCompleteTask(selectedDueTask.id)}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+              >
+                完成事项
               </button>
             </div>
           </div>

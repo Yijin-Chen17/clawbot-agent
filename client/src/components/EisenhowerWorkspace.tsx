@@ -28,6 +28,8 @@ import {
   CheckCircle2,
   Menu,
   Languages,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 
 interface EisenhowerWorkspaceProps {
@@ -106,6 +108,11 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+
+  // Google Tasks 风格快速添加与已完成折叠状态
+  const [quickTaskTitle, setQuickTaskTitle] = useState('');
+  const [quickTaskSubmitting, setQuickTaskSubmitting] = useState(false);
+  const [completedExpanded, setCompletedExpanded] = useState(false);
 
   // 响应父级侧边栏触发模态框
   useEffect(() => {
@@ -305,20 +312,12 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   }, [tasks]);
 
   // 根据分类及搜索框过滤任务列表
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      // 在四象限看板视图下，已完成的事项坚决不显示
-      if (viewMode === 'matrix' && task.isCompleted) {
-        return false;
-      }
-
+  const { uncompletedTasks, completedTasks, filteredTasks } = useMemo(() => {
+    const matching = tasks.filter((task) => {
       if (currentCategory === 'completed') {
         if (!task.isCompleted) return false;
-      } else if (currentCategory === 'all') {
-        if (viewMode === 'list' && task.isCompleted) return false;
       } else if (currentCategory.startsWith('q')) {
         if (task.quadrant !== currentCategory) return false;
-        if (viewMode === 'list' && task.isCompleted) return false;
       }
 
       if (searchQuery.trim()) {
@@ -329,6 +328,15 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       }
       return true;
     });
+
+    const uncompleted = matching.filter((t) => !t.isCompleted);
+    const completed = matching.filter((t) => t.isCompleted);
+
+    return {
+      uncompletedTasks: uncompleted,
+      completedTasks: completed,
+      filteredTasks: viewMode === 'matrix' ? uncompleted : matching,
+    };
   }, [tasks, currentCategory, searchQuery, viewMode]);
 
   // 点击直角坐标平面任意空白处，自动落位创建
@@ -380,6 +388,32 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       setClickCoords(null);
     } catch (err: any) {
       alert(err.response?.data?.error || '保存任务失败，请重试');
+    }
+  };
+
+  // Google Tasks 风格快速回车新建任务
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickTaskTitle.trim() || quickTaskSubmitting) return;
+    setQuickTaskSubmitting(true);
+    try {
+      let imp = 6;
+      let urg = 6;
+      if (currentCategory === 'q1') { imp = 8; urg = 8; }
+      else if (currentCategory === 'q2') { imp = 8; urg = 3; }
+      else if (currentCategory === 'q3') { imp = 3; urg = 8; }
+      else if (currentCategory === 'q4') { imp = 2; urg = 2; }
+
+      await handleSaveTask({
+        title: quickTaskTitle.trim(),
+        importance: imp,
+        urgency: urg,
+        dueDate: formatLocalDate(new Date()),
+        estimatedMinutes: 30,
+      });
+      setQuickTaskTitle('');
+    } finally {
+      setQuickTaskSubmitting(false);
     }
   };
 
@@ -604,125 +638,206 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           />
         )}
 
-        {/* 2. Google Todo 待办清单列表视图 */}
+        {/* 2. Google Tasks 待办清单列表视图 (模仿 Google Calendar - Tasks) */}
         {viewMode === 'list' && (
-          <div className="h-full overflow-y-auto divide-y divide-gray-100 dark:divide-neutral-800/80 rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 bg-white dark:bg-[#1e1f20] scrollbar-thin">
-                {loading ? (
-                  <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs">
-                    {t('common.loading')}
-                  </div>
-                ) : filteredTasks.length === 0 ? (
-                  <div className="p-12 text-center space-y-2">
-                    <CheckCircle2 className="w-10 h-10 text-gray-300 dark:text-neutral-600 mx-auto stroke-[1.5]" />
-                    <div className="text-gray-700 dark:text-neutral-300 font-medium text-sm">
-                      {searchQuery ? t('workspace.no_search_results') : t('workspace.no_tasks')}
-                    </div>
-                    <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
-                      {t('workspace.empty_hint')}
-                    </p>
-                  </div>
-                ) : (
-                  filteredTasks.map((task) => {
-                    const isCompleted = task.isCompleted;
-                    const quad = task.quadrant;
+          <div className="h-full overflow-y-auto px-4 py-4 sm:px-8 sm:py-6 max-w-4xl mx-auto w-full scrollbar-thin select-none">
+            {/* Google Tasks 风格快速新建任务栏 */}
+            <form onSubmit={handleQuickAdd} className="mb-4">
+              <div className="flex items-center gap-3 px-4 py-3 bg-[#f0f4f9] dark:bg-[#282a2d] hover:bg-[#e9eef6] dark:hover:bg-[#303337] focus-within:bg-white dark:focus-within:bg-[#202124] focus-within:shadow-md focus-within:ring-2 focus-within:ring-blue-500/20 rounded-2xl border border-transparent focus-within:border-gray-200 dark:focus-within:border-neutral-700 transition-all">
+                <Plus className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 stroke-[2.5]" />
+                <input
+                  type="text"
+                  value={quickTaskTitle}
+                  onChange={(e) => setQuickTaskTitle(e.target.value)}
+                  placeholder={t('workspace.quick_add_placeholder', '添加待办事项 (输入后按 Enter 保存)...')}
+                  className="flex-1 bg-transparent text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-neutral-400 outline-none"
+                />
+                {quickTaskTitle.trim() && (
+                  <button
+                    type="submit"
+                    disabled={quickTaskSubmitting}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+                  >
+                    {t('common.save', '保存')}
+                  </button>
+                )}
+              </div>
+            </form>
 
-                    // 象限样式
-                    const quadStyles = {
-                      q1: { name: t('quad.do_first'), color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' },
-                      q2: { name: t('quad.schedule'), color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200' },
-                      q3: { name: t('quad.delegate'), color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' },
-                      q4: { name: t('quad.eliminate'), color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200' },
-                    }[quad];
+            {loading ? (
+              <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs">
+                {t('common.loading')}
+              </div>
+            ) : (currentCategory === 'completed' ? completedTasks : uncompletedTasks).length === 0 && (currentCategory === 'completed' || completedTasks.length === 0) ? (
+              <div className="p-12 text-center space-y-3">
+                <div className="w-14 h-14 mx-auto rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  <CheckCircle2 className="w-8 h-8 stroke-[1.8]" />
+                </div>
+                <div className="text-gray-800 dark:text-neutral-200 font-semibold text-base">
+                  {searchQuery ? t('workspace.no_search_results') : (currentCategory === 'completed' ? '暂无已完成事项' : '所有待办已完成')}
+                </div>
+                <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
+                  {t('workspace.empty_hint', '享受高效整理的美好时光，或点击上方输入框快速添加新事项。')}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {/* 活跃待办列表 */}
+                {(currentCategory === 'completed' ? completedTasks : uncompletedTasks).map((task) => {
+                  const isCompleted = task.isCompleted;
+                  const quad = task.quadrant;
 
-                    return (
-                      <div
-                        key={task.id}
-                        className="p-3 sm:p-3.5 hover:bg-gray-50/70 dark:hover:bg-[#252728] transition-colors flex items-center justify-between gap-3 group"
+                  const quadStyles = {
+                    q1: { name: t('quad.do_first'), color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-800' },
+                    q2: { name: t('quad.schedule'), color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800' },
+                    q3: { name: t('quad.delegate'), color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800' },
+                    q4: { name: t('quad.eliminate'), color: 'bg-gray-50 text-gray-600 dark:bg-neutral-800/60 dark:text-neutral-400 border-gray-200 dark:border-neutral-700' },
+                  }[quad];
+
+                  return (
+                    <div
+                      key={task.id}
+                      className="py-3 px-3.5 rounded-xl hover:bg-[#f8fafd] dark:hover:bg-[#282a2d] transition-all flex items-start gap-3.5 group border-b border-gray-100/80 dark:border-neutral-800/60 last:border-b-0"
+                    >
+                      {/* Google Tasks 圆形复选框 */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleComplete(task.id)}
+                        className={`w-5 h-5 mt-0.5 rounded-full border-2 shrink-0 flex items-center justify-center transition-all cursor-pointer ${
+                          isCompleted
+                            ? 'bg-blue-600 dark:bg-blue-500 border-blue-600 dark:border-blue-500 text-white'
+                            : 'border-gray-400 dark:border-neutral-500 hover:border-blue-600 dark:hover:border-blue-400 group-hover:border-blue-500 text-transparent hover:text-blue-600'
+                        }`}
+                        title={isCompleted ? t('workspace.mark_uncompleted') : t('workspace.mark_completed')}
                       >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* Google Todo 圆形复选框 */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleComplete(task.id)}
-                            className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center transition-all cursor-pointer ${
-                              isCompleted
-                                ? 'bg-blue-600 dark:bg-blue-500 border-blue-600 dark:border-blue-500 text-white'
-                                : 'border-gray-400 dark:border-neutral-500 hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-transparent hover:text-blue-600'
-                            }`}
-                            title={isCompleted ? t('workspace.mark_uncompleted') : t('workspace.mark_completed')}
-                          >
-                            <Check className="w-3 h-3 stroke-[3]" />
-                          </button>
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </button>
 
-                          {/* 标题与描述 */}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`text-xs font-medium leading-snug truncate ${
-                                  isCompleted ? 'line-through text-gray-400 dark:text-neutral-500' : 'text-gray-900 dark:text-gray-100'
-                                }`}
-                              >
-                                {task.title}
-                              </span>
-                              <span
-                                className={`text-[10px] px-2 py-0.2 rounded-full border font-semibold shrink-0 ${quadStyles.color}`}
-                              >
-                                {quadStyles.name}
-                              </span>
-                            </div>
-
-                            {/* 附属信息栏 */}
-                            <div className="mt-1 flex items-center gap-3 text-[11px] text-gray-400 dark:text-neutral-500 flex-wrap">
-                              <span className="font-mono text-gray-500 dark:text-neutral-400">
-                                ({task.urgency.toFixed(1)}, {task.importance.toFixed(1)})
-                              </span>
-                              {task.dueDate && (
-                                <span className="flex items-center gap-1 text-gray-500 dark:text-neutral-400">
-                                  <CalendarIcon className="w-3 h-3" />
-                                  <span>{task.dueDate}</span>
-                                </span>
-                              )}
-                              {task.estimatedMinutes && (
-                                <span className="flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  <span>{task.estimatedMinutes} {t('general.minutes')}</span>
-                                </span>
-                              )}
-                              {task.description && (
-                                <span className="truncate max-w-[200px] text-gray-400">
-                                  {task.description}
-                                </span>
-                              )}
-                            </div>
-                          </div>
+                      {/* 标题与详情 */}
+                      <div className="min-w-0 flex-1 cursor-pointer" onClick={() => handleEditTask(task)}>
+                        <div
+                          className={`text-sm font-medium leading-snug truncate ${
+                            isCompleted ? 'line-through text-gray-400 dark:text-neutral-500' : 'text-gray-900 dark:text-gray-100'
+                          }`}
+                        >
+                          {task.title}
                         </div>
 
-                        {/* 悬浮操作按钮 */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleEditTask(task)}
-                            className="p-1 rounded-full text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-                            title={t('common.edit')}
+                        {task.description && (
+                          <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1 line-clamp-2">
+                            {task.description}
+                          </div>
+                        )}
+
+                        {/* Google Tasks 风格 Chips */}
+                        <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                          {task.dueDate && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-normal border border-gray-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 hover:border-blue-500 hover:text-blue-600 transition">
+                              <CalendarIcon className="w-3 h-3 text-gray-500 dark:text-neutral-400" />
+                              <span>{task.dueDate}</span>
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${quadStyles.color}`}
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTask(task.id)}
-                            className="p-1 rounded-full text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                            title={t('common.delete')}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            {quadStyles.name}
+                          </span>
+                          {task.estimatedMinutes && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 font-mono">
+                              <Clock className="w-3 h-3" />
+                              <span>{task.estimatedMinutes} {t('general.minutes')}</span>
+                            </span>
+                          )}
                         </div>
                       </div>
-                    );
-                  })
+
+                      {/* 悬浮操作按钮 */}
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleEditTask(task)}
+                          className="p-1.5 rounded-full text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                          title={t('common.edit')}
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTask(task.id)}
+                          className="p-1.5 rounded-full text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                          title={t('common.delete')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Google Tasks 已完成事项折叠面板 */}
+                {completedTasks.length > 0 && currentCategory !== 'completed' && (
+                  <div className="mt-8 pt-4 border-t border-gray-200/80 dark:border-neutral-800">
+                    <button
+                      type="button"
+                      onClick={() => setCompletedExpanded(!completedExpanded)}
+                      className="flex items-center gap-2 text-xs font-semibold text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition py-1 cursor-pointer select-none"
+                    >
+                      {completedExpanded ? (
+                        <ChevronDown className="w-4 h-4 text-gray-500" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4 text-gray-500" />
+                      )}
+                      <span>{t('workspace.completed_section', '已完成')} ({completedTasks.length})</span>
+                    </button>
+
+                    {completedExpanded && (
+                      <div className="mt-2 space-y-1">
+                        {completedTasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className="py-2.5 px-3.5 rounded-xl hover:bg-[#f8fafd] dark:hover:bg-[#282a2d] transition-all flex items-start gap-3.5 group opacity-75 hover:opacity-100 border-b border-gray-100/60 dark:border-neutral-800/40 last:border-b-0"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleToggleComplete(task.id)}
+                              className="w-5 h-5 mt-0.5 rounded-full bg-blue-600 dark:bg-blue-500 border-2 border-blue-600 dark:border-blue-500 text-white flex items-center justify-center shrink-0 transition-all cursor-pointer"
+                              title={t('workspace.mark_uncompleted')}
+                            >
+                              <Check className="w-3 h-3 stroke-[3]" />
+                            </button>
+
+                            <div className="min-w-0 flex-1 cursor-pointer" onClick={() => handleEditTask(task)}>
+                              <div className="text-sm font-normal line-through text-gray-400 dark:text-neutral-500 leading-snug">
+                                {task.title}
+                              </div>
+                              {task.description && (
+                                <div className="text-xs text-gray-400 dark:text-neutral-500 mt-0.5 line-clamp-1">
+                                  {task.description}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTask(task.id)}
+                                className="p-1 rounded-full text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                                title={t('common.delete')}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
           </div>
+        )}
+      </div>
 
       {/* ===================== 全局交互模态框 ===================== */}
       <TaskModal

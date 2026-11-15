@@ -125,8 +125,11 @@ const DashboardContent: React.FC = () => {
           />
         )}
         {activeTab === 'calendar' && (
-          <div className="w-full h-full flex flex-col overflow-hidden p-2 sm:p-4">
-            <CalendarView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />
+          <div className="w-full h-full flex flex-col overflow-hidden">
+            <CalendarView
+              onOpenMobileMenu={() => setMobileSidebarOpen(true)}
+              onNewTask={() => setIsCreateModalOpen(true)}
+            />
           </div>
         )}
         {activeTab === 'settings' && (
