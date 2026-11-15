@@ -115,7 +115,10 @@ export const AuthPage: React.FC = () => {
     setCodeSending(true);
 
     try {
-      const res = await api.post('/auth/send-code', { email: trimmedEmail });
+      const res = await api.post('/auth/send-code', {
+        email: trimmedEmail,
+        lang: language,
+      });
       setSuccessMsg(
         res.data.message ||
           (language === 'zh'

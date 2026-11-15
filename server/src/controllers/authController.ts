@@ -11,17 +11,19 @@ import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sendEmailVerificationCode, verifyEmailCode, isValidEmail } from '../services/emailService.js';
 
 export async function sendRegisterCode(req: Request, res: Response): Promise<void> {
-  const { email } = req.body;
+  const { email, lang } = req.body;
+  const userLang: 'zh' | 'en' = lang === 'en' ? 'en' : 'zh';
+
   if (!email || typeof email !== 'string') {
-    res.status(400).json({ error: '请输入有效的邮箱地址' });
+    res.status(400).json({ error: userLang === 'en' ? 'Please enter a valid email address' : '请输入有效的邮箱地址' });
     return;
   }
 
   try {
-    const result = await sendEmailVerificationCode(email, 'register');
+    const result = await sendEmailVerificationCode(email, 'register', userLang);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || '发送验证码失败' });
+    res.status(400).json({ error: err.message || (userLang === 'en' ? 'Failed to send verification code' : '发送验证码失败') });
   }
 }
 
