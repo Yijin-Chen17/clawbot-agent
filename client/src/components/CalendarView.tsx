@@ -18,12 +18,13 @@ import {
   Plus,
   PanelLeftClose,
   PanelLeft,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 // Google Calendar standard 24-hour grid constants
 const CALENDAR_HOURS = 24;
-const HOUR_HEIGHT = 48; // Google Calendar standard row height
-const GRID_HEIGHT = CALENDAR_HOURS * HOUR_HEIGHT; // 1152px
+const HOUR_HEIGHT = 36; // Compact event height
+const GRID_HEIGHT = CALENDAR_HOURS * HOUR_HEIGHT; // 864px
 
 const CALENDAR_PALETTE = [
   '#039BE5', // Peacock / Google Blue
@@ -82,6 +83,8 @@ interface TaskItem {
   schedule_blocks?: string | null;
   status: string;
   notes: string | null;
+  updated_at?: string;
+  created_at?: string;
 }
 
 type TimedSegment =
@@ -115,11 +118,20 @@ interface PositionedItem<T> {
   conflict: boolean;
 }
 
-// Start of week on Sunday matching Google Calendar default and reference
+function parseDbIso(dateStr?: string | null): Date | null {
+  if (!dateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T') + 'Z');
+  }
+  return new Date(dateStr);
+}
+
+// Start of week on Monday: 周一到周五在左，周六周日在右
 function startOfWeek(date: Date): Date {
   const next = new Date(date);
-  const day = next.getDay(); // 0 is Sunday
-  next.setDate(next.getDate() - day);
+  const day = next.getDay(); // 0 is Sun, 1 is Mon...
+  const diff = next.getDate() - day + (day === 0 ? -6 : 1);
+  next.setDate(diff);
   next.setHours(0, 0, 0, 0);
   return next;
 }
@@ -457,11 +469,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           }
         });
 
-      // 2. Scheduled Tasks (with oxoxox focus blocks support)
-      tasks
-        .filter((t) => (t.schedule_blocks || (t.scheduled_start && t.scheduled_end)) && t.status !== 'completed')
-        .forEach((t) => {
-          let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
+      // 2. Scheduled and Completed Tasks (已完成任务根据完成时间往前推)
+      tasks.forEach((t) => {
+        const isCompleted = t.status === 'completed';
+        let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
+
+        if (isCompleted) {
+          // 根据完成时间往前推
+          const compEnd = parseDbIso(t.updated_at) || (t.scheduled_end ? new Date(t.scheduled_end) : (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now())));
+          const durMs = (t.duration_minutes || 30) * 60000;
+          const compStart = new Date(compEnd.getTime() - durMs);
+          blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
+        } else {
           if (t.schedule_blocks) {
             try {
               blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
@@ -472,32 +491,35 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
               blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
             }
           }
+        }
 
-          blocks.forEach((block, bIdx) => {
-            const range = segmentRange(
-              block.start,
-              block.end,
-              windowStartIso,
-              windowEndIso
-            );
-            if (range) {
-              const quad = getTaskQuadrant(t.importance, t.urgency);
-              const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-              timedItems.push({
-                kind: 'task',
-                id: `task-${t.id}-${bIdx}`,
-                title: `${t.title}${partSuffix}`,
-                start: range.start,
-                end: range.end,
-                allDay: false,
-                color: quad.color,
-                qClass: quad.key,
-                qName: quad.name,
-                task: t,
-              });
-            }
-          });
+        blocks.forEach((block, bIdx) => {
+          const range = segmentRange(
+            block.start,
+            block.end,
+            windowStartIso,
+            windowEndIso
+          );
+          if (range) {
+            const quad = getTaskQuadrant(t.importance, t.urgency);
+            const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
+            const titlePrefix = isCompleted ? '✓ ' : '';
+
+            timedItems.push({
+              kind: 'task',
+              id: `task-${t.id}-${bIdx}-${isCompleted ? 'done' : 'active'}`,
+              title: `${titlePrefix}${t.title}${partSuffix}`,
+              start: range.start,
+              end: range.end,
+              allDay: false,
+              color: isCompleted ? '#10B981' : quad.color,
+              qClass: quad.key,
+              qName: isCompleted ? '已完成' : quad.name,
+              task: t,
+            });
+          }
         });
+      });
 
       // 3. Due tasks for this day
       const dueTasks = tasks
@@ -537,12 +559,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
     return dayData.filter((d) => d.due.length > 0);
   }, [dayData]);
 
-  // Mini calendar matrix calculation
+  // Mini calendar matrix calculation (Monday to Sunday)
   const miniCalendarGrid = useMemo(() => {
     const year = miniMonthDate.getFullYear();
     const month = miniMonthDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1);
-    const startDay = firstDayOfMonth.getDay(); // 0 is Sun
+    const dayOfWeek = firstDayOfMonth.getDay(); // 0 is Sun
+    const startDay = (dayOfWeek + 6) % 7; // 0 for Mon, 6 for Sun
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
     const days: { date: Date; isCurrentMonth: boolean; key: string }[] = [];
@@ -659,9 +682,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
   const currentMinutesFromMidnight = currentTime.getHours() * 60 + currentTime.getMinutes();
   const currentLineTop = (currentMinutesFromMidnight / 60) * HOUR_HEIGHT;
 
+  // 周一到周五在左，周六周日在右
   const weekDayLabels = language.startsWith('zh')
-    ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-    : ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+    : ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+
+  const [downloadingImage, setDownloadingImage] = useState(false);
+
+  // 导出日历高清大图 (0-24点高清卡片)
+  const handleDownloadCalendarImage = async () => {
+    setDownloadingImage(true);
+    try {
+      const res = await api.get('/calendar/preview-card', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'image/png' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `clawbot-calendar-${localDateKey(weekStart)}.png`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.error || '导出日历图片失败，请重试');
+    } finally {
+      setDownloadingImage(false);
+    }
+  };
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
@@ -725,7 +771,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           </h2>
         </div>
 
-        {/* 右侧：同步重排、日历管理、导出与刷新 */}
+        {/* 右侧：同步重排、导出图片、日历管理、导出与刷新 */}
         <div className="flex items-center gap-2">
           {loading && (
             <span className="text-xs text-blue-600 dark:text-blue-400 font-medium hidden sm:flex items-center gap-1.5">
@@ -742,6 +788,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span>{replanLoading ? t('calendar.replanning') : t('calendar.replan')}</span>
+          </button>
+
+          {/* 导出高清大图按钮 */}
+          <button
+            onClick={handleDownloadCalendarImage}
+            disabled={downloadingImage}
+            title="导出日历图片 (0-24点高清卡片)"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
+          >
+            {downloadingImage ? <RefreshCw className="w-4 h-4 animate-spin text-blue-600" /> : <ImageIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+            <span className="hidden sm:inline">导出图片</span>
           </button>
 
           <button
@@ -781,7 +838,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* 左侧抽屉 (Google Calendar Left Sidebar: 新建按钮 + 迷你月历 + 待办清单) */}
         {sidebarOpen && (
-          <aside className="w-64 xl:w-72 shrink-0 border-r border-gray-200/80 dark:border-neutral-800 overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin hidden md:flex flex-col bg-white dark:bg-[#1e1f20]">
+          <aside className="w-64 xl:w-72 shrink-0 overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin hidden md:flex flex-col bg-white dark:bg-[#1e1f20]">
             {/* Google 风格超大 "+ 新建待办" 药丸按钮 */}
             {onNewTask && (
               <button
@@ -822,15 +879,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                 </div>
               </div>
 
-              {/* 星期缩写行 */}
+              {/* 星期缩写行 (周一至周日) */}
               <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-neutral-500 mb-1">
-                <span>日</span>
                 <span>一</span>
                 <span>二</span>
                 <span>三</span>
                 <span>四</span>
                 <span>五</span>
                 <span>六</span>
+                <span>日</span>
               </div>
 
               {/* 日期网格 */}
@@ -933,7 +990,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                 {dueGroups.slice(0, 3).map((group) => (
                   <div key={`due-grp-${group.key}`} className="space-y-1">
                     <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
-                      {group.date.getMonth() + 1}月{group.date.getDate()}日 ({weekDayLabels[group.date.getDay()]})
+                      {group.date.getMonth() + 1}月{group.date.getDate()}日 ({weekDayLabels[(group.date.getDay() + 6) % 7]})
                     </div>
                     {group.due.slice(0, 3).map((t) => (
                       <button
@@ -975,7 +1032,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
             {/* 7 个日期列表头 (Google Calendar 经典星期 + 圆圈日期) */}
             {dayData.map((d) => {
               const isToday = d.key === todayKey;
-              const dayOfWeek = d.date.getDay(); // 0 is Sun
+              const dayOfWeek = (d.date.getDay() + 6) % 7; // 0 is Mon, 6 is Sun
               return (
                 <div
                   key={`head-${d.key}`}
@@ -1089,11 +1146,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                     const durationMinutes = Math.max(15, endMinutes - startMinutes);
 
                     const top = (startMinutes / 60) * HOUR_HEIGHT;
-                    const height = Math.max(22, (durationMinutes / 60) * HOUR_HEIGHT - 2);
+                    const height = Math.max(16, (durationMinutes / 60) * HOUR_HEIGHT - 2);
                     const widthPct = 100 / pos.columns;
                     const leftPct = pos.column * widthPct;
 
                     const isTask = seg.kind === 'task';
+                    const isCompact = height < 28;
 
                     return (
                       <button
@@ -1101,7 +1159,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                         type="button"
                         onClick={() => setSelectedItem(seg)}
                         title={`${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`}
-                        className="absolute rounded-md p-1.5 text-left transition-all z-10 hover:z-20 shadow-xs hover:shadow-md hover:brightness-95 cursor-pointer overflow-hidden border-l-[3.5px] leading-tight"
+                        className={`absolute rounded p-1 text-left transition-all z-10 hover:z-20 shadow-xs hover:shadow-md hover:brightness-95 cursor-pointer overflow-hidden border-l-[3.5px] leading-tight ${
+                          isCompact ? 'flex items-center gap-1.5 py-0 px-1.5' : ''
+                        }`}
                         style={{
                           top: `${top}px`,
                           height: `${height}px`,
@@ -1113,30 +1173,49 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                             : `color-mix(in srgb, ${seg.color} 18%, #ffffff)`,
                         }}
                       >
-                        {/* 标题 */}
-                        <div
-                          className="text-[11px] font-semibold truncate leading-tight"
-                          style={{ color: isDark ? '#ffffff' : '#1f2937' }}
-                        >
-                          {seg.title}
-                        </div>
-
-                        {/* 时间段 */}
-                        <div
-                          className="text-[10px] font-mono truncate mt-0.5 opacity-80"
-                          style={{ color: isDark ? '#e5e7eb' : '#4b5563' }}
-                        >
-                          {formatTime(seg.start)} – {formatTime(seg.end)}
-                        </div>
-
-                        {/* 附属标签 (高度充足时展示) */}
-                        {height >= 50 && (
-                          <div
-                            className="text-[9px] truncate mt-0.5 opacity-70 font-medium"
-                            style={{ color: isDark ? '#d1d5db' : '#6b7280' }}
-                          >
-                            {isTask ? seg.qName : seg.event.subscriptionName || '外部日程'}
+                        {isCompact ? (
+                          <div className="flex items-center gap-1.5 w-full min-w-0">
+                            <span
+                              className="text-[10px] font-semibold truncate leading-tight flex-1"
+                              style={{ color: isDark ? '#ffffff' : '#1f2937' }}
+                            >
+                              {seg.title}
+                            </span>
+                            <span
+                              className="text-[9px] font-mono shrink-0 opacity-75"
+                              style={{ color: isDark ? '#e5e7eb' : '#4b5563' }}
+                            >
+                              {formatTime(seg.start)}
+                            </span>
                           </div>
+                        ) : (
+                          <>
+                            {/* 标题 */}
+                            <div
+                              className="text-[11px] font-semibold truncate leading-tight"
+                              style={{ color: isDark ? '#ffffff' : '#1f2937' }}
+                            >
+                              {seg.title}
+                            </div>
+
+                            {/* 时间段 */}
+                            <div
+                              className="text-[10px] font-mono truncate mt-0.5 opacity-80"
+                              style={{ color: isDark ? '#e5e7eb' : '#4b5563' }}
+                            >
+                              {formatTime(seg.start)} – {formatTime(seg.end)}
+                            </div>
+
+                            {/* 附属标签 (高度充足时展示) */}
+                            {height >= 44 && (
+                              <div
+                                className="text-[9px] truncate mt-0.5 opacity-70 font-medium"
+                                style={{ color: isDark ? '#d1d5db' : '#6b7280' }}
+                              >
+                                {isTask ? seg.qName : seg.event.subscriptionName || '外部日程'}
+                              </div>
+                            )}
+                          </>
                         )}
                       </button>
                     );
@@ -1366,6 +1445,27 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                 <Download className="w-3.5 h-3.5" />
                 <span>下载文件</span>
               </a>
+            </div>
+
+            {/* 导出高清 PNG 图片 */}
+            <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 flex items-center justify-between text-xs">
+              <div>
+                <div className="font-semibold text-emerald-900 dark:text-emerald-200">
+                  导出日历图片 (PNG)
+                </div>
+                <div className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
+                  0-24点高清完整日程视图，包含已完成事项
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadCalendarImage}
+                disabled={downloadingImage}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
+              >
+                {downloadingImage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                <span>{downloadingImage ? '正在生成...' : '下载图片'}</span>
+              </button>
             </div>
           </div>
         </div>

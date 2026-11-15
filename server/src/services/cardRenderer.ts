@@ -165,21 +165,26 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function parseDbIso(dateStr?: string | null): Date | null {
+  if (!dateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T') + 'Z');
+  }
+  return new Date(dateStr);
+}
+
 /**
  * 1. Render modern "Full Week Schedule & Calendar" (完整周日历) Light-Mode PNG Image
- * Matching Web UI CalendarView.tsx 24-Hour Time Grid
+ * Matching Web UI CalendarView.tsx 24-Hour Time Grid (0:00 - 24:00, Monday to Sunday)
  */
 export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const now = new Date();
   const monday = getMondayOfWeek(now);
   const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6, 23, 59, 59, 999);
 
-  // Calendar starts at 07:00 of Monday, goes to 07:00 of next Monday (24h daily grid starting at 07:00)
-  const CALENDAR_START_HOUR = 7;
-  const CALENDAR_END_HOUR = 24;
-  const REST_END_HOUR = 7;
-  const GRID_HOURS = CALENDAR_END_HOUR - CALENDAR_START_HOUR + REST_END_HOUR; // 24 hours
-  const HOUR_HEIGHT = 40; // Pixels per hour
+  // Standard 24 hours grid (00:00 to 24:00 consecutive, no rest band cut-off)
+  const CALENDAR_HOURS = 24;
+  const HOUR_HEIGHT = 52; // Taller height for clearer, high-resolution rendering
 
   const searchStartIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).toISOString();
   const searchEndIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7, 23, 59, 59, 999).toISOString();
@@ -198,16 +203,12 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     subscription_id?: number | null;
   }[];
 
-  // 2. Fetch tasks
-  const scheduledTasks = db.prepare(`
+  // 2. Fetch all tasks (both scheduled and completed)
+  const allTasks = db.prepare(`
     SELECT * FROM tasks
     WHERE user_id = ?
-      AND scheduled_start IS NOT NULL
-      AND scheduled_end IS NOT NULL
-      AND scheduled_end >= ?
-      AND scheduled_start <= ?
     ORDER BY scheduled_start ASC
-  `).all(userId, searchStartIso, searchEndIso) as Task[];
+  `).all(userId) as Task[];
 
   const weekdaysZh = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const weekdaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -234,8 +235,9 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
   for (let i = 0; i < 7; i++) {
     const dayDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-    const windowStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), CALENDAR_START_HOUR, 0, 0, 0);
-    const windowEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, CALENDAR_START_HOUR, 0, 0, 0);
+    // Standard 24h day window: 00:00:00 to 24:00:00
+    const windowStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0, 0);
+    const windowEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, 0, 0, 0, 0);
     const isToday =
       now.getFullYear() === dayDate.getFullYear() &&
       now.getMonth() === dayDate.getMonth() &&
@@ -252,8 +254,8 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       if (ev.is_all_day) {
         const evStart = new Date(ev.start_time).getTime();
         const evEnd = new Date(ev.end_time).getTime();
-        const dStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0).getTime();
-        const dEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59).getTime();
+        const dStart = windowStart.getTime();
+        const dEnd = windowEnd.getTime();
 
         if (evEnd >= dStart && evStart <= dEnd) {
           dayAllDay.push({
@@ -290,31 +292,41 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       }
     }
 
-    // Process Scheduled Tasks for this day
-    for (const t of scheduledTasks) {
+    // Process Scheduled and Completed Tasks for this day
+    for (const t of allTasks) {
+      const isCompleted = t.status === 'completed';
       let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
-      if (t.schedule_blocks) {
-        try {
-          blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
-        } catch {}
-      }
-      if (!Array.isArray(blocks) || blocks.length === 0) {
-        if (t.scheduled_start && t.scheduled_end) {
-          blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+
+      if (isCompleted) {
+        // 根据完成时间往前推
+        const compEnd = parseDbIso(t.updated_at) || (t.scheduled_end ? new Date(t.scheduled_end) : (t.deadline ? new Date(t.deadline) : new Date(t.created_at)));
+        const durMs = (t.duration_minutes || 30) * 60000;
+        const compStart = new Date(compEnd.getTime() - durMs);
+        blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
+      } else {
+        if (t.schedule_blocks) {
+          try {
+            blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+          } catch {}
+        }
+        if (!Array.isArray(blocks) || blocks.length === 0) {
+          if (t.scheduled_start && t.scheduled_end) {
+            blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+          }
         }
       }
-
-      const isCompleted = t.status === 'completed';
-      if (isCompleted && i === 0) totalCompleted++;
 
       blocks.forEach((b, bIdx) => {
         const range = segmentRange(b.start, b.end, wStartIso, wEndIso);
         if (range) {
-          totalTasks++;
+          if (isCompleted) {
+            totalCompleted++;
+          } else {
+            totalTasks++;
+          }
           const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
           const partSuffix = b.totalParts && b.totalParts > 1 ? ` (${b.partIndex || bIdx + 1}/${b.totalParts})` : '';
 
-          // Quadrant coloring matching Web UI CalendarView
           let color = '#3b82f6';
           let bg = '#eff6ff';
           let border = '#bfdbfe';
@@ -370,9 +382,9 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
           }
 
           dayTimed.push({
-            id: `task-${t.id}-${bIdx}-${range.start}`,
+            id: `task-${t.id}-${bIdx}-${isCompleted ? 'done' : 'active'}`,
             kind: 'task',
-            title: `${t.title}${partSuffix}`,
+            title: `${isCompleted ? '✓ ' : ''}${t.title}${partSuffix}`,
             start: range.start,
             end: range.end,
             isCompleted,
@@ -412,17 +424,15 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const timeAxisW = 54;
   const dayColW = Math.floor((containerW - timeAxisW) / 7); // 168px
   const gridW = timeAxisW + dayColW * 7; // 1230px
-  const gridLeft = paddingX + (containerW - gridW) / 2; // centered inside container
+  const gridLeft = paddingX + (containerW - gridW) / 2; // centered
 
   const headerH = 72;
-  const dayHeaderH = 48;
+  const dayHeaderH = 52;
   const allDayH = hasAnyAllDay ? 32 : 0;
-  const gridH = GRID_HOURS * HOUR_HEIGHT; // 24 * 40 = 960px
-  const restTopY = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * HOUR_HEIGHT; // 17 * 40 = 680px
-  const restH = REST_END_HOUR * HOUR_HEIGHT; // 7 * 40 = 280px
+  const gridH = CALENDAR_HOURS * HOUR_HEIGHT; // 24 * 52 = 1248px
   const footerH = 44;
 
-  const height = paddingY * 2 + headerH + dayHeaderH + allDayH + gridH + footerH;
+  const height = paddingY * 2 + headerH + dayHeaderH + allDayH + gridH + footerH; // ~1456px
 
   const weekNum = getWeekNumber(now);
   const weekRangeTitle = `${monday.getFullYear()}年${monday.getMonth() + 1}月${monday.getDate()}日 – ${sunday.getMonth() + 1}月${sunday.getDate()}日 (第${weekNum}周)`;
@@ -437,11 +447,11 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const allDayY = dayHeaderY + dayHeaderH;
   const gridTopY = allDayY + allDayH;
 
-  // 1. Time axis column headers & background
+  // 1. Time axis column header
   dayHeadersSvg += `
     <!-- Top-left corner time axis header -->
     <rect x="${gridLeft}" y="${dayHeaderY}" width="${timeAxisW}" height="${dayHeaderH}" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
-    <text x="${gridLeft + timeAxisW / 2}" y="${dayHeaderY + 28}" text-anchor="middle" font-size="11" font-weight="bold" fill="#64748b">时段</text>
+    <text x="${gridLeft + timeAxisW / 2}" y="${dayHeaderY + 30}" text-anchor="middle" font-size="11" font-weight="bold" fill="#64748b">时段</text>
   `;
 
   if (hasAnyAllDay) {
@@ -452,25 +462,35 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     `;
   }
 
-  // 2. 7 Days columns headers and grids
+  // 2. 7 Days columns headers and grids (Monday to Sunday)
   days.forEach((d) => {
     const colX = gridLeft + timeAxisW + d.index * dayColW;
 
-    // Day Header
-    const headerBg = d.isToday ? '#eff6ff' : '#ffffff';
-    const headerBorder = d.isToday ? '#93c5fd' : '#e2e8f0';
+    // Day Header (Google Calendar style: Weekday name + Date circle)
+    const headerBg = '#ffffff';
+    const headerBorder = '#e2e8f0';
     const weekdayFill = d.isToday ? '#2563eb' : '#64748b';
-    const dateFill = d.isToday ? '#1d4ed8' : '#0f172a';
 
     dayHeadersSvg += `
       <g transform="translate(${colX}, ${dayHeaderY})">
-        <rect width="${dayColW}" height="${dayHeaderH}" fill="${headerBg}" stroke="${headerBorder}" stroke-width="${d.isToday ? 1.5 : 1}"/>
-        <text x="${dayColW / 2}" y="20" text-anchor="middle" font-size="11.5" font-weight="bold" fill="${weekdayFill}">
-          ${d.weekdayZh} ${d.isToday ? '· 今日' : ''}
+        <rect width="${dayColW}" height="${dayHeaderH}" fill="${headerBg}" stroke="${headerBorder}" stroke-width="1"/>
+        <text x="${dayColW / 2}" y="17" text-anchor="middle" font-size="11" font-weight="bold" fill="${weekdayFill}">
+          ${d.weekdayZh}
         </text>
-        <text x="${dayColW / 2}" y="38" text-anchor="middle" font-size="13" font-weight="bold" font-family="monospace" fill="${dateFill}">
-          ${d.dayDateStr}
-        </text>
+        ${
+          d.isToday
+            ? `
+          <circle cx="${dayColW / 2}" cy="34" r="14" fill="#2563eb"/>
+          <text x="${dayColW / 2}" y="39" text-anchor="middle" font-size="13" font-weight="bold" font-family="monospace" fill="#ffffff">
+            ${d.date.getDate()}
+          </text>
+        `
+            : `
+          <text x="${dayColW / 2}" y="38" text-anchor="middle" font-size="14" font-family="monospace" fill="#0f172a">
+            ${d.date.getDate()}
+          </text>
+        `
+        }
       </g>
     `;
 
@@ -494,14 +514,15 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       }
     }
 
-    // Day Column Grid Body
+    // Day Column Grid Body (0:00 to 24:00 consecutive)
     let itemsSvg = '';
     d.timed.forEach((pos, itemIdx) => {
       const seg = pos.item;
-      const minutesIntoGrid = Math.max(0, (new Date(seg.start).getTime() - d.windowStartMs) / 60000);
+      const startD = new Date(seg.start);
+      const startMinutes = startD.getHours() * 60 + startD.getMinutes();
       const durMinutes = seg.durationMinutes;
 
-      const top = gridTopY + (minutesIntoGrid / 60) * HOUR_HEIGHT;
+      const top = gridTopY + (startMinutes / 60) * HOUR_HEIGHT;
       const height = Math.max(22, (durMinutes / 60) * HOUR_HEIGHT);
       const colWidth = (dayColW - 6) / pos.columns;
       const left = colX + 3 + pos.column * colWidth;
@@ -550,7 +571,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     // Today current time indicator
     let todayLineSvg = '';
     if (d.isToday) {
-      const currentMinutes = ((now.getHours() - CALENDAR_START_HOUR + 24) % 24) * 60 + now.getMinutes();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
       const currentY = gridTopY + (currentMinutes / 60) * HOUR_HEIGHT;
       if (currentY >= gridTopY && currentY <= gridTopY + gridH) {
         todayLineSvg = `
@@ -567,14 +588,10 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
         <!-- Column Background -->
         <rect x="${colX}" y="${gridTopY}" width="${dayColW}" height="${gridH}" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
         
-        <!-- Rest Band (00:00 - 07:00) -->
-        <rect x="${colX}" y="${gridTopY + restTopY}" width="${dayColW}" height="${restH}" fill="url(#restHatch)"/>
-        
-        <!-- Hourly divider lines -->
-        ${Array.from({ length: GRID_HOURS }, (_, hIdx) => {
+        <!-- Hourly divider lines (0:00 to 24:00) -->
+        ${Array.from({ length: CALENDAR_HOURS }, (_, hIdx) => {
           const lineY = gridTopY + hIdx * HOUR_HEIGHT;
-          const isRestLine = hIdx === (CALENDAR_END_HOUR - CALENDAR_START_HOUR);
-          return `<line x1="${colX}" y1="${lineY}" x2="${colX + dayColW}" y2="${lineY}" stroke="${isRestLine ? '#cbd5e1' : '#f1f5f9'}" stroke-width="${isRestLine ? 1.5 : 1}" ${isRestLine ? 'stroke-dasharray="4,3"' : ''}/>`;
+          return `<line x1="${colX}" y1="${lineY}" x2="${colX + dayColW}" y2="${lineY}" stroke="#f1f5f9" stroke-width="1"/>`;
         }).join('')}
         
         <!-- Cards -->
@@ -586,23 +603,13 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     `;
   });
 
-  // 3. Time Axis labels
+  // 3. Time Axis labels (0:00 through 24:00 consecutive)
   let timeAxisSvg = '';
-  // Daytime hours 07:00 to 24:00
-  for (let h = CALENDAR_START_HOUR; h <= CALENDAR_END_HOUR; h++) {
-    const y = gridTopY + (h - CALENDAR_START_HOUR) * HOUR_HEIGHT;
-    const isEnd = h === CALENDAR_END_HOUR;
+  for (let h = 0; h <= CALENDAR_HOURS; h++) {
+    const y = gridTopY + h * HOUR_HEIGHT;
+    const isEdge = h === 0 || h === CALENDAR_HOURS;
     timeAxisSvg += `
-      <text x="${gridLeft + timeAxisW - 8}" y="${y + 4}" text-anchor="end" font-size="10" font-family="monospace" font-weight="${isEnd ? 'bold' : 'normal'}" fill="${isEnd ? '#334155' : '#94a3b8'}">
-        ${formatHour(h)}
-      </text>
-    `;
-  }
-  // Rest hours 01:00 to 06:00
-  for (let h = 1; h < REST_END_HOUR; h++) {
-    const y = gridTopY + restTopY + h * HOUR_HEIGHT;
-    timeAxisSvg += `
-      <text x="${gridLeft + timeAxisW - 8}" y="${y + 4}" text-anchor="end" font-size="9" font-family="monospace" fill="#cbd5e1">
+      <text x="${gridLeft + timeAxisW - 8}" y="${y + 4}" text-anchor="end" font-size="10" font-family="monospace" font-weight="${isEdge ? 'bold' : 'normal'}" fill="${isEdge ? '#334155' : '#94a3b8'}">
         ${formatHour(h)}
       </text>
     `;
@@ -611,10 +618,6 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <!-- Rest hours diagonal pattern -->
-        <pattern id="restHatch" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-          <line x1="0" y1="0" x2="0" y2="10" stroke="#e2e8f0" stroke-width="1.2" opacity="0.6"/>
-        </pattern>
         ${clipPathsSvg}
       </defs>
 
@@ -664,18 +667,13 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
         ${timeAxisSvg}
       </g>
 
-      <!-- 7 Days Grid Columns -->
+      <!-- 7 Days Grid Columns (Mon-Fri left, Sat-Sun right) -->
       ${dayColumnsSvg}
-
-      <!-- Rest Zone Label at bottom right -->
-      <text x="${gridLeft + timeAxisW + 10}" y="${gridTopY + restTopY + 16}" font-size="9.5" font-weight="bold" fill="#94a3b8">
-        🌙 夜间休息时段 (00:00 - 07:00)
-      </text>
 
       <!-- Footer Bar -->
       <g transform="translate(${gridLeft}, ${gridTopY + gridH + 26})">
         <text x="4" y="0" font-size="10.5" fill="#94a3b8">
-          ✨ Clawbot 智能排程引擎 · 亮色日程视图 · 24小时自适应时间网格
+          ✨ Clawbot 智能日程管家 · 周日历导出视图 (0:00 - 24:00) · 周一至周日在序
         </text>
         <text x="${gridW - 4}" y="0" text-anchor="end" font-size="10.5" font-family="monospace" fill="#94a3b8">
           ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', { hour12: false })} 生成
