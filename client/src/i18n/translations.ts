@@ -27,7 +27,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'common.loading': '加载中...',
 
     // Navigation (Sidebar)
-    'nav.matrix': '四象限看板',
+    'nav.matrix': '四象限表格',
     'nav.list': '待办清单',
     'nav.calendar': '日历日程',
     'nav.settings': '设置与对接',
@@ -293,7 +293,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'common.loading': 'Loading...',
 
     // Navigation (Sidebar)
-    'nav.matrix': 'Matrix Board',
+    'nav.matrix': 'Matrix Table',
     'nav.list': 'Todo List',
     'nav.calendar': 'Calendar',
     'nav.settings': 'Settings & Integration',

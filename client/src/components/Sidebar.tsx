@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import {
+  LayoutGrid,
   CalendarDays,
   CheckSquare,
   Inbox,
@@ -51,8 +52,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 待办清单子分类折叠/展开状态
   const [tasksExpanded, setTasksExpanded] = useState(true);
 
-  // 判断是否当前选中待办工作区 (包含 matrix 看板或 list 清单)
-  const isTasksActive = activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos';
+  // 判断是否当前选中待办清单 (只有当前选中待办清单时，分类才显示选中)
+  const isListActive = activeTab === 'list' || activeTab === 'todos';
 
   // 待办清单分类导航 (全部待办 + 四象限 + 已完成)
   const filterCategories = [
@@ -71,8 +72,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSelectCategory = (catKey: string) => {
     setActiveCategory(catKey);
-    // 若当前不在待办/看板视图，切换回待办工作区
-    if (!isTasksActive) {
+    // 点击待办分类，自动激活待办清单视图
+    if (!isListActive) {
       setActiveTab('list');
     }
     setMobileOpen(false);
@@ -80,8 +81,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleCreateTask = () => {
     onNewTask();
-    if (!isTasksActive) {
-      setActiveTab('list');
+    if (activeTab !== 'matrix' && activeTab !== 'list') {
+      setActiveTab('matrix');
     }
     setMobileOpen(false);
   };
@@ -136,9 +137,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 中部可滚动导航区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2 space-y-3 scrollbar-thin">
-        {/* 1. 视图与待办工作区导航 */}
+        {/* 1. 视图导航：第一项四象限表格，第二项日历日程，第三项待办清单 */}
         <div className="space-y-1">
-          {/* 日历日程 (置于待办清单上方) */}
+          {/* 第一项：四象限表格 */}
+          <button
+            type="button"
+            onClick={() => handleSelectView('matrix')}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+              activeTab === 'matrix'
+                ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
+            }`}
+          >
+            <LayoutGrid className={`w-4 h-4 shrink-0 ${activeTab === 'matrix' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
+            <span className="truncate flex-1 text-left">{t('nav.matrix', '四象限表格')}</span>
+          </button>
+
+          {/* 第二项：日历日程 */}
           <button
             type="button"
             onClick={() => handleSelectView('calendar')}
@@ -152,17 +167,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="truncate flex-1 text-left">{t('nav.calendar', '日历日程')}</span>
           </button>
 
-          {/* 待办清单 (移动到日历日程下面，支持展开/折叠分类) */}
+          {/* 第三项：待办清单 (支持展开/折叠分类) */}
           <div className="space-y-1 pt-0.5">
             <div
               className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer group select-none ${
-                isTasksActive
+                isListActive
                   ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
                   : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
               }`}
               onClick={() => {
-                if (!isTasksActive) {
-                  handleSelectView(activeTab === 'matrix' ? 'matrix' : 'list');
+                if (!isListActive) {
+                  handleSelectView('list');
                   setTasksExpanded(true);
                 } else {
                   setTasksExpanded((prev) => !prev);
@@ -170,7 +185,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
             >
               <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                <CheckSquare className={`w-4 h-4 shrink-0 ${isTasksActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
+                <CheckSquare className={`w-4 h-4 shrink-0 ${isListActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
                 <span className="truncate">{t('nav.list', '待办清单')}</span>
               </div>
 
@@ -198,7 +213,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {filterCategories.map((item) => {
                   const Icon = item.icon;
                   // 关键规则：如果没有选中代办清单，分类就不显示选中
-                  const isCatActive = isTasksActive && activeCategory === item.key;
+                  const isCatActive = isListActive && activeCategory === item.key;
                   const count = categoryCounts[item.key] ?? 0;
                   return (
                     <button
