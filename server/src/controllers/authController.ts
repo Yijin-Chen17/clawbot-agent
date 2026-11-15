@@ -25,6 +25,26 @@ export async function sendRegisterCode(req: Request, res: Response): Promise<voi
   }
 }
 
+export function checkUsername(req: Request, res: Response): void {
+  const username = String(req.query.username || '').trim();
+  if (!username) {
+    res.status(400).json({ available: false, message: '请输入用户名' });
+    return;
+  }
+
+  if (username.length < 3) {
+    res.json({ available: false, message: '用户名至少需要 3 位字符' });
+    return;
+  }
+
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (existing) {
+    res.json({ available: false, message: '该用户名已被占用，请更换其他用户名' });
+  } else {
+    res.json({ available: true, message: '用户名可用' });
+  }
+}
+
 export function register(req: Request, res: Response): void {
   const { username, password, email, code } = req.body;
 

@@ -27,6 +27,7 @@ import {
   Calendar as CalendarIcon,
   CheckCircle2,
   Menu,
+  Languages,
 } from 'lucide-react';
 
 interface EisenhowerWorkspaceProps {
@@ -62,7 +63,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  const { t } = useTheme();
+  const { t, language, setLanguage } = useTheme();
 
   // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list)
   const [internalCurrentView, setInternalCurrentView] = useState<'matrix' | 'list'>(propsCurrentView);
@@ -562,6 +563,16 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             title={t('workspace.refresh_tasks')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
+          </button>
+
+          {/* 快捷中英文切换 */}
+          <button
+            type="button"
+            onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}
+            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            title={language === 'zh' ? 'Switch to English' : '切换为简体中文'}
+          >
+            <Languages className="w-3.5 h-3.5" />
           </button>
 
           {/* 新建任务 */}
