@@ -1,11 +1,12 @@
 export interface User {
   id: number;
   username: string;
+  email?: string;
   nickname?: string;
   avatar_url?: string;
   password_hash?: string;
   role: 'user' | 'admin';
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'banned';
   token_secret: string;
   created_at: string;
   updated_at: string;

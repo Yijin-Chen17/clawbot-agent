@@ -8,3 +8,5 @@ npm-debug.log*
 pnpm-debug.log*
 client/dist/
 server/assets/fonts/
+config.yaml
+config.json

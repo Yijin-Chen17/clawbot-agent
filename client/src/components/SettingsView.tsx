@@ -28,6 +28,7 @@ import {
   Zap,
   Menu,
   Lock,
+  Mail,
   Upload,
   Sun,
   Moon,
@@ -222,6 +223,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+
+  // 注销账号状态
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -470,6 +477,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       setPasswordError(err.response?.data?.error || '修改密码失败，请核验原密码');
     } finally {
       setChangingPassword(false);
+    }
+  };
+
+  // 用户自主注销账号
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      setDeleteError('请输入当前登录密码以确认注销');
+      return;
+    }
+    setDeleteError(null);
+    setDeletingAccount(true);
+    try {
+      const res = await api.delete('/auth/me', { data: { password: deletePassword } });
+      alert(res.data.message || '您的账号已注销成功');
+      logout();
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.error || '注销失败，请核验密码');
+    } finally {
+      setDeletingAccount(false);
     }
   };
 
@@ -1088,6 +1114,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       {t('account.nickname_tip')}
                     </span>
                   </div>
+
+                  {/* 注册绑定邮箱 */}
+                  {user?.email && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
+                        绑定邮箱 (唯一识别)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={user.email}
+                          disabled
+                          className="w-full pl-3 pr-8 py-2 text-xs bg-gray-100 dark:bg-neutral-800/80 border border-gray-200 dark:border-neutral-700 text-gray-500 dark:text-neutral-400 rounded-xl cursor-not-allowed font-mono select-none"
+                        />
+                        <Mail className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
+                      </div>
+                      <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
+                        用于验证码接收与身份认证，每个邮箱唯一绑定一个账号
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1191,11 +1238,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <button
                   type="button"
                   onClick={logout}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0 self-start sm:self-center"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>{t('account.logout_btn')}</span>
                 </button>
+              </div>
+
+              {/* 5. 危险区域：自主注销/删除账号 */}
+              <div className="pt-6 border-t border-rose-100 dark:border-rose-950/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>注销并彻底删除个人账号</span>
+                    </h4>
+                    <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
+                      永久删除您的个人档案、所有待办日程、日历订阅及 API 用量记录，此操作不可撤销。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeletePassword('');
+                      setDeleteError(null);
+                      setShowDeleteModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900 rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 self-start sm:self-center"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>注销账号</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -2377,6 +2451,66 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           )}
         </section>
       </div>
+
+      {/* 注销账号确认弹窗 */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                  确认注销删除账号？
+                </h3>
+                <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">
+                  ⚠️ 警告：注销后，您账号下的全部任务待办、外部日历同步、微信配置以及 API 用量数据将被彻底物理清除，且无法以任何方式找回！
+                </p>
+              </div>
+            </div>
+
+            {deleteError && (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
+                请输入当前登录密码以验证身份：
+              </label>
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                placeholder="请输入密码"
+                className="w-full px-3.5 py-2.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:bg-white dark:focus:bg-[#1e1f20] outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount || !deletePassword}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {deletingAccount ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>{deletingAccount ? '正在注销...' : '确认彻底注销'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

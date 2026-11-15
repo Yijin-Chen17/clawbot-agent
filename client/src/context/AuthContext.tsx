@@ -4,10 +4,11 @@ import { api } from '../api/client';
 export interface User {
   id: number;
   username: string;
+  email?: string;
   nickname?: string;
   avatar_url?: string;
   role: 'user' | 'admin';
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'banned';
   token_secret: string;
   calendar_token?: string;
 }

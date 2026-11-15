@@ -14,6 +14,7 @@ export function listUsers(req: AuthenticatedRequest, res: Response): void {
     SELECT
       u.id,
       u.username,
+      u.email,
       u.role,
       u.status,
       u.created_at,
@@ -93,11 +94,65 @@ export function setUserRole(req: AuthenticatedRequest, res: Response): void {
   res.json({ message: '用户角色已更新' });
 }
 
+export function banUser(req: AuthenticatedRequest, res: Response): void {
+  const { id } = req.params;
+
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any;
+  if (!target) {
+    res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+
+  if (target.id === req.user?.id) {
+    res.status(400).json({ error: '不能封禁自己的账号' });
+    return;
+  }
+
+  if (target.role === 'admin' && target.username === 'admin') {
+    res.status(400).json({ error: '不能封禁系统超级管理员' });
+    return;
+  }
+
+  db.prepare(`
+    UPDATE users
+    SET status = 'banned', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+
+  addDebugLog('Auth', 'warn', `管理员封禁了用户「${target.username}」`);
+  res.json({ message: `用户「${target.username}」已被封禁！` });
+}
+
+export function unbanUser(req: AuthenticatedRequest, res: Response): void {
+  const { id } = req.params;
+
+  const target = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id) as any;
+  if (!target) {
+    res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+
+  db.prepare(`
+    UPDATE users
+    SET status = 'approved', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+
+  addDebugLog('Auth', 'info', `管理员解封了用户「${target.username}」`);
+  res.json({ message: `用户「${target.username}」已解除封禁！` });
+}
+
 export function deleteUser(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
 
   if (Number(id) === req.user?.id) {
     res.status(400).json({ error: '不能删除自己的账号' });
+    return;
+  }
+
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any;
+  if (target?.role === 'admin' && target?.username === 'admin') {
+    res.status(400).json({ error: '不能删除系统超级管理员账号' });
     return;
   }
 

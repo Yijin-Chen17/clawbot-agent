@@ -1,9 +1,11 @@
 import { Router } from 'express';
-import { register, login, getMe, updateProfile, uploadAvatar, changePassword } from '../controllers/authController.js';
+import { register, login, getMe, updateProfile, uploadAvatar, changePassword, sendRegisterCode, deleteMyAccount } from '../controllers/authController.js';
 import {
   listUsers,
   approveUser,
   rejectUser,
+  banUser,
+  unbanUser,
   setUserRole,
   deleteUser,
   getDebugLogs,
@@ -34,6 +36,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth.js';
 export const router = Router();
 
 // ================= Public Routes =================
+router.post('/auth/send-code', sendRegisterCode);
 router.post('/auth/register', register);
 router.post('/auth/login', login);
 router.get('/calendar/subscribe/:token', exportDedicatedIcal);
@@ -44,6 +47,7 @@ router.post('/webhook/clawbot/:token', handleClawbotWebhook);
 
 // ================= Protected Routes =================
 router.get('/auth/me', requireAuth, getMe);
+router.delete('/auth/me', requireAuth, deleteMyAccount);
 router.put('/auth/profile', requireAuth, updateProfile);
 router.post('/auth/avatar', requireAuth, uploadAvatar);
 router.put('/auth/password', requireAuth, changePassword);
@@ -85,6 +89,8 @@ router.get('/calendar/preview-todo-card', requireAuth, previewTodoCard);
 router.get('/admin/users', requireAdmin, listUsers);
 router.put('/admin/users/:id/approve', requireAdmin, approveUser);
 router.put('/admin/users/:id/reject', requireAdmin, rejectUser);
+router.put('/admin/users/:id/ban', requireAdmin, banUser);
+router.put('/admin/users/:id/unban', requireAdmin, unbanUser);
 router.put('/admin/users/:id/role', requireAdmin, setUserRole);
 router.delete('/admin/users/:id', requireAdmin, deleteUser);
 

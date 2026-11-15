@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { getAppConfig } from './appConfig.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -119,6 +120,16 @@ export function initDatabase() {
       request_type TEXT DEFAULT 'weixin_chat',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS email_verification_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'register',
+      expires_at DATETIME NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migrate user_settings columns if missing
@@ -140,7 +151,7 @@ export function initDatabase() {
   addCol('weixin_activated', 'INTEGER', '0');
   addCol('weixin_last_active_at', 'DATETIME', 'NULL');
 
-  // Migrate users table columns if missing (nickname, avatar_url)
+  // Migrate users table columns if missing (nickname, avatar_url, email)
   const userCols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map(c => c.name);
   if (!userCols.includes('nickname')) {
     db.exec("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT '';");
@@ -148,6 +159,10 @@ export function initDatabase() {
   if (!userCols.includes('avatar_url')) {
     db.exec("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT '';");
   }
+  if (!userCols.includes('email')) {
+    db.exec("ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL;");
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL AND email != '';");
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
@@ -165,7 +180,8 @@ export function initDatabase() {
   }
 
   // Seed initial admin if database has no users
-  const defaultAdminPassword = process.env.ADMIN_DEFAULT_PASSWORD || '86698111';
+  const config = getAppConfig();
+  const defaultAdminPassword = config.admin_default_password || process.env.ADMIN_DEFAULT_PASSWORD || '123456';
   const userCount = db.prepare('SELECT count(*) as count FROM users').get() as { count: number };
   if (userCount.count === 0) {
     const salt = bcrypt.genSaltSync(10);
@@ -174,8 +190,8 @@ export function initDatabase() {
     const webhookToken = crypto.randomBytes(16).toString('hex');
 
     const result = db.prepare(`
-      INSERT INTO users (username, password_hash, role, status, token_secret)
-      VALUES (?, ?, 'admin', 'approved', ?)
+      INSERT INTO users (username, email, password_hash, role, status, token_secret)
+      VALUES (?, 'admin@clawbot.local', ?, 'admin', 'approved', ?)
     `).run('admin', hash, secret);
 
     const adminId = result.lastInsertRowid;
