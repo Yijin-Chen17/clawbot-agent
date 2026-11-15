@@ -1,19 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import {
-  LayoutGrid,
-  CheckSquare,
   CalendarDays,
+  CheckSquare,
   Inbox,
   Flame,
   Star,
   Clock,
   Layers,
   Archive,
-  Sparkles,
-  PieChart,
-  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
   Settings,
   Users,
   Terminal,
@@ -28,9 +26,9 @@ export interface SidebarProps {
   setActiveCategory: (cat: string) => void;
   categoryCounts: Record<string, number>;
   onNewTask: () => void;
-  onOpenWizard: () => void;
-  onOpenStats: () => void;
-  onOpenBackup: () => void;
+  onOpenWizard?: () => void;
+  onOpenStats?: () => void;
+  onOpenBackup?: () => void;
   pendingUsersCount?: number;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
@@ -43,9 +41,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveCategory,
   categoryCounts,
   onNewTask,
-  onOpenWizard,
-  onOpenStats,
-  onOpenBackup,
   pendingUsersCount = 0,
   mobileOpen,
   setMobileOpen,
@@ -53,14 +48,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user } = useAuth();
   const { t } = useTheme();
 
-  // 主视图导航
-  const mainViews = [
-    { id: 'matrix', label: t('nav.matrix', '四象限看板'), icon: LayoutGrid },
-    { id: 'list', label: t('nav.list', '待办清单'), icon: CheckSquare },
-    { id: 'calendar', label: t('nav.calendar', '日历日程'), icon: CalendarDays },
-  ];
+  // 待办清单子分类折叠/展开状态
+  const [tasksExpanded, setTasksExpanded] = useState(true);
 
-  // 四象限分类导航
+  // 判断是否当前选中待办工作区 (包含 matrix 看板或 list 清单)
+  const isTasksActive = activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos';
+
+  // 待办清单分类导航 (全部待办 + 四象限 + 已完成)
   const filterCategories = [
     { key: 'all', label: t('nav.all_tasks', '全部待办'), icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
     { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-500' },
@@ -77,17 +71,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSelectCategory = (catKey: string) => {
     setActiveCategory(catKey);
-    // 若当前不在待办/看板视图，切换回四象限看板
-    if (activeTab !== 'matrix' && activeTab !== 'list') {
-      setActiveTab('matrix');
+    // 若当前不在待办/看板视图，切换回待办工作区
+    if (!isTasksActive) {
+      setActiveTab('list');
     }
     setMobileOpen(false);
   };
 
   const handleCreateTask = () => {
     onNewTask();
-    if (activeTab !== 'matrix' && activeTab !== 'list') {
-      setActiveTab('matrix');
+    if (!isTasksActive) {
+      setActiveTab('list');
     }
     setMobileOpen(false);
   };
@@ -141,114 +135,106 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 中部可滚动导航区域 */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2 space-y-4 scrollbar-thin">
-        {/* 1. 主视图 */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2 space-y-3 scrollbar-thin">
+        {/* 1. 视图与待办工作区导航 */}
         <div className="space-y-1">
-          <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
-            {t('nav.views', '视图导航')}
-          </div>
-          {mainViews.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
+          {/* 日历日程 (置于待办清单上方) */}
+          <button
+            type="button"
+            onClick={() => handleSelectView('calendar')}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+              activeTab === 'calendar'
+                ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
+            }`}
+          >
+            <CalendarDays className={`w-4 h-4 shrink-0 ${activeTab === 'calendar' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
+            <span className="truncate flex-1 text-left">{t('nav.calendar', '日历日程')}</span>
+          </button>
+
+          {/* 待办清单 (移动到日历日程下面，支持展开/折叠分类) */}
+          <div className="space-y-1 pt-0.5">
+            <div
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer group select-none ${
+                isTasksActive
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                  : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
+              }`}
+              onClick={() => {
+                if (!isTasksActive) {
+                  handleSelectView(activeTab === 'matrix' ? 'matrix' : 'list');
+                  setTasksExpanded(true);
+                } else {
+                  setTasksExpanded((prev) => !prev);
+                }
+              }}
+            >
+              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                <CheckSquare className={`w-4 h-4 shrink-0 ${isTasksActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
+                <span className="truncate">{t('nav.list', '待办清单')}</span>
+              </div>
+
+              {/* 展开/折叠箭头指示 */}
               <button
-                key={item.id}
                 type="button"
-                onClick={() => handleSelectView(item.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-                  isActive
-                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
-                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTasksExpanded((prev) => !prev);
+                }}
+                className="p-0.5 text-gray-400 hover:text-gray-600 dark:text-neutral-500 dark:hover:text-neutral-300 rounded transition cursor-pointer"
+                title={tasksExpanded ? '折叠分类' : '展开分类'}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} />
-                <span>{item.label}</span>
+                {tasksExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                )}
               </button>
-            );
-          })}
-        </div>
+            </div>
 
-        {/* 2. 四象限与分类筛选 (当处于看板或清单时深度联动) */}
-        <div className="space-y-1">
-          <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 flex items-center justify-between">
-            <span>{t('nav.quadrants', '四象限分类')}</span>
+            {/* 待办清单展开分类 (模仿 agent project workspace 的左侧树缩进与指示线) */}
+            {tasksExpanded && (
+              <div className="ml-3.5 pl-2.5 border-l border-gray-200/90 dark:border-neutral-800 space-y-0.5 py-0.5">
+                {filterCategories.map((item) => {
+                  const Icon = item.icon;
+                  // 关键规则：如果没有选中代办清单，分类就不显示选中
+                  const isCatActive = isTasksActive && activeCategory === item.key;
+                  const count = categoryCounts[item.key] ?? 0;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => handleSelectCategory(item.key)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                        isCatActive
+                          ? 'bg-blue-100/70 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs'
+                          : 'text-gray-600 dark:text-neutral-400 hover:bg-gray-100/80 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Icon className={`w-3.5 h-3.5 shrink-0 ${item.color}`} />
+                        <span className="truncate">{item.label}</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono shrink-0 ${
+                          isCatActive
+                            ? 'bg-blue-600 text-white font-bold'
+                            : 'bg-gray-100 dark:bg-neutral-800 text-gray-400 dark:text-neutral-500'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          {filterCategories.map((item) => {
-            const Icon = item.icon;
-            const isCatActive = (activeTab === 'matrix' || activeTab === 'list') && activeCategory === item.key;
-            const count = categoryCounts[item.key] ?? 0;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => handleSelectCategory(item.key)}
-                className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-medium transition cursor-pointer ${
-                  isCatActive
-                    ? 'bg-gray-200/70 dark:bg-neutral-800 text-gray-900 dark:text-gray-100 font-semibold'
-                    : 'text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/40 hover:text-gray-900 dark:hover:text-neutral-200'
-                }`}
-              >
-                <div className="flex items-center gap-2.5 truncate">
-                  <Icon className={`w-3.5 h-3.5 shrink-0 ${item.color}`} />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono shrink-0 ${
-                    isCatActive
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'bg-gray-100 dark:bg-neutral-800 text-gray-500 dark:text-neutral-400'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
         </div>
 
-        {/* 3. 辅助效率工具 */}
-        <div className="space-y-1">
-          <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
-            {t('nav.tools', '效率辅助')}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              onOpenWizard();
-              setMobileOpen(false);
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-            <span>{t('nav.wizard', '智能决策向导')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onOpenStats();
-              setMobileOpen(false);
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
-          >
-            <PieChart className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>{t('nav.stats', '精力复盘分析')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onOpenBackup();
-              setMobileOpen(false);
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-neutral-400 hover:bg-gray-100/70 dark:hover:bg-neutral-800/50 hover:text-gray-900 dark:hover:text-neutral-200 transition text-left cursor-pointer"
-          >
-            <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 dark:text-neutral-400 shrink-0" />
-            <span>{t('nav.backup', '数据备份导入')}</span>
-          </button>
-        </div>
-
-        {/* 4. 管理员专属视图 */}
+        {/* 2. 管理员专属运维视图 (若为管理员) */}
         {user?.role === 'admin' && (
-          <div className="space-y-1">
+          <div className="space-y-1 pt-1 border-t border-gray-100 dark:border-neutral-800/80">
             <div className="px-2 py-1 text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500">
               {t('nav.admin', '系统运维')}
             </div>
