@@ -17,13 +17,13 @@ export const templates = {
   ) => {
     const list: string[] = [];
     if (missing.duration) {
-      list.push(`• 预计耗时多少分钟？（如：30分钟、2小时）`);
+      list.push(`• 预计耗时多少分钟？`);
     }
     if (missing.deadline) {
-      list.push(`• 最晚截止时间 (DDL)？（如：今天18点、明天、周五）`);
+      list.push(`• 截止时间 (DDL)？`);
     }
     if (missing.importance) {
-      list.push(`• 重要程度？（0-10分，默认7.0）`);
+      list.push(`• 重要程度 (0-10分)？`);
     }
 
     return `📝 任务「${title}」需补充：\n` + list.join('\n');

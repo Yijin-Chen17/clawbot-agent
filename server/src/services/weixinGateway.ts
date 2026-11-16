@@ -669,7 +669,7 @@ export async function processWeChatMessage(
       );
 
       if (!targetName) {
-        return { replyText: '⚠️ 请告诉我您要删除哪项任务或日程，例如：“删除任务 开会”。' };
+        return { replyText: '⚠️ 请说明要删除的任务或日程名称。' };
       }
 
       // 1. 先查找匹配待办任务
@@ -933,7 +933,7 @@ export async function processWeChatMessage(
       }
     } else {
       return {
-        replyText: '💡 未识别到具体日程或任务。可直接发送如“明天下午开会1小时”安排任务，或回复“帮助”查看指令。',
+        replyText: '💡 未识别到具体日程或任务。可回复“帮助”查看指令。',
         diagnostics: { intent: 'other' }
       };
     }
