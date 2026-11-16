@@ -191,10 +191,10 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, urgency, importance,
-              deadline, scheduled_start, scheduled_end, status
+              deadline, scheduled_start, scheduled_end, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
-          `).run(userId, title, duration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+          `).run(userId, title, duration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null);
 
           const sStr = new Date(plan.scheduled_start).toLocaleString('zh-CN', {
             month: '2-digit',

@@ -567,16 +567,18 @@ function runSingleDaySchedule(
   for (const task of orderedQueue) {
     const totalTaskMinutes = task.duration_minutes > 0 ? task.duration_minutes : 45;
 
-    // 长任务分阶段均衡规划：避免长任务全挤在同一天（如期末复习20小时分散在考前各天）
+    // 长任务分阶段均衡规划：避免超长任务全挤在同一天（如大型复习20小时分散在考前各天）
+    // 只有总时长达到 6 小时 (360分钟) 以上且截止日还差 2 天以上的超大任务才跨天分摊；
+    // 3小时 (180分钟) 这类常规任务应在当天完整规划排程！
     let taskMinutesForToday = totalTaskMinutes;
-    if (totalTaskMinutes >= 180 && task.deadline) {
+    if (totalTaskMinutes >= 360 && task.deadline) {
       const ddlMs = new Date(task.deadline).getTime();
       const targetMs = targetDate.getTime();
       const daysDiff = Math.max(1, Math.ceil((ddlMs - targetMs) / 86400000));
       if (daysDiff >= 2) {
         const idealDaily = Math.ceil(totalTaskMinutes / daysDiff);
-        // 单日排程上限在 45 ~ 180 分钟之间，避免单日过载
-        taskMinutesForToday = Math.max(45, Math.min(180, idealDaily));
+        // 单日排程在 60 ~ 240 分钟之间
+        taskMinutesForToday = Math.max(60, Math.min(240, idealDaily));
       }
     }
 
@@ -704,7 +706,10 @@ function runSingleDaySchedule(
         });
       });
 
-      scheduledTaskIds.add(task.id);
+      // 只有全部时长均已排定 (unscheduledMin === 0) 时，才标记为已完成当天排程
+      if (unscheduledMin === 0) {
+        scheduledTaskIds.add(task.id);
+      }
     }
 
     if (unscheduledMin > 0) {
@@ -881,6 +886,8 @@ export function replanUserTasks(userId: number): {
         if (tRef) {
           tRef.duration_minutes = unsched.remainingMinutes;
         }
+      } else {
+        remainingTaskIds.delete(unsched.taskId);
       }
     }
     rolloverTaskIds = nextRollover;
@@ -1029,10 +1036,15 @@ export function scheduleTask(
   }));
 
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
+  const accumulatedBlocks: ScheduledTaskBlock[] = [];
+  let remainingMinutesToSim = task.duration_minutes;
 
   for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    if (remainingMinutesToSim <= 0) break;
     const targetDate = new Date(now);
     targetDate.setDate(targetDate.getDate() + dayOffset);
+
+    simTask.duration_minutes = remainingMinutesToSim;
 
     const dayResult = runSingleDaySchedule(simTasks, parsedFixedEvents, {
       targetDate,
@@ -1048,28 +1060,35 @@ export function scheduleTask(
 
     const blocks = dayResult.scheduledBlocks.filter(b => b.taskId === simTask.id);
     if (blocks.length > 0) {
-      const sorted = [...blocks].sort((a, b) => a.start.getTime() - b.start.getTime());
-      const sStart = sorted[0].start.toISOString();
-      const sEnd = sorted[sorted.length - 1].end.toISOString();
-      const blockPayload = sorted.map(b => ({
-        start: b.start.toISOString(),
-        end: b.end.toISOString(),
-        duration: b.durationMinutes,
-        partIndex: b.partIndex,
-        totalParts: b.totalParts,
-        energyZone: b.energyZone,
-        strategyLabel: b.strategyLabel,
-        breakAfterMinutes: b.breakAfterMinutes,
-      }));
-
-      return {
-        success: true,
-        scheduled_start: sStart,
-        scheduled_end: sEnd,
-        schedule_blocks: JSON.stringify(blockPayload),
-        message: '排程计算成功',
-      };
+      accumulatedBlocks.push(...blocks);
+      const allocatedToday = blocks.reduce((sum, b) => sum + b.durationMinutes, 0);
+      remainingMinutesToSim = Math.max(0, remainingMinutesToSim - allocatedToday);
     }
+  }
+
+  if (accumulatedBlocks.length > 0) {
+    const sorted = [...accumulatedBlocks].sort((a, b) => a.start.getTime() - b.start.getTime());
+    const sStart = sorted[0].start.toISOString();
+    const sEnd = sorted[sorted.length - 1].end.toISOString();
+    const totalParts = sorted.length;
+    const blockPayload = sorted.map((b, idx) => ({
+      start: b.start.toISOString(),
+      end: b.end.toISOString(),
+      duration: b.durationMinutes,
+      partIndex: idx + 1,
+      totalParts,
+      energyZone: b.energyZone,
+      strategyLabel: b.strategyLabel,
+      breakAfterMinutes: b.breakAfterMinutes,
+    }));
+
+    return {
+      success: true,
+      scheduled_start: sStart,
+      scheduled_end: sEnd,
+      schedule_blocks: JSON.stringify(blockPayload),
+      message: '排程计算成功',
+    };
   }
 
   return {

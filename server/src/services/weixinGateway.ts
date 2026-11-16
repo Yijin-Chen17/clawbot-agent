@@ -899,10 +899,10 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status
+              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isFixed, isConcurrent);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isFixed, isConcurrent, plan.schedule_blocks || null);
 
           // Dynamically optimize and adjust all tasks according to urgency & deadlines
           replanUserTasks(userId);
