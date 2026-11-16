@@ -2,40 +2,12 @@ import OpenAI from 'openai';
 import { LLMExtractionResult, UserSettings } from '../models/types.js';
 import { recordApiUsage } from './llmPricing.js';
 
-export async function parseUserMessageWithLLM(
-  message: string,
-  settings: UserSettings,
-  pendingContext?: any
-): Promise<LLMExtractionResult> {
-  const endpoint = settings.llm_endpoint || 'https://api.deepseek.com/v1';
-  const apiKey = settings.llm_api_key || process.env.DEEPSEEK_API_KEY || '';
-  const model = settings.llm_model || 'deepseek-chat';
-
-  if (!apiKey) {
-    throw new Error('未配置 LLM API Key，请先在管理后台设置中填入 DeepSeek API Key');
-  }
-
-  const client = new OpenAI({
-    baseURL: endpoint,
-    apiKey: apiKey,
-  });
-
-  const now = new Date();
-  const currentLocalTimeStr = now.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    weekday: 'long',
-  });
-
-  const systemPrompt = `你是一个智能日程与任务提取助手。
-当前时间上下文是：${currentLocalTimeStr}（中国标准时间）。
-请分析用户的微信消息，提取日程与待办事项关键信息，并严格以纯 JSON 格式返回，不要包含 markdown 标记或任何其他文本。
+/**
+ * 静态系统提示词 (常量，100% 静态不变以保障 DeepSeek / OpenAI / Anthropic 前缀缓存 100% 命中)
+ * 必须保持前缀完全静态，动态的时间和上一轮上下文一律置于用户消息中传递。
+ */
+const SYSTEM_PROMPT = `你是一个智能日程与任务提取助手。
+请分析用户的输入消息（消息前包含参考时间及可选的上下文），提取日程与待办事项关键信息，并严格以纯 JSON 格式返回，不要包含 markdown 标记或任何其他文本。
 必须严格与 oxoxox-oxox/Eisenhower-Matrix 任务模型字段标准对齐。
 
 JSON 格式规范：
@@ -98,14 +70,53 @@ JSON 格式规范：
    - 用户说"查看日程"、"看看今天的安排" -> intent: "query_schedule"
 6. 其他/闲聊 (other):
    - 无关内容 -> intent: "other"
-7. 若用户正在回答上一轮补齐问题（当前待补齐上下文：${JSON.stringify(pendingContext || null)}），请将新消息与该上下文合并。`;
+7. 上下文补齐：
+   - 若用户消息中包含[待补齐任务信息]，说明用户正在回答上一轮补齐问题，请将新消息内容与该上下文合并输出。`;
+
+export async function parseUserMessageWithLLM(
+  message: string,
+  settings: UserSettings,
+  pendingContext?: any
+): Promise<LLMExtractionResult> {
+  const endpoint = settings.llm_endpoint || 'https://api.deepseek.com/v1';
+  const apiKey = settings.llm_api_key || process.env.DEEPSEEK_API_KEY || '';
+  const model = settings.llm_model || 'deepseek-chat';
+
+  if (!apiKey) {
+    throw new Error('未配置 LLM API Key，请先在管理后台设置中填入 DeepSeek API Key');
+  }
+
+  const client = new OpenAI({
+    baseURL: endpoint,
+    apiKey: apiKey,
+  });
+
+  const now = new Date();
+  const currentLocalTimeStr = now.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'long',
+  });
+
+  // 动态变量全部在用户消息中传递，保证系统提示词（messages[0]）前缀绝对一致以最大化 Context Caching 命中
+  let userContent = `[参考当前时间: ${currentLocalTimeStr}]`;
+  if (pendingContext && typeof pendingContext === 'object' && Object.keys(pendingContext).length > 0) {
+    userContent += `\n[待补齐任务信息: ${JSON.stringify(pendingContext)}]`;
+  }
+  userContent += `\n[用户输入]: ${message}`;
 
   try {
     const response = await client.chat.completions.create({
       model: model,
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message },
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
       ],
       temperature: 0.1,
       response_format: { type: 'json_object' },

@@ -476,11 +476,8 @@ export async function processWeChatMessage(
     }
 
     const replyText =
-      `📅【完整周智能日历与排程】\n` +
-      `已自动同步外部日历并完成本周自适应排程！\n` +
-      `• 外部日程同步：${syncRes.totalEvents} 项\n` +
-      `• 待办智能排程：${replanRes.scheduledCount} 项\n` +
-      (imageBuffer ? `完整周日历图片已在下方发送 👇` : `(图片生成中...)`);
+      `📅 日历已更新 (外部日程 ${syncRes.totalEvents} 项 / 待办 ${replanRes.scheduledCount} 项)` +
+      (imageBuffer ? ' 👇' : '');
 
     return {
       replyText,
@@ -514,10 +511,8 @@ export async function processWeChatMessage(
     const taskCount = countRow?.c || 0;
 
     const replyText =
-      `📝【待办任务清单 (Todo List)】\n` +
-      `您当前共有 ${taskCount} 项待办任务。\n` +
-      (imageBuffer ? `任务清单图已在下方发送 👇\n` : '') +
-      `💡 可回复“安排任务 [内容]”即刻智能规划，或“完成任务 [名称]”打勾完成。`;
+      `📝 待办任务清单 (共 ${taskCount} 项)` +
+      (imageBuffer ? ' 👇' : '');
 
     return {
       replyText,
@@ -547,10 +542,8 @@ export async function processWeChatMessage(
     }
 
     const replyText =
-      `🔄【自适应重新排程已完成】\n` +
-      `已结合最新紧急度、截止时间与外部日程重新排布！\n` +
-      `• 共规划任务：${replanRes.scheduledCount} 项${replanRes.failedCount > 0 ? `（${replanRes.failedCount} 项暂无合适时段）` : ''}\n` +
-      (imageBuffer ? `最新完整周日历图已在下方发送 👇` : '');
+      `🔄 重新排程完成：共规划 ${replanRes.scheduledCount} 项` +
+      (imageBuffer ? ' 👇' : '');
 
     return {
       replyText,
@@ -608,7 +601,7 @@ export async function processWeChatMessage(
       }
 
       if (!activeTask) {
-        const reply = '💡 当前没有正在进行或排程中的待办任务，无需更新状态。';
+        const reply = '当前没有正在进行或排程中的待办任务。';
         return { replyText: reply, diagnostics: { intent: parsed.intent, parsed } };
       }
 
@@ -691,7 +684,7 @@ export async function processWeChatMessage(
         replanUserTasks(userId);
         addDebugLog('Scheduler', 'success', `用户 #${userId} 删除了任务 #${matchedTask.id} (${matchedTask.title})`);
         return {
-          replyText: `🗑️【任务已删除】\n已为您成功删除待办任务「${matchedTask.title}」，并自适应重新规划了您的周日程！`,
+          replyText: `🗑️ 已删除任务「${matchedTask.title}」`,
           diagnostics: { intent: 'delete_item', deletedTaskId: matchedTask.id }
         };
       }
@@ -708,13 +701,13 @@ export async function processWeChatMessage(
         replanUserTasks(userId);
         addDebugLog('Scheduler', 'success', `用户 #${userId} 删除了日程 #${matchedEvent.id} (${matchedEvent.title})`);
         return {
-          replyText: `🗑️【日程已删除】\n已为您成功删除日历日程「${matchedEvent.title}」！`,
+          replyText: `🗑️ 已删除日程「${matchedEvent.title}」`,
           diagnostics: { intent: 'delete_item', deletedEventId: matchedEvent.id }
         };
       }
 
       return {
-        replyText: `⚠️ 未找到包含「${targetName}」的任务或日程。\n您可以发送“查看任务”或“查看日历”核对具体名称。`,
+        replyText: `⚠️ 未找到包含「${targetName}」的任务或日程。`,
         diagnostics: { intent: 'delete_item', targetName, notFound: true }
       };
     } else if (parsed.intent === 'modify_item') {
@@ -790,7 +783,7 @@ export async function processWeChatMessage(
 
       addDebugLog('Scheduler', 'success', `用户 #${userId} 修改了任务 #${matchedTask.id} (${matchedTask.title})`);
       return {
-        replyText: `✏️【任务修改成功】\n已成功更新任务「${updatedTask.title}」！${extraInfo}`,
+        replyText: `✏️ 已更新任务「${updatedTask.title}」${extraInfo}`,
         diagnostics: { intent: 'modify_item', updatedTask }
       };
     } else if (parsed.intent === 'query_schedule') {
@@ -813,7 +806,7 @@ export async function processWeChatMessage(
       }
 
       const todayStr = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
-      const reply = templates.scheduleQueryList(todayTasks, todayStr) + (imageBuffer ? '\n\n📅 完整周日程图已在下方发送 👇' : '');
+      const reply = templates.scheduleQueryList(todayTasks, todayStr) + (imageBuffer ? ' 👇' : '');
       addDebugLog('Scheduler', 'info', `查询日程，共找到今日 ${todayTasks.length} 项，并生成完整周日历图片`);
       return { replyText: reply, imageBuffer, diagnostics: { intent: parsed.intent, todayTasksCount: todayTasks.length } };
     } else if (parsed.intent === 'create_task') {
@@ -889,7 +882,7 @@ export async function processWeChatMessage(
           const eStr = new Date(fixedEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
           return {
-            replyText: `📌【固定任务已创建】\n「${title}」已为您固定在：${sStr} ~ ${eStr}\n• 属性：已锁定该时间段，不参与后续自动重排${isConcurrent ? '（双线程模式：允许与其他日程并行）' : ''}。`,
+            replyText: `📌 固定任务「${title}」已排定：${sStr} ~ ${eStr}${isConcurrent ? ' (双线程)' : ''}`,
             diagnostics: { intent: parsed.intent, fixed: true, task: merged }
           };
         }
@@ -921,15 +914,7 @@ export async function processWeChatMessage(
           const sStr = new Date(actualStart).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(actualEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-          let extraTip = '';
-          if (duration! >= 180) {
-            extraTip = `\n💡 提示：该任务总用时较长（${Math.round((duration! / 60) * 10) / 10}小时），排程引擎已自动将其拆分分段，并在截止前多天均衡规划，避免单日负荷过重！`;
-          }
-          if (isConcurrent) {
-            extraTip += `\n💡 提示：已设为双线程任务，允许与其它日程时间重叠并行。`;
-          }
-
-          const reply = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!) + extraTip;
+          const reply = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!);
           addDebugLog('Scheduler', 'success', `新待办规划排程成功: "${title}" (${sStr} ~ ${eStr})`);
           return { replyText: reply, diagnostics: { intent: parsed.intent, plan, task: merged } };
         } else {
@@ -948,8 +933,8 @@ export async function processWeChatMessage(
       }
     } else {
       return {
-        replyText: getHelpMessage(false),
-        diagnostics: { intent: 'help' }
+        replyText: '💡 未识别到具体日程或任务。可直接发送如“明天下午开会1小时”安排任务，或回复“帮助”查看指令。',
+        diagnostics: { intent: 'other' }
       };
     }
   } catch (err: any) {

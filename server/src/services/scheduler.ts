@@ -1154,8 +1154,8 @@ export function completeTaskPart(
   return {
     success: true,
     message: isAllCompleted
-      ? `🎉 恭喜！任务「${task.title}」已全部完成！`
-      : `✅ 已完成「${task.title}」本次专注节（消耗 ${minutesDeducted} 分钟），剩余 ${remaining} 分钟已自动扣减并重新自适应排程！`,
+      ? `✅ 任务「${task.title}」已完成`
+      : `✅ 已完成「${task.title}」（${minutesDeducted}分钟），剩余 ${remaining}分钟。`,
     remainingMinutes: remaining,
     isAllCompleted,
     task: updated,
