@@ -28,6 +28,8 @@ interface Task {
   deadline: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
+  is_fixed?: number;
+  is_concurrent?: number;
   status: 'pending_slot' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'delayed';
   notes: string | null;
   created_at: string;
@@ -519,6 +521,17 @@ export const TodoList: React.FC = () => {
                         >
                           {quad.badge}
                         </span>
+
+                        {Boolean(task.is_fixed) && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-900/60">
+                            📌 固定
+                          </span>
+                        )}
+                        {Boolean(task.is_concurrent) && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/60">
+                            ⚡ 双线程
+                          </span>
+                        )}
 
                         {/* Status badge */}
                         {task.status === 'in_progress' && (

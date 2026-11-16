@@ -344,6 +344,13 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
             badge = '已完成';
             badgeColor = '#10b981';
           } else {
+            if (t.is_fixed && t.is_concurrent) {
+              badge = '固定·双线程';
+            } else if (t.is_fixed) {
+              badge = '固定';
+            } else if (t.is_concurrent) {
+              badge = '双线程';
+            }
             const imp = (t.importance ?? 5) >= 5;
             const urg = (t.urgency ?? 5) >= 5;
             if (imp && urg) {
@@ -352,7 +359,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
               border = '#fecaca';
               timeColor = '#b91c1c';
               titleColor = '#7f1d1d';
-              badge = 'Do First';
+              if (!t.is_fixed && !t.is_concurrent) badge = 'Do First';
               badgeColor = '#ef4444';
             } else if (imp && !urg) {
               color = '#3b82f6';
@@ -360,7 +367,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
               border = '#bfdbfe';
               timeColor = '#1d4ed8';
               titleColor = '#1e3a8a';
-              badge = 'Schedule';
+              if (!t.is_fixed && !t.is_concurrent) badge = 'Schedule';
               badgeColor = '#3b82f6';
             } else if (!imp && urg) {
               color = '#f59e0b';
@@ -368,7 +375,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
               border = '#fde68a';
               timeColor = '#b45309';
               titleColor = '#78350f';
-              badge = 'Delegate';
+              if (!t.is_fixed && !t.is_concurrent) badge = 'Delegate';
               badgeColor = '#f59e0b';
             } else {
               color = '#9ca3af';
@@ -376,15 +383,21 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
               border = '#e5e7eb';
               timeColor = '#4b5563';
               titleColor = '#1f2937';
-              badge = 'Eliminate';
+              if (!t.is_fixed && !t.is_concurrent) badge = 'Eliminate';
               badgeColor = '#9ca3af';
             }
+          }
+
+          let attrPrefix = '';
+          if (!isCompleted) {
+            if (t.is_fixed) attrPrefix += '📌 ';
+            if (t.is_concurrent) attrPrefix += '⚡ ';
           }
 
           dayTimed.push({
             id: `task-${t.id}-${bIdx}-${isCompleted ? 'done' : 'active'}`,
             kind: 'task',
-            title: `${isCompleted ? '✓ ' : ''}${t.title}${partSuffix}`,
+            title: `${isCompleted ? '✓ ' : attrPrefix}${t.title}${partSuffix}`,
             start: range.start,
             end: range.end,
             isCompleted,

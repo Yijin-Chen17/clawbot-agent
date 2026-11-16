@@ -868,21 +868,34 @@ export async function processWeChatMessage(
         const originalDuration = duration || 60;
 
         if (isFixed && fixedStart && fixedEnd) {
+          const singleBlock = [{ start: fixedStart, end: fixedEnd, duration: duration! }];
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status
+              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, fixedStart, fixedEnd, 1, isConcurrent);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, fixedStart, fixedEnd, 1, isConcurrent, JSON.stringify(singleBlock));
 
           replanUserTasks(userId);
 
           const sStr = new Date(fixedStart).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(fixedEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
+          const reply = templates.scheduleSuccess({
+            title,
+            startStr: sStr,
+            endStr: eStr,
+            duration: duration!,
+            urgency: urgency!,
+            importance: importance!,
+            blocks: singleBlock,
+            isFixed: true,
+            isConcurrent: Boolean(isConcurrent),
+          });
+
           return {
-            replyText: `📌 固定任务「${title}」已排定：${sStr} ~ ${eStr}${isConcurrent ? ' (双线程)' : ''}`,
+            replyText: reply,
             diagnostics: { intent: parsed.intent, fixed: true, task: merged }
           };
         }
@@ -911,10 +924,34 @@ export async function processWeChatMessage(
           const actualStart = updatedTask?.scheduled_start || plan.scheduled_start;
           const actualEnd = updatedTask?.scheduled_end || plan.scheduled_end;
 
+          let parsedBlocks: any[] = [];
+          if (updatedTask?.schedule_blocks) {
+            try {
+              parsedBlocks = JSON.parse(updatedTask.schedule_blocks);
+            } catch {}
+          }
+          if (!Array.isArray(parsedBlocks) || parsedBlocks.length === 0) {
+            if (plan.schedule_blocks) {
+              try {
+                parsedBlocks = JSON.parse(plan.schedule_blocks);
+              } catch {}
+            }
+          }
+
           const sStr = new Date(actualStart).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(actualEnd).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-          const reply = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!);
+          const reply = templates.scheduleSuccess({
+            title,
+            startStr: sStr,
+            endStr: eStr,
+            duration: duration!,
+            urgency: urgency!,
+            importance: importance!,
+            blocks: parsedBlocks,
+            isFixed: Boolean(isFixed),
+            isConcurrent: Boolean(isConcurrent),
+          });
           addDebugLog('Scheduler', 'success', `新待办规划排程成功: "${title}" (${sStr} ~ ${eStr})`);
           return { replyText: reply, diagnostics: { intent: parsed.intent, plan, task: merged } };
         } else {

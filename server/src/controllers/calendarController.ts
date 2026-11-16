@@ -103,7 +103,8 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   const tasks = db.prepare(`
     SELECT
       id, title, scheduled_start as start, scheduled_end as end,
-      duration_minutes, urgency, importance, status, deadline, notes, schedule_blocks
+      duration_minutes, urgency, importance, status, deadline, notes, schedule_blocks,
+      is_fixed, is_concurrent
     FROM tasks
     WHERE user_id = ?
       AND scheduled_start IS NOT NULL
@@ -147,9 +148,12 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
 
       return blocks.map((block, bIdx) => {
         const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
+        let prefix = '';
+        if (t.is_fixed) prefix += '📌 ';
+        if (t.is_concurrent) prefix += '⚡ ';
         return {
           id: `task-${t.id}-${bIdx}`,
-          title: `📌 ${t.title}${partSuffix}`,
+          title: `${prefix}${t.title}${partSuffix}`,
           start: block.start,
           end: block.end,
           backgroundColor: color,
@@ -163,6 +167,10 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
             status: t.status,
             deadline: t.deadline,
             notes: t.notes,
+            is_fixed: t.is_fixed ? 1 : 0,
+            is_concurrent: t.is_concurrent ? 1 : 0,
+            isFixed: Boolean(t.is_fixed),
+            isConcurrent: Boolean(t.is_concurrent),
             strategyLabel: block.strategyLabel,
             energyZone: block.energyZone,
           },

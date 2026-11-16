@@ -314,6 +314,16 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
               >
                 {/* 第一行：任务标题 + 重叠提示 */}
                 <div className="flex items-center gap-1 min-w-0">
+                  {primaryTask.isFixed && (
+                    <span title="固定时间任务" className="text-[10px] shrink-0">
+                      📌
+                    </span>
+                  )}
+                  {primaryTask.isConcurrent && (
+                    <span title="双线程任务" className="text-[10px] shrink-0">
+                      ⚡
+                    </span>
+                  )}
                   <span className="truncate font-medium text-[10px] sm:text-[11px] leading-tight text-gray-900 dark:text-gray-100 flex-1">
                     {primaryTask.title}
                   </span>
@@ -425,10 +435,20 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                   className="pt-2 pb-2 px-3 rounded-2xl hover:bg-gray-50 dark:hover:bg-neutral-800/60 transition cursor-pointer flex items-center justify-between gap-3 group"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-semibold text-xs text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                         {task.title}
                       </span>
+                      {task.isFixed && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium border border-amber-200 dark:border-amber-800/40">
+                          📌 固定
+                        </span>
+                      )}
+                      {task.isConcurrent && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium border border-emerald-200 dark:border-emerald-800/40">
+                          ⚡ 双线程
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-1 flex items-center gap-2.5 text-[11px] text-gray-500 dark:text-neutral-400 flex-wrap">

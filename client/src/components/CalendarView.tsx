@@ -83,6 +83,8 @@ interface TaskItem {
   schedule_blocks?: string | null;
   status: string;
   notes: string | null;
+  is_fixed?: number;
+  is_concurrent?: number;
   updated_at?: string;
   created_at?: string;
 }
@@ -503,7 +505,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           if (range) {
             const quad = getTaskQuadrant(t.importance, t.urgency);
             const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-            const titlePrefix = isCompleted ? '✓ ' : '';
+            let titlePrefix = isCompleted ? '✓ ' : '';
+            if (!isCompleted) {
+              if (t.is_fixed) titlePrefix += '📌 ';
+              if (t.is_concurrent) titlePrefix += '⚡ ';
+            }
+
+            let qBadge = isCompleted ? '已完成' : quad.name;
+            if (!isCompleted) {
+              if (t.is_fixed && t.is_concurrent) qBadge = '固定·双线程';
+              else if (t.is_fixed) qBadge = '固定任务';
+              else if (t.is_concurrent) qBadge = '双线程';
+            }
 
             timedItems.push({
               kind: 'task',
@@ -514,7 +527,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
               allDay: false,
               color: isCompleted ? '#10B981' : quad.color,
               qClass: quad.key,
-              qName: isCompleted ? '已完成' : quad.name,
+              qName: qBadge,
               task: t,
             });
           }
@@ -1507,6 +1520,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                   <div className="text-[11px] text-gray-500 dark:text-neutral-400">
                     四象限分类: <span className="font-semibold text-gray-700 dark:text-neutral-200">{selectedItem.qName}</span>
                   </div>
+                  {(Boolean(selectedItem.task.is_fixed) || Boolean(selectedItem.task.is_concurrent)) && (
+                    <div className="flex gap-1.5 mt-1">
+                      {Boolean(selectedItem.task.is_fixed) && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                          📌 固定时间任务
+                        </span>
+                      )}
+                      {Boolean(selectedItem.task.is_concurrent) && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
+                          ⚡ 双线程任务
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {selectedItem.task.notes && (
                     <div className="mt-1 pt-1 border-t border-gray-200/80 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 text-[11px] whitespace-pre-wrap">
                       {selectedItem.task.notes}

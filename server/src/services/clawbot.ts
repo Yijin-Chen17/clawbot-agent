@@ -30,16 +30,52 @@ export const templates = {
   },
 
   /**
-   * 日程规划成功提醒 (精简直观，去除冗长提示与说教)
+   * 日程规划成功提醒 (精简直观，支持分段安排展示与双线程/固定时间任务标注)
    */
   scheduleSuccess: (
-    title: string,
-    startStr: string,
-    endStr: string,
-    duration: number,
-    urgency: number,
-    importance: number
+    titleOrParams: string | {
+      title: string;
+      startStr: string;
+      endStr: string;
+      duration: number;
+      urgency: number;
+      importance: number;
+      blocks?: { start: string; end: string; duration?: number; partIndex?: number; totalParts?: number }[];
+      isFixed?: boolean;
+      isConcurrent?: boolean;
+    },
+    legacyStartStr?: string,
+    legacyEndStr?: string,
+    legacyDuration?: number,
+    legacyUrgency?: number,
+    legacyImportance?: number
   ) => {
+    let p: {
+      title: string;
+      startStr: string;
+      endStr: string;
+      duration: number;
+      urgency: number;
+      importance: number;
+      blocks?: { start: string; end: string; duration?: number; partIndex?: number; totalParts?: number }[];
+      isFixed?: boolean;
+      isConcurrent?: boolean;
+    };
+
+    if (typeof titleOrParams === 'object') {
+      p = titleOrParams;
+    } else {
+      p = {
+        title: titleOrParams,
+        startStr: legacyStartStr || '',
+        endStr: legacyEndStr || '',
+        duration: legacyDuration || 60,
+        urgency: legacyUrgency || 5,
+        importance: legacyImportance || 5,
+      };
+    }
+
+    const { title, startStr, endStr, duration, urgency, importance, blocks, isFixed, isConcurrent } = p;
     const qName =
       importance >= 5
         ? urgency >= 5
@@ -49,11 +85,33 @@ export const templates = {
         ? 'Q3 紧急不重要'
         : 'Q4 不重要不紧急';
 
-    return (
-      `📅 已排定「${title}」\n` +
-      `• 时间：${startStr} ~ ${endStr} (${duration}分钟)\n` +
-      `• 象限：${qName}`
-    );
+    const parts: string[] = [`📅 已排定「${title}」`];
+
+    if (blocks && blocks.length > 1) {
+      parts.push(`• 总耗时：${duration}分钟 (分 ${blocks.length} 节)`);
+      parts.push(`• 分段安排：`);
+      blocks.forEach((b, idx) => {
+        const s = new Date(b.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const e = new Date(b.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const dur = b.duration || Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60000);
+        parts.push(`  ${idx + 1}. ${s} ~ ${e} (${dur}分钟)`);
+      });
+    } else {
+      parts.push(`• 时间：${startStr} ~ ${endStr} (${duration}分钟)`);
+    }
+
+    parts.push(`• 象限：${qName}`);
+
+    // 属性行：仅在为固定任务或双线程任务时显示，不是的话不用写出来
+    if (isFixed && isConcurrent) {
+      parts.push(`• 属性：固定时间任务 · 双线程`);
+    } else if (isFixed) {
+      parts.push(`• 属性：固定时间任务`);
+    } else if (isConcurrent) {
+      parts.push(`• 属性：双线程任务`);
+    }
+
+    return parts.join('\n');
   },
 
   /**

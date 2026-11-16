@@ -165,11 +165,20 @@ export function generateUserTodoIcal(userId: number, username: string): string {
 
     blocks.forEach((block, bIdx) => {
       const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-      const summary = `${statusIcon} ${t.title}${partSuffix}`;
+      let attrPrefix = '';
+      if (t.is_fixed) attrPrefix += '[固定] ';
+      if (t.is_concurrent) attrPrefix += '[双线程] ';
+      const summary = `${statusIcon} ${attrPrefix}${t.title}${partSuffix}`;
+
+      let typeDesc = '';
+      if (t.is_fixed && t.is_concurrent) typeDesc = '任务属性：固定时间任务 · 双线程任务';
+      else if (t.is_fixed) typeDesc = '任务属性：固定时间任务（锁定时间段）';
+      else if (t.is_concurrent) typeDesc = '任务属性：双线程任务（可与其他日程并行重叠）';
 
       const descLines = [
         `【Clawbot × oxoxox 智能排程】`,
         `待办事项：${t.title}`,
+        typeDesc,
         block.strategyLabel ? `排程策略：${block.strategyLabel}` : '',
         `任务状态：${isCompleted ? '已完成' : '待进行'}`,
         `预计耗时：${t.duration_minutes} 分钟`,
