@@ -554,6 +554,145 @@ export async function processWeChatMessage(
 
   // Check multi-turn conversation state
   const existingConv = db.prepare('SELECT * FROM conversation_states WHERE user_id = ?').get(userId) as ConversationState | undefined;
+
+  // 处理日程冲突顶替/调整确认会话
+  if (existingConv && existingConv.current_intent === 'confirm_schedule_swap' && existingConv.pending_task_json) {
+    let swapData: any = null;
+    try {
+      swapData = JSON.parse(existingConv.pending_task_json);
+    } catch {}
+
+    if (swapData && swapData.proposal && swapData.newTask) {
+      const trimmed = content.trim().toLowerCase();
+      const isConfirm = /^(确认|好的|好|是|是的|同意|改|修改|调整|同步修改|可以|行|行啊|没问题|ok|yes|y|准了|就这么办|调吧|改吧|换吧)$/i.test(trimmed) ||
+        trimmed.includes('确认修改') || trimmed.includes('同意修改') || trimmed.includes('确认调整') || trimmed.includes('同步修改') || trimmed.includes('同步调整') || trimmed.includes('可以改') || trimmed.includes('同意') || trimmed.includes('确认');
+
+      const isReject = /^(保持|不改|不要|不|否|不是|不用|算了|取消|维持原样|维持|原样|不调整|不用调|no|n|别改|别动)$/i.test(trimmed) ||
+        trimmed.includes('保持原样') || trimmed.includes('保持原日程') || trimmed.includes('不修改') || trimmed.includes('不调整') || trimmed.includes('不用改') || trimmed.includes('别改');
+
+      if (isConfirm) {
+        db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+        const { newTask, proposal } = swapData;
+        const prop = proposal;
+
+        // 1. 同步更新被顶替的任务
+        db.prepare(`
+          UPDATE tasks
+          SET scheduled_start = ?,
+              scheduled_end = ?,
+              schedule_blocks = ?,
+              is_fixed = 1,
+              status = 'scheduled',
+              updated_at = datetime('now', 'localtime')
+          WHERE id = ? AND user_id = ?
+        `).run(
+          prop.conflictTaskSchedule.start,
+          prop.conflictTaskSchedule.end,
+          prop.conflictTaskSchedule.blocks ? JSON.stringify(prop.conflictTaskSchedule.blocks) : null,
+          prop.conflictTask.id,
+          userId
+        );
+
+        // 2. 插入新任务并锁定
+        db.prepare(`
+          INSERT INTO tasks (
+            user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+            deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+            created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        `).run(
+          userId,
+          newTask.title,
+          newTask.duration,
+          newTask.originalDuration || newTask.duration,
+          newTask.urgency,
+          newTask.importance,
+          newTask.deadline || null,
+          prop.newTaskSchedule.start,
+          prop.newTaskSchedule.end,
+          newTask.isConcurrent ? 1 : 0,
+          prop.newTaskSchedule.blocks ? JSON.stringify(prop.newTaskSchedule.blocks) : null
+        );
+
+        const newS = new Date(prop.newTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const newE = new Date(prop.newTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const confS = new Date(prop.conflictTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+        const replyText =
+          `✅ 已为您同步调整日程并锁定：\n` +
+          `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
+          `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
+          `📌 一旦安排日历，事件均已固定锁定。`;
+
+        addDebugLog('Scheduler', 'success', `用户 #${userId} 确认同步修改日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
+        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied' } };
+      } else if (isReject) {
+        db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+        const { newTask } = swapData;
+
+        let replyText = '';
+        if (newTask.directPlan && newTask.directPlan.start && newTask.directPlan.end) {
+          db.prepare(`
+            INSERT INTO tasks (
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+              created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          `).run(
+            userId,
+            newTask.title,
+            newTask.duration,
+            newTask.originalDuration || newTask.duration,
+            newTask.urgency,
+            newTask.importance,
+            newTask.deadline || null,
+            newTask.directPlan.start,
+            newTask.directPlan.end,
+            newTask.isConcurrent ? 1 : 0,
+            newTask.directPlan.blocks || null
+          );
+
+          const dStart = new Date(newTask.directPlan.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          const dEnd = new Date(newTask.directPlan.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+          replyText =
+            `👌 已保持原日程不变。\n` +
+            `「${newTask.title}」已安排至其他可用空闲时段：${dStart} ~ ${dEnd}。`;
+        } else {
+          db.prepare(`
+            INSERT INTO tasks (
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              deadline, is_fixed, is_concurrent, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_slot', datetime('now', 'localtime'), datetime('now', 'localtime'))
+          `).run(
+            userId,
+            newTask.title,
+            newTask.duration,
+            newTask.originalDuration || newTask.duration,
+            newTask.urgency,
+            newTask.importance,
+            newTask.deadline || null,
+            newTask.isConcurrent ? 1 : 0
+          );
+
+          replyText =
+            `👌 已保持原日程不变。\n` +
+            `由于暂无合适空闲时段，「${newTask.title}」已放入待安排清单。`;
+        }
+
+        addDebugLog('Scheduler', 'info', `用户 #${userId} 拒绝调整，保持原日程: ${newTask.title}`);
+        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'kept' } };
+      } else {
+        // 用户输入了其他新指令，清除该待确认状态，向下继续由 LLM 语义识别新指令
+        db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+      }
+    }
+  }
+
   let pendingTask: any = null;
   if (existingConv && existingConv.pending_task_json) {
     try {
@@ -908,16 +1047,71 @@ export async function processWeChatMessage(
           deadline: deadline,
         });
 
+        // 如果触发了顶替或有效时间内无法完成的调整建议，提醒用户是否同步修改
+        if (plan.proposal) {
+          const prop = plan.proposal;
+          const conflictTitle = prop.conflictTask.title;
+
+          const oldS = new Date(prop.conflictTask.scheduled_start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          const oldE = new Date(prop.conflictTask.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+          const confNewS = new Date(prop.conflictTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          const confNewE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+          const newS = new Date(prop.newTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          const newE = new Date(prop.newTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+          db.prepare(`
+            INSERT INTO conversation_states (user_id, current_intent, pending_task_json, missing_fields, updated_at)
+            VALUES (?, 'confirm_schedule_swap', ?, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+              current_intent = 'confirm_schedule_swap',
+              pending_task_json = excluded.pending_task_json,
+              missing_fields = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          `).run(userId, JSON.stringify({
+            newTask: {
+              title,
+              duration: duration!,
+              originalDuration,
+              urgency: urgency!,
+              importance: importance!,
+              deadline,
+              isConcurrent: Boolean(isConcurrent),
+              directPlan: plan.success ? {
+                start: plan.scheduled_start,
+                end: plan.scheduled_end,
+                blocks: plan.schedule_blocks,
+              } : null,
+            },
+            proposal: prop,
+          }));
+
+          const replyText =
+            `📅【日程调整建议】\n` +
+            `新待办「${title}」${prop.reasonText}。\n` +
+            `该时段当前已安排「${conflictTitle}」（原定：${oldS} ~ ${oldE}）。\n\n` +
+            `💡 建议调整方案：\n` +
+            `• 为「${title}」排入：${newS} ~ ${newE}\n` +
+            `• 将「${conflictTitle}」同步修改至：${confNewS} ~ ${confNewE}\n\n` +
+            `是否确认同步修改「${conflictTitle}」到 ${confNewS} ~ ${confNewE}？\n` +
+            `👉 回复【确认】或【好】即可同步修改\n` +
+            `👉 回复【保持】或【不改】则保持原日程不变`;
+
+          addDebugLog('Scheduler', 'info', `为用户 #${userId} 提供日程调整/顶替建议: ${title} 顶替 ${conflictTitle}`);
+          return { replyText, diagnostics: { intent: parsed.intent, proposal: prop, task: merged } };
+        }
+
         if (plan.success && plan.scheduled_start && plan.scheduled_end) {
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
               deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isFixed, isConcurrent, plan.schedule_blocks || null);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?)
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isConcurrent, plan.schedule_blocks || null);
 
-          // Dynamically optimize and adjust all tasks according to urgency & deadlines
+          // Dynamically optimize and adjust other pending tasks
           replanUserTasks(userId);
 
           const updatedTask = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND title = ? ORDER BY id DESC LIMIT 1').get(userId, title) as Task;
@@ -949,7 +1143,7 @@ export async function processWeChatMessage(
             urgency: urgency!,
             importance: importance!,
             blocks: parsedBlocks,
-            isFixed: Boolean(isFixed),
+            isFixed: true,
             isConcurrent: Boolean(isConcurrent),
           });
           addDebugLog('Scheduler', 'success', `新待办规划排程成功: "${title}" (${sStr} ~ ${eStr})`);
@@ -960,8 +1154,8 @@ export async function processWeChatMessage(
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
               deadline, is_fixed, is_concurrent, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_slot')
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, isFixed, isConcurrent);
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_slot')
+          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, isConcurrent);
 
           const reply = templates.scheduleFailed(title, duration!, plan.message);
           addDebugLog('Scheduler', 'warn', `新待办规划未找到合适时隙，置为待安排: "${title}" (${plan.message})`);

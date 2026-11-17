@@ -52,10 +52,13 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   let finalEnd: string | null = scheduled_end || null;
   let status = 'pending_slot';
   let scheduleMsg = '';
+  let scheduleBlocks: string | null = null;
+  let proposal: any = null;
 
   if (is_fixed && finalStart && finalEnd) {
     status = 'scheduled';
     scheduleMsg = '固定任务已创建并锁定时间段！';
+    scheduleBlocks = JSON.stringify([{ start: finalStart, end: finalEnd, duration: Number(duration_minutes) }]);
   } else if (auto_schedule) {
     const plan = scheduleTask(userId, {
       title,
@@ -65,11 +68,16 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       deadline: deadline || null,
     });
 
+    if (plan.proposal) {
+      proposal = plan.proposal;
+    }
+
     if (plan.success && plan.scheduled_start && plan.scheduled_end) {
       finalStart = plan.scheduled_start;
       finalEnd = plan.scheduled_end;
+      scheduleBlocks = plan.schedule_blocks || null;
       status = 'scheduled';
-      scheduleMsg = '任务已成功自动排程！';
+      scheduleMsg = '任务已成功自动排程入日历并锁定！';
     } else {
       scheduleMsg = plan.message || '未找到合适时间槽，待手动调整。';
     }
@@ -78,9 +86,9 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   const result = db.prepare(`
     INSERT INTO tasks (
       user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-      deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, notes
+      deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
@@ -91,9 +99,10 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     deadline || null,
     finalStart,
     finalEnd,
-    is_fixed ? 1 : 0,
+    status === 'scheduled' ? 1 : (is_fixed ? 1 : 0),
     is_concurrent ? 1 : 0,
     status,
+    scheduleBlocks,
     notes || null
   );
 
@@ -104,6 +113,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   res.status(201).json({
     message: scheduleMsg || '任务已创建并已智能排程入日历',
     task: newTask,
+    proposal,
   });
 }
 
@@ -201,13 +211,117 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  const replanRes = replanUserTasks(userId);
+  // 解除该任务的原有时间占用，以便为它寻找新时隙
+  db.prepare(`
+    UPDATE tasks
+    SET scheduled_start = NULL, scheduled_end = NULL, schedule_blocks = NULL, is_fixed = 0, status = 'pending_slot'
+    WHERE id = ?
+  `).run(id);
+
+  const plan = scheduleTask(userId, {
+    id: task.id,
+    title: task.title,
+    duration_minutes: task.duration_minutes,
+    urgency: task.urgency,
+    importance: task.importance,
+    deadline: task.deadline,
+  });
+
+  if (plan.success && plan.scheduled_start && plan.scheduled_end) {
+    db.prepare(`
+      UPDATE tasks
+      SET scheduled_start = ?,
+          scheduled_end = ?,
+          schedule_blocks = ?,
+          is_fixed = 1,
+          status = 'scheduled',
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, id);
+  }
+
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task;
 
   res.json({
-    message: updated.scheduled_start ? '任务已完成自适应重新排程并同步至日历' : '排程失败，暂无合适空闲时段',
+    message: updated.scheduled_start ? '任务已完成自适应重新排程并同步锁定至日历' : '排程失败，暂无合适空闲时段',
     task: updated,
-    summary: replanRes.summary,
+    proposal: plan.proposal,
+  });
+}
+
+export function applyProposal(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const { proposal, newTask } = req.body;
+  if (!proposal || !proposal.conflictTask || !proposal.newTaskSchedule || !proposal.conflictTaskSchedule) {
+    res.status(400).json({ error: '调整建议数据不完整' });
+    return;
+  }
+
+  // 1. 同步调整 conflictTask
+  db.prepare(`
+    UPDATE tasks
+    SET scheduled_start = ?,
+        scheduled_end = ?,
+        schedule_blocks = ?,
+        is_fixed = 1,
+        status = 'scheduled',
+        updated_at = datetime('now', 'localtime')
+    WHERE id = ? AND user_id = ?
+  `).run(
+    proposal.conflictTaskSchedule.start,
+    proposal.conflictTaskSchedule.end,
+    proposal.conflictTaskSchedule.blocks ? JSON.stringify(proposal.conflictTaskSchedule.blocks) : null,
+    proposal.conflictTask.id,
+    userId
+  );
+
+  // 2. 插入或更新 newTask
+  let taskId = newTask?.id;
+  if (taskId) {
+    db.prepare(`
+      UPDATE tasks
+      SET scheduled_start = ?,
+          scheduled_end = ?,
+          schedule_blocks = ?,
+          is_fixed = 1,
+          status = 'scheduled',
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ? AND user_id = ?
+    `).run(
+      proposal.newTaskSchedule.start,
+      proposal.newTaskSchedule.end,
+      proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null,
+      taskId,
+      userId
+    );
+  } else if (newTask) {
+    const resInsert = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+        deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+    `).run(
+      userId,
+      newTask.title,
+      Number(newTask.duration_minutes || 60),
+      Number(newTask.duration_minutes || 60),
+      Number(newTask.urgency || 3),
+      Number(newTask.importance || 3),
+      newTask.deadline || null,
+      proposal.newTaskSchedule.start,
+      proposal.newTaskSchedule.end,
+      newTask.is_concurrent ? 1 : 0,
+      proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null
+    );
+    taskId = resInsert.lastInsertRowid;
+  }
+
+  res.json({
+    success: true,
+    message: `已同步调整「${proposal.conflictTask.title}」并锁定新日程`,
+    taskId,
   });
 }
 

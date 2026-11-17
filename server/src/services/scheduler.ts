@@ -57,12 +57,38 @@ export interface ScheduleOptions {
   rolloverTaskIds?: Set<number>;
 }
 
+export interface ScheduleProposal {
+  type: 'deadline_risk' | 'priority_gain';
+  conflictTask: {
+    id: number;
+    title: string;
+    scheduled_start: string;
+    scheduled_end: string;
+    duration_minutes: number;
+    urgency: number;
+    importance: number;
+    deadline?: string | null;
+  };
+  reasonText: string;
+  newTaskSchedule: {
+    start: string;
+    end: string;
+    blocks?: any[];
+  };
+  conflictTaskSchedule: {
+    start: string;
+    end: string;
+    blocks?: any[];
+  };
+}
+
 export interface SchedulingResult {
   success: boolean;
   scheduled_start?: string; // ISO
   scheduled_end?: string;   // ISO
   schedule_blocks?: string; // JSON
   message: string;
+  proposal?: ScheduleProposal;
 }
 
 /**
@@ -799,13 +825,21 @@ export function replanUserTasks(userId: number): {
     isAllDay: Boolean(e.is_all_day),
   }));
 
-  // 1. 固定任务处理 (is_fixed = 1)：时间固定，不参与自动重排，其他任务自动避让
-  const fixedTasks = activeTasks.filter(t => t.is_fixed === 1 && t.scheduled_start && t.scheduled_end);
-  const nonFixedTasks = activeTasks.filter(t => t.is_fixed !== 1);
+  // 1. 固定任务处理：一旦安排日历，就不再做更改（该项事件固定）
+  // 任何已排入日历（有 scheduled_start && scheduled_end）或显式 is_fixed=1 的任务均视为固定日程，其他待办自动避让
+  const fixedTasks = activeTasks.filter(t => (t.is_fixed === 1 || (t.scheduled_start && t.scheduled_end)));
+  const nonFixedTasks = activeTasks.filter(t => !(t.is_fixed === 1 || (t.scheduled_start && t.scheduled_end)));
 
   const taskAllocations = new Map<number, ScheduledTaskBlock[]>();
 
   for (const ft of fixedTasks) {
+    let existingBlocks: any[] = [];
+    if (ft.schedule_blocks) {
+      try {
+        existingBlocks = JSON.parse(ft.schedule_blocks);
+      } catch {}
+    }
+
     parsedFixedEvents.push({
       id: `fixed-task-${ft.id}`,
       title: `[固定] ${ft.title}`,
@@ -813,18 +847,39 @@ export function replanUserTasks(userId: number): {
       end: new Date(ft.scheduled_end!),
       isAllDay: false,
     });
-    taskAllocations.set(ft.id, [{
-      id: `sched-fixed-${ft.id}`,
-      taskId: ft.id,
-      title: ft.title,
-      start: new Date(ft.scheduled_start!),
-      end: new Date(ft.scheduled_end!),
-      durationMinutes: ft.duration_minutes,
-      isSplit: false,
-      quadrant: 'q1',
-      importance: ft.importance,
-      urgency: ft.urgency,
-    }]);
+
+    if (Array.isArray(existingBlocks) && existingBlocks.length > 0) {
+      taskAllocations.set(ft.id, existingBlocks.map((b, idx) => ({
+        id: `sched-fixed-${ft.id}-${idx}`,
+        taskId: ft.id,
+        title: ft.title,
+        start: new Date(b.start),
+        end: new Date(b.end),
+        durationMinutes: b.duration || Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60000),
+        isSplit: existingBlocks.length > 1,
+        partIndex: b.partIndex || idx + 1,
+        totalParts: b.totalParts || existingBlocks.length,
+        quadrant: 'q1',
+        importance: ft.importance,
+        urgency: ft.urgency,
+        energyZone: b.energyZone,
+        strategyLabel: b.strategyLabel,
+        breakAfterMinutes: b.breakAfterMinutes,
+      })));
+    } else {
+      taskAllocations.set(ft.id, [{
+        id: `sched-fixed-${ft.id}`,
+        taskId: ft.id,
+        title: ft.title,
+        start: new Date(ft.scheduled_start!),
+        end: new Date(ft.scheduled_end!),
+        durationMinutes: ft.duration_minutes,
+        isSplit: false,
+        quadrant: 'q1',
+        importance: ft.importance,
+        urgency: ft.urgency,
+      }]);
+    }
   }
 
   // 对齐当前时间至 5 分钟刻度下界
@@ -920,6 +975,7 @@ export function replanUserTasks(userId: number): {
         SET scheduled_start = ?,
             scheduled_end = ?,
             schedule_blocks = ?,
+            is_fixed = 1,
             status = 'scheduled',
             updated_at = datetime('now', 'localtime')
         WHERE id = ?
@@ -928,6 +984,7 @@ export function replanUserTasks(userId: number): {
       t.scheduled_start = firstStart;
       t.scheduled_end = lastEnd;
       t.schedule_blocks = JSON.stringify(blockPayload);
+      t.is_fixed = 1;
       t.status = 'scheduled';
       scheduledCount++;
     } else {
@@ -966,9 +1023,9 @@ export function replanUserTasks(userId: number): {
 }
 
 /**
- * 针对单任务执行智能规划排程（基于 oxoxox 算法）
+ * 在未来 14 天时间窗口内模拟单任务排程
  */
-export function scheduleTask(
+function simulateTaskInHorizon(
   userId: number,
   task: {
     id?: number;
@@ -977,29 +1034,18 @@ export function scheduleTask(
     urgency: number;
     importance: number;
     deadline?: string | null;
-  }
-): SchedulingResult {
-  // 若任务已在库中，直接触发全局自适应重排保证无缝对齐
-  if (task.id) {
-    const res = replanUserTasks(userId);
-    const updated = res.tasks.find(t => t.id === task.id);
-    if (updated && updated.scheduled_start && updated.scheduled_end) {
-      return {
-        success: true,
-        scheduled_start: updated.scheduled_start,
-        scheduled_end: updated.scheduled_end,
-        schedule_blocks: updated.schedule_blocks || undefined,
-        message: '排程计算成功并已排入日历',
-      };
-    }
-  }
-
-  // 临时任务模拟排程（例如创建前预排）
-  const activeTasks = db.prepare(`
-    SELECT * FROM tasks
-    WHERE user_id = ? AND status IN ('scheduled', 'pending', 'pending_slot', 'in_progress')
-  `).all(userId) as Task[];
-
+  },
+  fixedEvents: { id: string; title: string; start: Date; end: Date; isAllDay: boolean }[],
+  settings?: UserSettings
+): {
+  success: boolean;
+  scheduled_start?: string;
+  scheduled_end?: string;
+  schedule_blocks?: string;
+  accumulatedBlocks: ScheduledTaskBlock[];
+  message: string;
+} {
+  const now = new Date();
   const simTask: Task = {
     id: task.id || -999,
     user_id: userId,
@@ -1013,28 +1059,32 @@ export function scheduleTask(
     status: 'scheduled',
     start_reminder_sent: 0,
     end_reminder_sent: 0,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: now.toISOString(),
+    updated_at: now.toISOString(),
   };
 
-  const simTasks = [simTask, ...activeTasks];
+  let workStartHour = 8.0;
+  let workEndHour = 22.0;
 
-  const now = new Date();
-  const rawExternalEvents = db.prepare(`
-    SELECT id, title, start_time, end_time, is_all_day
-    FROM external_events
-    WHERE user_id = ? AND end_time >= ?
-    ORDER BY start_time ASC
-  `).all(userId, now.toISOString()) as any[];
+  if (settings && settings.work_slots) {
+    try {
+      const parsedSlots: WorkSlot[] = JSON.parse(settings.work_slots);
+      if (Array.isArray(parsedSlots) && parsedSlots.length > 0) {
+        const starts = parsedSlots.map(s => {
+          const [h, m] = s.start.split(':').map(Number);
+          return h + (m || 0) / 60;
+        });
+        const ends = parsedSlots.map(s => {
+          const [h, m] = s.end.split(':').map(Number);
+          return h === 0 || h === 24 ? 24 : h + (m || 0) / 60;
+        });
+        workStartHour = Math.min(...starts);
+        workEndHour = Math.max(...ends);
+      }
+    } catch {}
+  }
 
-  const parsedFixedEvents = rawExternalEvents.map(e => ({
-    id: String(e.id),
-    title: e.title,
-    start: new Date(e.start_time),
-    end: new Date(e.end_time),
-    isAllDay: Boolean(e.is_all_day),
-  }));
-
+  const bufferMinutes = settings?.task_buffer_minutes ?? 10;
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
   const accumulatedBlocks: ScheduledTaskBlock[] = [];
   let remainingMinutesToSim = task.duration_minutes;
@@ -1046,11 +1096,11 @@ export function scheduleTask(
 
     simTask.duration_minutes = remainingMinutesToSim;
 
-    const dayResult = runSingleDaySchedule(simTasks, parsedFixedEvents, {
+    const dayResult = runSingleDaySchedule([simTask], fixedEvents, {
       targetDate,
-      workStartHour: 8.0,
-      workEndHour: 22.0,
-      bufferMinutes: 10,
+      workStartHour,
+      workEndHour,
+      bufferMinutes,
       taskRestMinutes: 10,
       maxContinuousMinutes: 60,
       maxDailyTaskMinutes: 330,
@@ -1066,7 +1116,7 @@ export function scheduleTask(
     }
   }
 
-  if (accumulatedBlocks.length > 0) {
+  if (accumulatedBlocks.length > 0 && remainingMinutesToSim <= 0) {
     const sorted = [...accumulatedBlocks].sort((a, b) => a.start.getTime() - b.start.getTime());
     const sStart = sorted[0].start.toISOString();
     const sEnd = sorted[sorted.length - 1].end.toISOString();
@@ -1087,6 +1137,7 @@ export function scheduleTask(
       scheduled_start: sStart,
       scheduled_end: sEnd,
       schedule_blocks: JSON.stringify(blockPayload),
+      accumulatedBlocks,
       message: '排程计算成功',
     };
   }
@@ -1094,7 +1145,248 @@ export function scheduleTask(
   return {
     success: false,
     message: '在未来14天的工作时间与空闲槽范围内，未找到合适的时间段。',
+    accumulatedBlocks: [],
   };
+}
+
+/**
+ * 针对单任务执行智能规划排程（基于 oxoxox 算法）
+ * 规则：
+ * 1. 一旦安排日历，就不再做更改（该项事件固定）
+ * 2. 如果新日历把这个时间顶替会有较大收益，或者新日历无法在有效时间内完成的话，给出同步修改建议
+ */
+export function scheduleTask(
+  userId: number,
+  task: {
+    id?: number;
+    title: string;
+    duration_minutes: number;
+    urgency: number;
+    importance: number;
+    deadline?: string | null;
+  }
+): SchedulingResult {
+  const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
+  const now = new Date();
+
+  // 1. 获取外部日历固定日程
+  const horizonEnd = new Date(now.getTime() + 14 * 86400000);
+  const rawExternalEvents = db.prepare(`
+    SELECT id, title, start_time, end_time, is_all_day
+    FROM external_events
+    WHERE user_id = ? AND end_time >= ? AND start_time <= ?
+    ORDER BY start_time ASC
+  `).all(userId, now.toISOString(), horizonEnd.toISOString()) as any[];
+
+  const parsedFixedEvents: { id: string; title: string; start: Date; end: Date; isAllDay: boolean }[] = rawExternalEvents.map(e => ({
+    id: String(e.id),
+    title: e.title,
+    start: new Date(e.start_time),
+    end: new Date(e.end_time),
+    isAllDay: Boolean(e.is_all_day),
+  }));
+
+  // 2. 核心原则：一旦安排日历，就不再做更改（该项事件固定）
+  // 查询用户所有已安排在日历中的任务（排除当前正在重排的任务自身，若有）
+  const existingScheduledTasks = db.prepare(`
+    SELECT * FROM tasks
+    WHERE user_id = ?
+      AND status IN ('scheduled', 'in_progress')
+      AND scheduled_start IS NOT NULL
+      AND scheduled_end IS NOT NULL
+      AND (? IS NULL OR id != ?)
+    ORDER BY scheduled_start ASC
+  `).all(userId, task.id || null, task.id || null) as Task[];
+
+  // 将所有已排程的待办事项加入固定日历事件集合
+  const baseFixedEvents = [...parsedFixedEvents];
+  for (const et of existingScheduledTasks) {
+    baseFixedEvents.push({
+      id: `task-${et.id}`,
+      title: `[已排] ${et.title}`,
+      start: new Date(et.scheduled_start!),
+      end: new Date(et.scheduled_end!),
+      isAllDay: false,
+    });
+  }
+
+  // 3. 首先尝试在完全不改动已有日程的前提下，在空闲时段排入
+  const directPlan = simulateTaskInHorizon(userId, task, baseFixedEvents, settings);
+
+  // 4. 检查是否触发顶替/调整提醒逻辑：
+  // 条件一：新日历无法在有效时间内完成（排程失败，或安排的结束时间晚于截止时间 deadline）
+  // 条件二：新日历把这个时间顶替会有较大收益（新待办紧迫/重要度显著高于某个既有任务，且顶替能大幅提前）
+  let cannotFinishInTime = false;
+  if (!directPlan.success) {
+    cannotFinishInTime = true;
+  } else if (task.deadline) {
+    const deadlineTime = new Date(task.deadline).getTime();
+    const directEndTime = new Date(directPlan.scheduled_end!).getTime();
+    if (directEndTime > deadlineTime) {
+      cannotFinishInTime = true;
+    }
+  }
+
+  const newTaskScore = computeTaskPriorityScore(task, now);
+
+  // 候选可被顶替/调整的任务（未来的且尚未结束的任务）
+  const futureCandidates = existingScheduledTasks.filter(t => {
+    const endTime = new Date(t.scheduled_end!).getTime();
+    return endTime > now.getTime();
+  });
+
+  interface ViableProposal {
+    candidate: Task;
+    simNew: ReturnType<typeof simulateTaskInHorizon>;
+    simCandidate: ReturnType<typeof simulateTaskInHorizon>;
+    scoreDiff: number;
+    timeSavedMinutes: number;
+  }
+
+  const viableProposals: ViableProposal[] = [];
+
+  for (const candidate of futureCandidates) {
+    const candidateScore = computeTaskPriorityScore(candidate, now);
+    const candidateStartTime = new Date(candidate.scheduled_start!).getTime();
+
+    let isCandidateEligible = false;
+
+    if (cannotFinishInTime) {
+      // 无法在截止期前完成：只要该任务在截止期之前开始，就作为救急顶替候选
+      if (!task.deadline || candidateStartTime < new Date(task.deadline).getTime()) {
+        isCandidateEligible = true;
+      }
+    } else if (directPlan.scheduled_start) {
+      // 能完成，但检查顶替是否有“较大收益”
+      const directStartTime = new Date(directPlan.scheduled_start).getTime();
+      // 候选任务排在更早的时间段（至少早 45 分钟）
+      const isEarlier = candidateStartTime < (directStartTime - 45 * 60 * 1000);
+      // 收益指标：新任务得分大幅领先，或紧迫度领先 >= 2.5，或新任务为高优先 Q1 而候选任务为普通任务
+      const scoreDiff = newTaskScore - candidateScore;
+      const urgDiff = (task.urgency || 0) - (candidate.urgency || 0);
+      const isSignificantGain = scoreDiff >= 12 || urgDiff >= 2.5 || ((task.importance || 0) >= 7 && (task.urgency || 0) >= 7 && (candidate.urgency || 0) < 6);
+
+      if (isEarlier && isSignificantGain) {
+        isCandidateEligible = true;
+      }
+    }
+
+    if (!isCandidateEligible) continue;
+
+    // 模拟测试顶替：
+    // a. 临时将 candidate 从固定事件中移出
+    const testFixedWithoutCandidate = baseFixedEvents.filter(ev => ev.id !== `task-${candidate.id}`);
+
+    // b. 尝试为新任务排程
+    const simNew = simulateTaskInHorizon(userId, task, testFixedWithoutCandidate, settings);
+    if (!simNew.success || !simNew.scheduled_start || !simNew.scheduled_end) continue;
+
+    // 若新任务有截止期，新计划必须能在截止期前完成
+    if (task.deadline && new Date(simNew.scheduled_end).getTime() > new Date(task.deadline).getTime()) {
+      continue;
+    }
+
+    // 若原本不是救急，新计划必须比 directPlan 显著提前才叫“有较大收益”
+    if (!cannotFinishInTime && directPlan.scheduled_start) {
+      if (new Date(simNew.scheduled_start).getTime() >= new Date(directPlan.scheduled_start).getTime()) {
+        continue;
+      }
+    }
+
+    // c. 尝试将 candidate 顺延同步调整至其他可用空闲时段
+    const testFixedWithNewTask = [
+      ...testFixedWithoutCandidate,
+      {
+        id: 'sim-new-task',
+        title: task.title,
+        start: new Date(simNew.scheduled_start),
+        end: new Date(simNew.scheduled_end),
+        isAllDay: false,
+      },
+    ];
+
+    const simCandidate = simulateTaskInHorizon(userId, candidate, testFixedWithNewTask, settings);
+    if (!simCandidate.success || !simCandidate.scheduled_start || !simCandidate.scheduled_end) {
+      // 候选任务无处可移，不能强制顶替（避免损坏已有任务的有效执行）
+      continue;
+    }
+
+    // 检查 candidate 自身是否有截止期，若有，调整后的时间不能超过其自身截止期
+    if (candidate.deadline && new Date(simCandidate.scheduled_end).getTime() > new Date(candidate.deadline).getTime()) {
+      continue;
+    }
+
+    const timeSavedMinutes = directPlan.scheduled_start
+      ? Math.round((new Date(directPlan.scheduled_start).getTime() - new Date(simNew.scheduled_start).getTime()) / 60000)
+      : 120;
+
+    viableProposals.push({
+      candidate,
+      simNew,
+      simCandidate,
+      scoreDiff: newTaskScore - candidateScore,
+      timeSavedMinutes,
+    });
+  }
+
+  let bestProposal: ScheduleProposal | undefined;
+
+  if (viableProposals.length > 0) {
+    // 综合择优：
+    // 如果是无法按期完成，优先选能让新任务最早完成的候选；
+    // 如果是有较大收益，优先选得分差最大、提前时间最多的候选。
+    viableProposals.sort((a, b) => {
+      if (cannotFinishInTime) {
+        return new Date(a.simNew.scheduled_end!).getTime() - new Date(b.simNew.scheduled_end!).getTime();
+      }
+      return (b.scoreDiff * 2 + b.timeSavedMinutes / 10) - (a.scoreDiff * 2 + a.timeSavedMinutes / 10);
+    });
+
+    const best = viableProposals[0];
+    const reasonText = cannotFinishInTime
+      ? (task.deadline
+          ? `截止时间紧迫（${new Date(task.deadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}），原日程无充足空闲时段按时完成`
+          : '原日程无充足空闲时段在有效时间内完成')
+      : `重要紧迫度更高（优先级评分 ${Math.round(newTaskScore)} vs ${Math.round(computeTaskPriorityScore(best.candidate, now))}），顶替排入黄金时段可大幅提升推进效率`;
+
+    bestProposal = {
+      type: cannotFinishInTime ? 'deadline_risk' : 'priority_gain',
+      conflictTask: {
+        id: best.candidate.id,
+        title: best.candidate.title,
+        scheduled_start: best.candidate.scheduled_start!,
+        scheduled_end: best.candidate.scheduled_end!,
+        duration_minutes: best.candidate.duration_minutes,
+        urgency: best.candidate.urgency,
+        importance: best.candidate.importance,
+        deadline: best.candidate.deadline,
+      },
+      reasonText,
+      newTaskSchedule: {
+        start: best.simNew.scheduled_start!,
+        end: best.simNew.scheduled_end!,
+        blocks: best.simNew.schedule_blocks ? JSON.parse(best.simNew.schedule_blocks) : [],
+      },
+      conflictTaskSchedule: {
+        start: best.simCandidate.scheduled_start!,
+        end: best.simCandidate.scheduled_end!,
+        blocks: best.simCandidate.schedule_blocks ? JSON.parse(best.simCandidate.schedule_blocks) : [],
+      },
+    };
+  }
+
+  if (bestProposal) {
+    return {
+      success: directPlan.success,
+      scheduled_start: directPlan.scheduled_start,
+      scheduled_end: directPlan.scheduled_end,
+      schedule_blocks: directPlan.schedule_blocks,
+      message: directPlan.success ? '排程计算成功，但有更优调整建议' : '按原日程无法在有效时间内完成，已生成同步调整建议',
+      proposal: bestProposal,
+    };
+  }
+
+  return directPlan;
 }
 
 /**
