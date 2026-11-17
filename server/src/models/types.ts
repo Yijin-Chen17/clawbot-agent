@@ -100,6 +100,7 @@ export interface ConversationState {
 }
 
 export interface LLMExtractionResult {
+  swap_decision?: 'confirm' | 'reject' | 'other' | null; // 日程调整多轮确认时的判断结果
   intent: 'create_task' | 'status_update' | 'query_schedule' | 'delete_item' | 'modify_item' | 'other';
   title?: string | null;
   description?: string | null;

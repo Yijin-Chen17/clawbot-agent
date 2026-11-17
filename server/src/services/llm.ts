@@ -12,6 +12,7 @@ const SYSTEM_PROMPT = `你是一个智能日程与任务提取助手。
 
 JSON 格式规范：
 {
+  "swap_decision": "confirm" | "reject" | "other" | null, // 当包含[日程调整待确认信息]时：确认/同意/调整为"confirm"；保持/不改/取消为"reject"；发送其它全新指令为"other"；无该上下文时为 null
   "intent": "create_task" | "status_update" | "query_schedule" | "delete_item" | "modify_item" | "other",
   "title": string | null,               // 任务名称/事件标题
   "description": string | null,         // 任务背景描述、备注或详情
@@ -72,7 +73,12 @@ JSON 格式规范：
 6. 其他/闲聊 (other):
    - 无关内容 -> intent: "other"
 7. 上下文补齐：
-   - 若用户消息中包含[待补齐任务信息]，说明用户正在回答上一轮补齐问题，请将新消息内容与该上下文合并输出。`;
+   - 若用户消息中包含[待补齐任务信息]，说明用户正在回答上一轮补齐问题，请将新消息内容与该上下文合并输出。
+8. 日程调整多轮确认场景：
+   当用户消息中包含 [日程调整待确认信息] 时：
+   - 用户确认：如表达“确认”、“好的”、“同意”、“改吧”、“调整”、“可以”、“行”、“没问题”、“调到晚上”等 -> swap_decision: "confirm"
+   - 用户拒绝/保持：如表达“保持”、“不改”、“否”、“不用了”、“取消”、“维持原样”、“别动原来的”等 -> swap_decision: "reject"
+   - 用户发送其它指令：如“帮我安排明天下午2点开会”、“查看明天日程”、“把开会删掉”等 -> swap_decision: "other"，并且必须同时完整结构化提取该新指令对应的 intent ("create_task" | "query_schedule" | "delete_item" 等) 及相关字段，确保系统可直接无缝流转执行新请求！`;
 
 export async function parseUserMessageWithLLM(
   message: string,
@@ -108,7 +114,14 @@ export async function parseUserMessageWithLLM(
   // 动态变量全部在用户消息中传递，保证系统提示词（messages[0]）前缀绝对一致以最大化 Context Caching 命中
   let userContent = `[参考当前时间: ${currentLocalTimeStr}]`;
   if (pendingContext && typeof pendingContext === 'object' && Object.keys(pendingContext).length > 0) {
-    userContent += `\n[待补齐任务信息: ${JSON.stringify(pendingContext)}]`;
+    if (pendingContext.proposal) {
+      const prop = pendingContext.proposal;
+      const conflictTitle = prop.conflictTask?.title || '已有任务';
+      const newTitle = pendingContext.newTask?.title || '新待办';
+      userContent += `\n[日程调整待确认信息: 正在向用户询问是否同意将已排任务「${conflictTitle}」同步修改至新时间，以安排新任务「${newTitle}」]`;
+    } else {
+      userContent += `\n[待补齐任务信息: ${JSON.stringify(pendingContext)}]`;
+    }
   }
   userContent += `\n[用户输入]: ${message}`;
 

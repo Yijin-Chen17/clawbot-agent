@@ -554,25 +554,168 @@ export async function processWeChatMessage(
 
   // Check multi-turn conversation state
   const existingConv = db.prepare('SELECT * FROM conversation_states WHERE user_id = ?').get(userId) as ConversationState | undefined;
+  let pendingTask: any = null;
+  let pendingSwapData: any = null;
 
-  // 处理日程冲突顶替/调整确认会话
-  if (existingConv && existingConv.current_intent === 'confirm_schedule_swap' && existingConv.pending_task_json) {
-    let swapData: any = null;
+  if (existingConv && existingConv.pending_task_json) {
     try {
-      swapData = JSON.parse(existingConv.pending_task_json);
-    } catch {}
+      if (existingConv.current_intent === 'confirm_schedule_swap') {
+        pendingSwapData = JSON.parse(existingConv.pending_task_json);
+      } else {
+        pendingTask = JSON.parse(existingConv.pending_task_json);
+      }
+    } catch {
+      pendingTask = null;
+      pendingSwapData = null;
+    }
+  }
 
-    if (swapData && swapData.proposal && swapData.newTask) {
-      const trimmed = content.trim().toLowerCase();
-      const isConfirm = /^(确认|好的|好|是|是的|同意|改|修改|调整|同步修改|可以|行|行啊|没问题|ok|yes|y|准了|就这么办|调吧|改吧|换吧)$/i.test(trimmed) ||
-        trimmed.includes('确认修改') || trimmed.includes('同意修改') || trimmed.includes('确认调整') || trimmed.includes('同步修改') || trimmed.includes('同步调整') || trimmed.includes('可以改') || trimmed.includes('同意') || trimmed.includes('确认');
+  // 快捷极速识别（纯单字/极短无歧义词优先快速通道）
+  const lowerTrimmed = trimmed.toLowerCase();
+  const fastConfirm = /^(确认|好的|好|是|是的|同意|改|修改|调整|同步修改|可以|行|行啊|没问题|ok|yes|y)$/i.test(lowerTrimmed);
+  const fastReject = /^(保持|不改|不要|不|否|不是|不用|算了|取消|维持原样|维持|原样|不调整|不用调|no|n)$/i.test(lowerTrimmed);
 
-      const isReject = /^(保持|不改|不要|不|否|不是|不用|算了|取消|维持原样|维持|原样|不调整|不用调|no|n|别改|别动)$/i.test(trimmed) ||
-        trimmed.includes('保持原样') || trimmed.includes('保持原日程') || trimmed.includes('不修改') || trimmed.includes('不调整') || trimmed.includes('不用改') || trimmed.includes('别改');
+  if (pendingSwapData && pendingSwapData.proposal && pendingSwapData.newTask && (fastConfirm || fastReject)) {
+    if (fastConfirm) {
+      db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+      const { newTask, proposal } = pendingSwapData;
+      const prop = proposal;
 
-      if (isConfirm) {
+      // 1. 同步更新被顶替的任务
+      db.prepare(`
+        UPDATE tasks
+        SET scheduled_start = ?,
+            scheduled_end = ?,
+            schedule_blocks = ?,
+            is_fixed = 1,
+            status = 'scheduled',
+            updated_at = datetime('now', 'localtime')
+        WHERE id = ? AND user_id = ?
+      `).run(
+        prop.conflictTaskSchedule.start,
+        prop.conflictTaskSchedule.end,
+        prop.conflictTaskSchedule.blocks ? JSON.stringify(prop.conflictTaskSchedule.blocks) : null,
+        prop.conflictTask.id,
+        userId
+      );
+
+      // 2. 插入新任务并锁定
+      db.prepare(`
+        INSERT INTO tasks (
+          user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+          deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+          created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      `).run(
+        userId,
+        newTask.title,
+        newTask.duration,
+        newTask.originalDuration || newTask.duration,
+        newTask.urgency,
+        newTask.importance,
+        newTask.deadline || null,
+        prop.newTaskSchedule.start,
+        prop.newTaskSchedule.end,
+        newTask.isConcurrent ? 1 : 0,
+        prop.newTaskSchedule.blocks ? JSON.stringify(prop.newTaskSchedule.blocks) : null
+      );
+
+      const newS = new Date(prop.newTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+      const newE = new Date(prop.newTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const confS = new Date(prop.conflictTaskSchedule.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+      const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+      const replyText =
+        `✅ 已为您同步调整日程并锁定：\n` +
+        `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
+        `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
+        `📌 一旦安排日历，事件均已固定锁定。`;
+
+      addDebugLog('Scheduler', 'success', `用户 #${userId} 快捷确认同步修改日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
+      return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied' } };
+    } else {
+      db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+      const { newTask } = pendingSwapData;
+
+      let replyText = '';
+      if (newTask.directPlan && newTask.directPlan.start && newTask.directPlan.end) {
+        db.prepare(`
+          INSERT INTO tasks (
+            user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+            deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+            created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        `).run(
+          userId,
+          newTask.title,
+          newTask.duration,
+          newTask.originalDuration || newTask.duration,
+          newTask.urgency,
+          newTask.importance,
+          newTask.deadline || null,
+          newTask.directPlan.start,
+          newTask.directPlan.end,
+          newTask.isConcurrent ? 1 : 0,
+          newTask.directPlan.blocks || null
+        );
+
+        const dStart = new Date(newTask.directPlan.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const dEnd = new Date(newTask.directPlan.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+        replyText =
+          `👌 已保持原日程不变。\n` +
+          `「${newTask.title}」已安排至其他可用空闲时段：${dStart} ~ ${dEnd}。`;
+      } else {
+        db.prepare(`
+          INSERT INTO tasks (
+            user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+            deadline, is_fixed, is_concurrent, status, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_slot', datetime('now', 'localtime'), datetime('now', 'localtime'))
+        `).run(
+          userId,
+          newTask.title,
+          newTask.duration,
+          newTask.originalDuration || newTask.duration,
+          newTask.urgency,
+          newTask.importance,
+          newTask.deadline || null,
+          newTask.isConcurrent ? 1 : 0
+        );
+
+        replyText =
+          `👌 已保持原日程不变。\n` +
+          `由于暂无合适空闲时段，「${newTask.title}」已放入待安排清单。`;
+      }
+
+      addDebugLog('Scheduler', 'info', `用户 #${userId} 快捷拒绝调整，保持原日程: ${newTask.title}`);
+      return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'kept' } };
+    }
+  }
+
+  try {
+    let parsed: any;
+    // Check if user has configured LLM API Key
+    if (!settings.llm_api_key || !settings.llm_api_key.trim()) {
+      addDebugLog('LLM', 'warn', `用户 #${userId} 未配置 DeepSeek API Key，无法进行语义解析`);
+      return {
+        replyText:
+          `⚠️【系统提醒】您尚未在管理后台配置大模型 API Key。\n` +
+          `请登录管理面板（http://${settings.weixin_base_url ? '管理地址' : '5178'}）在「设置」中填入您的 DeepSeek API Key 即可开启智能规划。`,
+        diagnostics: { error: '未配置 LLM API Key' },
+      };
+    }
+
+    parsed = await parseUserMessageWithLLM(content, settings, pendingSwapData || pendingTask);
+    addDebugLog('LLM', 'success', `用户 #${userId} 语义解析成功`, parsed);
+
+    // 如果处于日程调整待确认状态，由 LLM 结构化判断返回结果
+    if (pendingSwapData && pendingSwapData.proposal && pendingSwapData.newTask) {
+      if (parsed.swap_decision === 'confirm') {
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
-        const { newTask, proposal } = swapData;
+        const { newTask, proposal } = pendingSwapData;
         const prop = proposal;
 
         // 1. 同步更新被顶替的任务
@@ -626,11 +769,11 @@ export async function processWeChatMessage(
           `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
           `📌 一旦安排日历，事件均已固定锁定。`;
 
-        addDebugLog('Scheduler', 'success', `用户 #${userId} 确认同步修改日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
-        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied' } };
-      } else if (isReject) {
+        addDebugLog('Scheduler', 'success', `LLM 判定用户同意调整日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
+        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied', parsed } };
+      } else if (parsed.swap_decision === 'reject') {
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
-        const { newTask } = swapData;
+        const { newTask } = pendingSwapData;
 
         let replyText = '';
         if (newTask.directPlan && newTask.directPlan.start && newTask.directPlan.end) {
@@ -684,39 +827,15 @@ export async function processWeChatMessage(
             `由于暂无合适空闲时段，「${newTask.title}」已放入待安排清单。`;
         }
 
-        addDebugLog('Scheduler', 'info', `用户 #${userId} 拒绝调整，保持原日程: ${newTask.title}`);
-        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'kept' } };
+        addDebugLog('Scheduler', 'info', `LLM 判定用户拒绝调整，保持原日程: ${newTask.title}`);
+        return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'kept', parsed } };
       } else {
-        // 用户输入了其他新指令，清除该待确认状态，向下继续由 LLM 语义识别新指令
+        // 用户发送了其它新指令 (swap_decision === 'other' 或其他意图)：
+        // 自动清除待确认状态，无缝流转处理新请求
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+        addDebugLog('Scheduler', 'info', `LLM 判定用户在日程确认中发送了新指令 (intent: ${parsed.intent}, swap_decision: ${parsed.swap_decision})，自动清除待确认状态，直接流转执行新请求`);
       }
     }
-  }
-
-  let pendingTask: any = null;
-  if (existingConv && existingConv.pending_task_json) {
-    try {
-      pendingTask = JSON.parse(existingConv.pending_task_json);
-    } catch {
-      pendingTask = null;
-    }
-  }
-
-  try {
-    let parsed: any;
-    // Check if user has configured LLM API Key
-    if (!settings.llm_api_key || !settings.llm_api_key.trim()) {
-      addDebugLog('LLM', 'warn', `用户 #${userId} 未配置 DeepSeek API Key，无法进行语义解析`);
-      return {
-        replyText:
-          `⚠️【系统提醒】您尚未在管理后台配置大模型 API Key。\n` +
-          `请登录管理面板（http://${settings.weixin_base_url ? '管理地址' : '5178'}）在「设置」中填入您的 DeepSeek API Key 即可开启智能规划。`,
-        diagnostics: { error: '未配置 LLM API Key' },
-      };
-    }
-
-    parsed = await parseUserMessageWithLLM(content, settings, pendingTask);
-    addDebugLog('LLM', 'success', `用户 #${userId} 语义解析成功`, parsed);
 
     if (parsed.intent === 'status_update') {
       db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
