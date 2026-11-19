@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Task, UserSettings } from '../models/types.js';
 import { sendWeixinTextMessage } from './weixinGateway.js';
+import { normalizeScoreTo100 } from '../utils/priorityAlgorithm.js';
 
 export const templates = {
   /**
@@ -23,7 +24,7 @@ export const templates = {
       list.push(`• 截止时间 (DDL)？`);
     }
     if (missing.importance) {
-      list.push(`• 重要程度 (0-10分)？`);
+      list.push(`• 重要程度（核心战略 / 日常推进 / 琐碎杂务，或 0-100 分）？`);
     }
 
     return `📝 任务「${title}」需补充：\n` + list.join('\n');
@@ -70,18 +71,20 @@ export const templates = {
         startStr: legacyStartStr || '',
         endStr: legacyEndStr || '',
         duration: legacyDuration || 60,
-        urgency: legacyUrgency || 5,
-        importance: legacyImportance || 5,
+        urgency: legacyUrgency || 50,
+        importance: legacyImportance || 50,
       };
     }
 
     const { title, startStr, endStr, duration, urgency, importance, blocks, isFixed, isConcurrent } = p;
+    const imp100 = normalizeScoreTo100(importance, importance <= 10 ? 10 : 100);
+    const urg100 = normalizeScoreTo100(urgency, urgency <= 10 ? 10 : 100);
     const qName =
-      importance >= 5
-        ? urgency >= 5
+      imp100 >= 50
+        ? urg100 >= 50
           ? 'Q1 重要且紧急'
           : 'Q2 重要不紧急'
-        : urgency >= 5
+        : urg100 >= 50
         ? 'Q3 紧急不重要'
         : 'Q4 不重要不紧急';
 

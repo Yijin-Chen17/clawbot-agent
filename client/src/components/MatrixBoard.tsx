@@ -57,34 +57,34 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
     const xRatio = Math.max(0, Math.min(1, clickX / rect.width));
     const yRatio = Math.max(0, Math.min(1, clickY / rect.height));
 
-    // 坐标系映射规则：
-    // X 轴：左侧紧迫度 10，右侧紧迫度 0
-    const rawUrgency = 10 - xRatio * 10;
-    // Y 轴：上方重要度 10，下方重要度 0
-    const rawImportance = 10 - yRatio * 10;
+    // 坐标系映射规则 (0 ~ 100 分制)：
+    // X 轴：左侧紧迫度 100，右侧紧迫度 0
+    const rawUrgency = 100 - xRatio * 100;
+    // Y 轴：上方重要度 100，下方重要度 0
+    const rawImportance = 100 - yRatio * 100;
 
-    const urgency = Math.round(rawUrgency * 2) / 2;
-    const importance = Math.round(rawImportance * 2) / 2;
+    const urgency = Math.round(rawUrgency);
+    const importance = Math.round(rawImportance);
 
     onOpenCreateWithCoordinates(importance, urgency);
   };
 
   // 根据任务评分计算其在坐标系平面中的百分比位置，并计算智能防溢出对齐锚定
   const calculatePosition = (task: TaskItem) => {
-    const rawUrgency = typeof task.urgency === 'number' ? task.urgency : (task.isUrgent ? 8 : 2);
-    const rawImportance = typeof task.importance === 'number' ? task.importance : (task.isImportant ? 8 : 2);
+    const rawUrgency = typeof task.urgency === 'number' ? task.urgency : (task.isUrgent ? 80 : 20);
+    const rawImportance = typeof task.importance === 'number' ? task.importance : (task.isImportant ? 80 : 20);
 
-    const clampedUrgency = Math.max(0, Math.min(10, rawUrgency));
-    const clampedImportance = Math.max(0, Math.min(10, rawImportance));
+    const clampedUrgency = Math.max(0, Math.min(100, Math.round(rawUrgency)));
+    const clampedImportance = Math.max(0, Math.min(100, Math.round(rawImportance)));
 
-    // X 轴：左侧为 10 (紧急)，右侧为 0 (不紧急)
+    // X 轴：左侧为 100 (紧急)，右侧为 0 (不紧急)
     // 留出 10% ~ 90% 缓冲，保证在移动端小屏上卡片完全处于边界内
-    const uPct = (10 - clampedUrgency) / 10;
+    const uPct = (100 - clampedUrgency) / 100;
     const leftPercent = 10 + uPct * 80;
 
-    // Y 轴：上方为 10 (重要)，下方为 0 (不重要)
+    // Y 轴：上方为 100 (重要)，下方为 0 (不重要)
     // 留出 10% ~ 90% 缓冲
-    const iPct = (10 - clampedImportance) / 10;
+    const iPct = (100 - clampedImportance) / 100;
     const topPercent = 10 + iPct * 80;
 
     // 智能动态防溢出对齐锚定：
@@ -111,14 +111,14 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
     const groups: Map<string, TaskItem[]> = new Map();
 
     for (const task of activeTasks) {
-      const rawUrgency = typeof task.urgency === 'number' ? task.urgency : (task.isUrgent ? 8 : 2);
-      const rawImportance = typeof task.importance === 'number' ? task.importance : (task.isImportant ? 8 : 2);
+      const rawUrgency = typeof task.urgency === 'number' ? task.urgency : (task.isUrgent ? 80 : 20);
+      const rawImportance = typeof task.importance === 'number' ? task.importance : (task.isImportant ? 80 : 20);
 
-      const clampedUrgency = Math.max(0, Math.min(10, rawUrgency));
-      const clampedImportance = Math.max(0, Math.min(10, rawImportance));
+      const clampedUrgency = Math.max(0, Math.min(100, Math.round(rawUrgency)));
+      const clampedImportance = Math.max(0, Math.min(100, Math.round(rawImportance)));
 
-      // 按 0.5 精度网格归拢相同坐标
-      const key = `${Math.round(clampedUrgency * 2) / 2}_${Math.round(clampedImportance * 2) / 2}`;
+      // 按 4 分精度网格归拢非常接近的坐标
+      const key = `${Math.round(clampedUrgency / 4) * 4}_${Math.round(clampedImportance / 4) * 4}`;
       const list = groups.get(key) || [];
       list.push(task);
       groups.set(key, list);
@@ -241,8 +241,8 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
       {clusters.map((cluster) => {
         const { leftPercent, topPercent, alignX, alignY, urgency, importance, primaryTask, tasks: clusterTasks } = cluster;
         const isMulti = clusterTasks.length > 1;
-        const isImportant = importance >= 5;
-        const isUrgent = urgency >= 5;
+        const isImportant = importance >= 50;
+        const isUrgent = urgency >= 50;
 
         const dotColor =
           isImportant && isUrgent

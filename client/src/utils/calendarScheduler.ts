@@ -113,21 +113,25 @@ function getStrategyLabel(zone: EnergyZoneType, quadrant: string, isSessionSplit
 function computeTaskPriorityScore(task: TaskItem, targetDate: Date): number {
   let baseScore = task.importance * 1.6 + task.urgency * 1.2;
 
-  // 象限层级基准加权：Q1 危机/立即做 > Q2 深度核心 > Q3 浅层速办
-  if (task.quadrant === 'q1') baseScore += 15;
-  else if (task.quadrant === 'q2') baseScore += 8;
-  else if (task.quadrant === 'q3') baseScore += 2;
+  // 象限层级基准加权 (0~100分制尺度)：Q1 > Q2 > Q3
+  if (task.quadrant === 'q1') baseScore += 150;
+  else if (task.quadrant === 'q2') baseScore += 80;
+  else if (task.quadrant === 'q3') baseScore += 20;
+
+  if (task.timeMode === 'daily_fixed') {
+    baseScore += 60;
+  }
 
   // EDF (Earliest Deadline First) 截止期临近加权
   if (task.dueDate) {
     const due = new Date(task.dueDate + 'T23:59:59');
     const diffDays = (due.getTime() - targetDate.getTime()) / (1000 * 3600 * 24);
     if (diffDays <= 1) {
-      baseScore += 12; // 今日或已逾期：极高优先
+      baseScore += 120; // 今日或已逾期：极高优先
     } else if (diffDays <= 3) {
-      baseScore += 6;  // 3天内到期
+      baseScore += 60;  // 3天内到期
     } else if (diffDays <= 7) {
-      baseScore += 2;
+      baseScore += 20;
     }
   }
 

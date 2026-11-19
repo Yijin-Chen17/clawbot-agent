@@ -351,8 +351,10 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
             } else if (t.is_concurrent) {
               badge = '双线程';
             }
-            const imp = (t.importance ?? 5) >= 5;
-            const urg = (t.urgency ?? 5) >= 5;
+            const impRaw = t.importance ?? 50;
+            const urgRaw = t.urgency ?? 50;
+            const imp = (t.score_scale === 100 || impRaw > 10 ? impRaw : impRaw <= 5 ? impRaw * 20 : impRaw * 10) >= 50;
+            const urg = (t.score_scale === 100 || urgRaw > 10 ? urgRaw : urgRaw <= 5 ? urgRaw * 20 : urgRaw * 10) >= 50;
             if (imp && urg) {
               color = '#ef4444';
               bg = '#fef2f2';
@@ -749,13 +751,15 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
       const isCompleted = t.status === 'completed';
       const isInProgress = t.status === 'in_progress';
 
-      // Priority color & badge
+      // Priority color & badge (0~100 scale)
+      const urg100 = t.score_scale === 100 || t.urgency > 10 ? t.urgency : t.urgency <= 5 ? t.urgency * 20 : t.urgency * 10;
+      const imp100 = t.score_scale === 100 || t.importance > 10 ? t.importance : t.importance <= 5 ? t.importance * 20 : t.importance * 10;
       let pColor = '#3b82f6';
       let pLabel = '普通 P3';
-      if (t.urgency >= 5 || t.importance >= 5) {
+      if (urg100 >= 80 || imp100 >= 80) {
         pColor = '#ef4444';
         pLabel = '紧急 P1';
-      } else if (t.urgency >= 4 || t.importance >= 4) {
+      } else if (urg100 >= 50 || imp100 >= 50) {
         pColor = '#f59e0b';
         pLabel = '加急 P2';
       }

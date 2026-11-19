@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { normalizeScoreTo100 } from '../utils/priorityAlgorithm';
 import {
   ChevronLeft,
   ChevronRight,
@@ -77,6 +78,7 @@ interface TaskItem {
   duration_minutes: number;
   urgency: number;
   importance: number;
+  score_scale?: number | null;
   deadline: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
@@ -262,9 +264,9 @@ function layoutDayItems<T extends { start: string; end: string }>(items: T[]): P
   return result;
 }
 
-function getTaskQuadrant(importance: number, urgency: number) {
-  const imp = importance >= 3;
-  const urg = urgency >= 3;
+function getTaskQuadrant(importance: number, urgency: number, scoreScale?: number | null) {
+  const imp = normalizeScoreTo100(importance, scoreScale) >= 50;
+  const urg = normalizeScoreTo100(urgency, scoreScale) >= 50;
   if (imp && urg) return { key: 'q1', name: 'Do First', color: '#EF4444' };
   if (imp && !urg) return { key: 'q2', name: 'Schedule', color: '#3B82F6' };
   if (!imp && urg) return { key: 'q3', name: 'Delegate', color: '#F59E0B' };
@@ -503,7 +505,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
             windowEndIso
           );
           if (range) {
-            const quad = getTaskQuadrant(t.importance, t.urgency);
+            const quad = getTaskQuadrant(t.importance, t.urgency, t.score_scale);
             const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
             let titlePrefix = isCompleted ? '✓ ' : '';
             if (!isCompleted) {

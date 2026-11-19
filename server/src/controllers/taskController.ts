@@ -2,7 +2,36 @@ import { Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task } from '../models/types.js';
-import { scheduleTask, replanUserTasks, completeTaskPart } from '../services/scheduler.js';
+import {
+  scheduleTask,
+  replanUserTasks,
+  completeTaskPart,
+  computeTodayBusyMinutes,
+  formatLocalDate,
+} from '../services/scheduler.js';
+import {
+  calculateDynamicImportance,
+  calculateDynamicUrgency,
+  inferTierFromScore,
+  normalizeScoreTo100,
+  type ImpactSignal,
+  type ImportanceTier,
+  type TimeMode,
+  type UrgencyPace,
+} from '../utils/priorityAlgorithm.js';
+
+function parseJsonArray<T = string>(raw: unknown): T[] {
+  if (Array.isArray(raw)) return raw as T[];
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
 
 export function listTasks(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -32,8 +61,14 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   const {
     title,
     duration_minutes = 60,
-    urgency = 3,
-    importance = 3,
+    urgency,
+    importance,
+    importance_tier,
+    impact_signals,
+    time_mode,
+    urgency_pace,
+    importance_manual_override,
+    score_scale,
     deadline,
     scheduled_start,
     scheduled_end,
@@ -47,6 +82,62 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     res.status(400).json({ error: '请输入任务标题' });
     return;
   }
+
+  const parsedSignals = parseJsonArray<ImpactSignal>(impact_signals);
+  const manualOverrideNum =
+    importance_manual_override !== undefined &&
+    importance_manual_override !== null &&
+    importance_manual_override !== ''
+      ? normalizeScoreTo100(Number(importance_manual_override), score_scale ?? 100)
+      : null;
+
+  let resolvedTier: ImportanceTier;
+  let resolvedImportance: number;
+  if (importance_tier === 'vital' || importance_tier === 'support' || importance_tier === 'minor') {
+    resolvedTier = importance_tier;
+    resolvedImportance = calculateDynamicImportance({
+      tier: resolvedTier,
+      estimatedMinutes: Number(duration_minutes),
+      impactSignals: parsedSignals,
+      isFixed: Boolean(is_fixed),
+      manualOverride: manualOverrideNum,
+    }).importance;
+  } else {
+    resolvedImportance =
+      importance !== undefined && importance !== null
+        ? normalizeScoreTo100(Number(importance), score_scale)
+        : 58;
+    resolvedTier = inferTierFromScore(resolvedImportance);
+  }
+
+  const resolvedTimeMode: TimeMode =
+    time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
+      ? time_mode
+      : deadline
+      ? 'deadline'
+      : 'flexible';
+  const resolvedPace: UrgencyPace =
+    urgency_pace === 'urgent' || urgency_pace === 'later' || urgency_pace === 'soon'
+      ? urgency_pace
+      : 'soon';
+
+  const fallbackUrg100 =
+    urgency !== undefined && urgency !== null
+      ? normalizeScoreTo100(Number(urgency), score_scale)
+      : 50;
+
+  const todayBusyMinutes = computeTodayBusyMinutes(userId);
+  const resolvedUrgency = calculateDynamicUrgency({
+    timeMode: resolvedTimeMode,
+    dueDate: deadline || null,
+    estimatedMinutes: Number(duration_minutes),
+    importance: resolvedImportance,
+    urgencyPace: resolvedPace,
+    scheduledStart: scheduled_start || null,
+    scheduledEnd: scheduled_end || null,
+    dailyBusyMinutesAhead: todayBusyMinutes,
+    fallbackUrgency: fallbackUrg100,
+  }).urgency;
 
   let finalStart: string | null = scheduled_start || null;
   let finalEnd: string | null = scheduled_end || null;
@@ -63,8 +154,8 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     const plan = scheduleTask(userId, {
       title,
       duration_minutes: Number(duration_minutes),
-      urgency: Number(urgency),
-      importance: Number(importance),
+      urgency: resolvedUrgency,
+      importance: resolvedImportance,
       deadline: deadline || null,
     });
 
@@ -86,16 +177,23 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   const result = db.prepare(`
     INSERT INTO tasks (
       user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+      importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
+      score_scale, completed_dates,
       deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
     Number(duration_minutes),
     Number(duration_minutes),
-    Number(urgency),
-    Number(importance),
+    resolvedUrgency,
+    resolvedImportance,
+    resolvedTier,
+    JSON.stringify(parsedSignals),
+    resolvedTimeMode,
+    resolvedPace,
+    manualOverrideNum,
     deadline || null,
     finalStart,
     finalEnd,
@@ -125,6 +223,12 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     duration_minutes,
     urgency,
     importance,
+    importance_tier,
+    impact_signals,
+    time_mode,
+    urgency_pace,
+    importance_manual_override,
+    score_scale,
     deadline,
     scheduled_start,
     scheduled_end,
@@ -132,7 +236,6 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     is_concurrent,
     status,
     notes,
-    auto_schedule,
   } = req.body;
 
   const existing = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task | undefined;
@@ -141,13 +244,108 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
+  const nextDuration = duration_minutes !== undefined ? Number(duration_minutes) : existing.duration_minutes;
+  const nextIsFixed = is_fixed !== undefined ? (is_fixed ? 1 : 0) : (existing.is_fixed ?? 0);
+  const nextSignals =
+    impact_signals !== undefined
+      ? parseJsonArray<ImpactSignal>(impact_signals)
+      : parseJsonArray<ImpactSignal>(existing.impact_signals);
+
+  const nextManualOverride =
+    importance_manual_override !== undefined
+      ? (importance_manual_override !== null && importance_manual_override !== ''
+          ? normalizeScoreTo100(Number(importance_manual_override), score_scale ?? 100)
+          : null)
+      : existing.importance_manual_override ?? null;
+
+  const nextTierRaw = importance_tier !== undefined ? importance_tier : existing.importance_tier;
+  let nextImportance: number;
+  let resolvedTier: ImportanceTier;
+
+  if (nextTierRaw === 'vital' || nextTierRaw === 'support' || nextTierRaw === 'minor') {
+    resolvedTier = nextTierRaw;
+    if (
+      importance_tier !== undefined ||
+      impact_signals !== undefined ||
+      importance_manual_override !== undefined ||
+      duration_minutes !== undefined ||
+      is_fixed !== undefined
+    ) {
+      nextImportance = calculateDynamicImportance({
+        tier: resolvedTier,
+        estimatedMinutes: nextDuration,
+        impactSignals: nextSignals,
+        isFixed: Boolean(nextIsFixed),
+        manualOverride: nextManualOverride,
+      }).importance;
+    } else if (importance !== undefined) {
+      nextImportance = normalizeScoreTo100(Number(importance), score_scale);
+    } else {
+      nextImportance = normalizeScoreTo100(existing.importance, existing.score_scale);
+    }
+  } else {
+    nextImportance =
+      importance !== undefined
+        ? normalizeScoreTo100(Number(importance), score_scale)
+        : normalizeScoreTo100(existing.importance, existing.score_scale);
+    resolvedTier = inferTierFromScore(nextImportance);
+  }
+
+  const nextDeadline = deadline !== undefined ? deadline : existing.deadline;
+  const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
+  const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
+
+  const nextTimeMode: TimeMode =
+    time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
+      ? time_mode
+      : existing.time_mode === 'daily_fixed' || existing.time_mode === 'flexible' || existing.time_mode === 'deadline'
+      ? existing.time_mode
+      : nextDeadline
+      ? 'deadline'
+      : 'flexible';
+
+  const nextPace: UrgencyPace =
+    urgency_pace === 'urgent' || urgency_pace === 'later' || urgency_pace === 'soon'
+      ? urgency_pace
+      : existing.urgency_pace === 'urgent' || existing.urgency_pace === 'later' || existing.urgency_pace === 'soon'
+      ? existing.urgency_pace
+      : 'soon';
+
+  const completedDates = parseJsonArray<string>(existing.completed_dates);
+  const todayStr = formatLocalDate(new Date());
+  const isCompletedToday = completedDates.includes(todayStr);
+
+  const fallbackUrg100 =
+    urgency !== undefined
+      ? normalizeScoreTo100(Number(urgency), score_scale)
+      : normalizeScoreTo100(existing.urgency, existing.score_scale);
+
+  const nextUrgency = calculateDynamicUrgency({
+    timeMode: nextTimeMode,
+    dueDate: nextDeadline || null,
+    estimatedMinutes: nextDuration,
+    importance: nextImportance,
+    urgencyPace: nextPace,
+    scheduledStart: nextScheduledStart || null,
+    scheduledEnd: nextScheduledEnd || null,
+    isCompletedToday,
+    dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, new Date(), existing.id),
+    fallbackUrgency: fallbackUrg100,
+  }).urgency;
+
   db.prepare(`
     UPDATE tasks
     SET
       title = COALESCE(?, title),
       duration_minutes = COALESCE(?, duration_minutes),
-      urgency = COALESCE(?, urgency),
-      importance = COALESCE(?, importance),
+      urgency = ?,
+      importance = ?,
+      importance_tier = ?,
+      impact_signals = ?,
+      time_mode = ?,
+      urgency_pace = ?,
+      importance_manual_override = ?,
+      score_scale = 100,
       deadline = ?,
       scheduled_start = ?,
       scheduled_end = ?,
@@ -160,12 +358,17 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
   `).run(
     title,
     duration_minutes,
-    urgency,
-    importance,
-    deadline !== undefined ? deadline : existing.deadline,
-    scheduled_start !== undefined ? scheduled_start : existing.scheduled_start,
-    scheduled_end !== undefined ? scheduled_end : existing.scheduled_end,
-    is_fixed !== undefined ? (is_fixed ? 1 : 0) : existing.is_fixed,
+    nextUrgency,
+    nextImportance,
+    resolvedTier,
+    JSON.stringify(nextSignals),
+    nextTimeMode,
+    nextPace,
+    nextManualOverride,
+    nextDeadline,
+    nextScheduledStart,
+    nextScheduledEnd,
+    nextIsFixed,
     is_concurrent !== undefined ? (is_concurrent ? 1 : 0) : existing.is_concurrent,
     status,
     notes !== undefined ? notes : existing.notes,
@@ -298,17 +501,17 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
     const resInsert = db.prepare(`
       INSERT INTO tasks (
         user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-        deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+        score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
       userId,
       newTask.title,
       Number(newTask.duration_minutes || 60),
       Number(newTask.duration_minutes || 60),
-      Number(newTask.urgency || 3),
-      Number(newTask.importance || 3),
+      normalizeScoreTo100(Number(newTask.urgency ?? 50), newTask.score_scale ?? 100),
+      normalizeScoreTo100(Number(newTask.importance ?? 50), newTask.score_scale ?? 100),
       newTask.deadline || null,
       proposal.newTaskSchedule.start,
       proposal.newTaskSchedule.end,
@@ -337,21 +540,61 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
   }
 
   if (action === 'complete') {
+    const todayStr = formatLocalDate(new Date());
+    const completedDates = parseJsonArray<string>(task.completed_dates);
+    if (!completedDates.includes(todayStr)) {
+      completedDates.push(todayStr);
+    }
+
+    if (task.time_mode === 'daily_fixed') {
+      db.prepare(`
+        UPDATE tasks
+        SET completed_dates = ?, urgency = 15, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(JSON.stringify(completedDates), id);
+      res.json({ message: `每日固定任务「${task.title}」今日已打卡完成，明日自动恢复！` });
+      return;
+    }
+
     db.prepare(`
       UPDATE tasks
-      SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+      SET status = 'completed', completed_dates = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(id);
+    `).run(JSON.stringify(completedDates), id);
     res.json({ message: `任务「${task.title}」已标记完成！` });
     return;
   }
 
   if (action === 'reopen') {
+    const todayStr = formatLocalDate(new Date());
+    const completedDates = parseJsonArray<string>(task.completed_dates).filter((d) => d !== todayStr);
+
+    if (task.time_mode === 'daily_fixed') {
+      const imp100 = normalizeScoreTo100(task.importance, task.score_scale);
+      const nextUrgency = calculateDynamicUrgency({
+        timeMode: 'daily_fixed',
+        dueDate: task.deadline || null,
+        estimatedMinutes: task.duration_minutes,
+        importance: imp100,
+        scheduledStart: task.scheduled_start,
+        scheduledEnd: task.scheduled_end,
+        isCompletedToday: false,
+        dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, new Date(), task.id),
+      }).urgency;
+      db.prepare(`
+        UPDATE tasks
+        SET completed_dates = ?, urgency = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(JSON.stringify(completedDates), nextUrgency, task.scheduled_start ? 'scheduled' : 'pending_slot', id);
+      res.json({ message: `任务「${task.title}」已恢复今日待办！` });
+      return;
+    }
+
     db.prepare(`
       UPDATE tasks
-      SET status = 'scheduled', updated_at = CURRENT_TIMESTAMP
+      SET status = 'scheduled', completed_dates = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(id);
+    `).run(JSON.stringify(completedDates), id);
     res.json({ message: `任务「${task.title}」已重新标为进行中！` });
     return;
   }

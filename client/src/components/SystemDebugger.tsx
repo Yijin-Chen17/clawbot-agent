@@ -635,8 +635,8 @@ export const SystemDebugger: React.FC = () => {
                       <div>意图: <span className="font-bold text-blue-600 dark:text-blue-400">{simResult.diagnostics.parsed.intent}</span></div>
                       {simResult.diagnostics.parsed.title && <div>任务标题: {simResult.diagnostics.parsed.title}</div>}
                       {simResult.diagnostics.parsed.duration_minutes && <div>耗时: {simResult.diagnostics.parsed.duration_minutes} 分钟</div>}
-                      {simResult.diagnostics.parsed.urgency && <div>紧急度: {simResult.diagnostics.parsed.urgency}/5</div>}
-                      {simResult.diagnostics.parsed.importance && <div>重要度: {simResult.diagnostics.parsed.importance}/5</div>}
+                      {simResult.diagnostics.parsed.urgency && <div>紧急度: {simResult.diagnostics.parsed.urgency}/100</div>}
+                      {simResult.diagnostics.parsed.importance && <div>重要度: {simResult.diagnostics.parsed.importance}/100</div>}
                       {simResult.diagnostics.parsed.deadline && <div>截止时间: {simResult.diagnostics.parsed.deadline}</div>}
                     </div>
                   </div>

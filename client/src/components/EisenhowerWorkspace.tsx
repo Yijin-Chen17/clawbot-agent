@@ -1,11 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
-import { calculateDynamicUrgency } from '../utils/priorityAlgorithm';
+import {
+  calculateDynamicImportance,
+  calculateDynamicUrgency,
+  inferTierFromScore,
+  normalizeScoreTo100,
+  PRIORITY_THRESHOLD,
+  type ImpactSignal,
+  type ImportanceTier,
+  type TimeMode,
+  type UrgencyPace,
+} from '../utils/priorityAlgorithm';
 import { api } from '../api/client';
 import { useTheme } from '../context/ThemeContext';
 import { MatrixBoard } from './MatrixBoard';
-import { TaskModal } from './TaskModal';
+import { TaskModal, type TaskModalSavePayload } from './TaskModal';
 import { WizardModal } from './WizardModal';
 import { StatsModal } from './StatsModal';
 import { BackupModal } from './BackupModal';
@@ -96,8 +106,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   };
   void handleSelectCategory;
 
-  // 任务数据与加载状态
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  // 任务数据与今日外部日程占用状态
+  const [rawServerTasks, setRawServerTasks] = useState<any[]>([]);
+  const [externalBusyIntervals, setExternalBusyIntervals] = useState<Array<{ start: string; end: string }>>([]);
+  const [currentTime, setCurrentTime] = useState<Date>(() => new Date());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -145,70 +157,220 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     }
   }, [propsIsBackupOpen, propsSetIsBackupOpen]);
 
-  // 转换服务端 Task 为标准 TaskItem (0~10分值模型)
-  const mapServerTask = useCallback((t: any): TaskItem => {
-    let importance = typeof t.importance === 'number' ? t.importance : 5;
-    if (importance <= 5 && !t.importance_scaled_10) {
-      importance = importance * 2;
-    }
-    let fallbackUrgency = typeof t.urgency === 'number' ? t.urgency : 5;
-    if (fallbackUrgency <= 5 && !t.urgency_scaled_10) {
-      fallbackUrgency = fallbackUrgency * 2;
-    }
-
-    const effectiveDueDate = t.deadline
-      ? t.deadline.slice(0, 10)
-      : formatLocalDate(new Date(t.created_at || Date.now()));
-
-    const algo = calculateDynamicUrgency({
-      dueDate: effectiveDueDate,
-      estimatedMinutes: t.duration_minutes || 60,
-      fallbackUrgency,
-      currentTime: new Date(),
-    });
-
-    const isCompleted = t.status === 'completed';
-    const todayStr = formatLocalDate(new Date());
-
-    return {
-      id: String(t.id),
-      title: t.title,
-      description: t.notes || '',
-      importance,
-      urgency: algo.urgency,
-      useAutoUrgency: true,
-      isImportant: importance >= 5,
-      isUrgent: algo.urgency >= 5,
-      quadrant: calculateQuadrant(importance, algo.urgency),
-      isCompleted,
-      completedDates: isCompleted ? [todayStr] : [],
-      dueDate: effectiveDueDate,
-      tags: Array.isArray(t.tags) ? t.tags : (t.tags ? String(t.tags).split(',').map((s: string) => s.trim()).filter(Boolean) : []),
-      estimatedMinutes: t.duration_minutes || 60,
-      isFixed: Boolean(t.is_fixed),
-      isConcurrent: Boolean(t.is_concurrent),
-      scheduledStart: t.scheduled_start,
-      scheduledEnd: t.scheduled_end,
-      createdAt: t.created_at || new Date().toISOString(),
-      completedAt: isCompleted ? (t.updated_at || new Date().toISOString()) : null,
-      algorithmStatusText: algo.statusText,
+  // 每 60 秒自动刷新时钟基准，以实时驱动截止期紧迫度与每日固定日程窗口变化
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') setCurrentTime(new Date());
+    };
+    window.addEventListener('focus', onVis);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onVis);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
 
-  // 拉取任务列表
+  // 计算今日从当前时刻到 22:00 的总忙碌占用分钟数（外部日历 + 今日已排程任务）
+  const todayBusyMinutesAhead = useMemo(() => {
+    const dayEnd = new Date(currentTime);
+    dayEnd.setHours(22, 0, 0, 0);
+    if (dayEnd.getTime() <= currentTime.getTime()) return 0;
+
+    const intervals: Array<{ start: number; end: number }> = [];
+    for (const ev of externalBusyIntervals) {
+      const s = Math.max(currentTime.getTime(), new Date(ev.start).getTime());
+      const e = Math.min(dayEnd.getTime(), new Date(ev.end).getTime());
+      if (e > s) intervals.push({ start: s, end: e });
+    }
+    for (const t of rawServerTasks) {
+      if (t.status === 'completed' || !t.scheduled_start || !t.scheduled_end) continue;
+      const s = Math.max(currentTime.getTime(), new Date(t.scheduled_start).getTime());
+      const e = Math.min(dayEnd.getTime(), new Date(t.scheduled_end).getTime());
+      if (e > s) intervals.push({ start: s, end: e });
+    }
+
+    intervals.sort((a, b) => a.start - b.start);
+    let busyMs = 0;
+    let curStart = -1;
+    let curEnd = -1;
+    for (const iv of intervals) {
+      if (curStart === -1) {
+        curStart = iv.start;
+        curEnd = iv.end;
+      } else if (iv.start <= curEnd) {
+        curEnd = Math.max(curEnd, iv.end);
+      } else {
+        busyMs += curEnd - curStart;
+        curStart = iv.start;
+        curEnd = iv.end;
+      }
+    }
+    if (curStart !== -1) busyMs += curEnd - curStart;
+    return Math.round(busyMs / 60000);
+  }, [externalBusyIntervals, rawServerTasks, currentTime]);
+
+  // 转换服务端 Task 为标准 TaskItem (0~100分值模型)
+  const mapServerTask = useCallback(
+    (t: any): TaskItem => {
+      const parseArr = <T,>(val: unknown): T[] => {
+        if (Array.isArray(val)) return val as T[];
+        if (typeof val === 'string' && val.trim()) {
+          try {
+            const p = JSON.parse(val);
+            return Array.isArray(p) ? (p as T[]) : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+
+      const impactSignals = parseArr<ImpactSignal>(t.impact_signals);
+      const completedDates = parseArr<string>(t.completed_dates);
+      const todayStr = formatLocalDate(currentTime);
+
+      const rawImp100 = normalizeScoreTo100(t.importance, t.score_scale);
+      const importanceTier: ImportanceTier =
+        t.importance_tier === 'vital' ||
+        t.importance_tier === 'support' ||
+        t.importance_tier === 'minor'
+          ? t.importance_tier
+          : inferTierFromScore(rawImp100);
+
+      const manualOverride =
+        t.importance_manual_override !== undefined && t.importance_manual_override !== null
+          ? normalizeScoreTo100(t.importance_manual_override, t.score_scale ?? 100)
+          : null;
+
+      const importance = t.importance_tier
+        ? calculateDynamicImportance({
+            tier: importanceTier,
+            estimatedMinutes: t.duration_minutes || 60,
+            impactSignals,
+            isFixed: Boolean(t.is_fixed),
+            manualOverride,
+          }).importance
+        : rawImp100;
+
+      const timeMode: TimeMode =
+        t.time_mode === 'daily_fixed' || t.time_mode === 'flexible' || t.time_mode === 'deadline'
+          ? t.time_mode
+          : t.deadline
+          ? 'deadline'
+          : 'flexible';
+
+      const urgencyPace: UrgencyPace =
+        t.urgency_pace === 'urgent' || t.urgency_pace === 'later' || t.urgency_pace === 'soon'
+          ? t.urgency_pace
+          : 'soon';
+
+      const effectiveDueDate =
+        timeMode === 'deadline'
+          ? t.deadline
+            ? t.deadline
+            : formatLocalDate(new Date(t.created_at || Date.now()))
+          : null;
+
+      const isCompletedToday =
+        timeMode === 'daily_fixed'
+          ? completedDates.includes(todayStr) || t.status === 'completed'
+          : t.status === 'completed';
+
+      const fallbackUrgency = normalizeScoreTo100(t.urgency, t.score_scale);
+
+      const algo = calculateDynamicUrgency({
+        timeMode,
+        dueDate: effectiveDueDate,
+        estimatedMinutes: t.duration_minutes || 60,
+        importance,
+        urgencyPace,
+        scheduledStart: t.scheduled_start,
+        scheduledEnd: t.scheduled_end,
+        isCompletedToday,
+        dailyBusyMinutesAhead: todayBusyMinutesAhead,
+        fallbackUrgency,
+        currentTime,
+      });
+
+      return {
+        id: String(t.id),
+        title: t.title,
+        description: t.notes || '',
+        importance,
+        urgency: algo.urgency,
+        importanceTier,
+        impactSignals,
+        timeMode,
+        urgencyPace,
+        importanceManualOverride: manualOverride,
+        scoreScale: 100,
+        useAutoUrgency: true,
+        isImportant: importance >= PRIORITY_THRESHOLD,
+        isUrgent: algo.urgency >= PRIORITY_THRESHOLD,
+        quadrant: calculateQuadrant(importance, algo.urgency),
+        isCompleted: isCompletedToday,
+        completedDates: isCompletedToday
+          ? Array.from(new Set([...completedDates, todayStr]))
+          : completedDates,
+        dueDate: effectiveDueDate ? effectiveDueDate.slice(0, 10) : null,
+        tags: Array.isArray(t.tags)
+          ? t.tags
+          : t.tags
+          ? String(t.tags)
+              .split(',')
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+          : [],
+        estimatedMinutes: t.duration_minutes || 60,
+        isFixed: Boolean(t.is_fixed),
+        isConcurrent: Boolean(t.is_concurrent),
+        scheduledStart: t.scheduled_start,
+        scheduledEnd: t.scheduled_end,
+        createdAt: t.created_at || new Date().toISOString(),
+        completedAt: isCompletedToday ? t.updated_at || new Date().toISOString() : null,
+        algorithmStatusText: algo.statusText,
+      };
+    },
+    [currentTime, todayBusyMinutesAhead]
+  );
+
+  const tasks = useMemo(() => rawServerTasks.map(mapServerTask), [rawServerTasks, mapServerTask]);
+
+  // 拉取任务列表与今日外部日历占用
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get('/tasks');
-      const serverTasks = res.data.tasks || [];
-      const mapped = serverTasks.map(mapServerTask);
-      setTasks(mapped);
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const [tasksRes, calRes] = await Promise.allSettled([
+        api.get('/tasks'),
+        api.get('/calendar/events', {
+          params: { start: todayStart.toISOString(), end: todayEnd.toISOString() },
+        }),
+      ]);
+
+      if (tasksRes.status === 'fulfilled') {
+        setRawServerTasks(tasksRes.value.data.tasks || []);
+      }
+      if (calRes.status === 'fulfilled') {
+        const events = calRes.value.data?.events || [];
+        setExternalBusyIntervals(
+          events
+            .filter((ev: any) => !ev.allDay && ev.extendedProps?.type === 'external')
+            .map((ev: any) => ({ start: ev.start, end: ev.end }))
+        );
+      }
     } catch (err) {
       console.error('拉取任务列表失败:', err);
     } finally {
       setLoading(false);
     }
-  }, [mapServerTask]);
+  }, []);
 
   useEffect(() => {
     fetchTasks();
@@ -347,19 +509,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   }, []);
 
   // 保存任务 (新建 / 编辑)
-  const handleSaveTask = async (data: {
+  const handleSaveTask = async (data: Partial<TaskModalSavePayload> & {
     title: string;
-    description?: string;
     importance: number;
     urgency: number;
-    useAutoUrgency?: boolean;
-    dueDate?: string | null;
-    tags?: string[];
-    estimatedMinutes?: number;
-    isFixed?: boolean;
-    isConcurrent?: boolean;
-    scheduledStart?: string | null;
-    scheduledEnd?: string | null;
   }) => {
     try {
       const payload = {
@@ -367,6 +520,13 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         duration_minutes: data.estimatedMinutes || 60,
         importance: data.importance,
         urgency: data.urgency,
+        importance_tier: data.importanceTier || inferTierFromScore(data.importance),
+        impact_signals: data.impactSignals || [],
+        time_mode: data.timeMode || (data.dueDate ? 'deadline' : 'flexible'),
+        urgency_pace: data.urgencyPace || 'soon',
+        importance_manual_override:
+          data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,
+        score_scale: 100,
         deadline: data.dueDate ? new Date(data.dueDate).toISOString() : null,
         scheduled_start: data.scheduledStart || null,
         scheduled_end: data.scheduledEnd || null,
@@ -391,24 +551,52 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     }
   };
 
-  // Google Tasks 风格快速回车新建任务
+  // Google Tasks 风格快速回车新建任务 (0~100 分制)
   const handleQuickAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickTaskTitle.trim() || quickTaskSubmitting) return;
     setQuickTaskSubmitting(true);
     try {
-      let imp = 6;
-      let urg = 6;
-      if (currentCategory === 'q1') { imp = 8; urg = 8; }
-      else if (currentCategory === 'q2') { imp = 8; urg = 3; }
-      else if (currentCategory === 'q3') { imp = 3; urg = 8; }
-      else if (currentCategory === 'q4') { imp = 2; urg = 2; }
+      let tier: ImportanceTier = 'support';
+      let imp = 58;
+      let urg = 60;
+      let dueDate: string | null = formatLocalDate(new Date());
+      let timeMode: TimeMode = 'deadline';
+      let urgencyPace: UrgencyPace = 'soon';
+
+      if (currentCategory === 'q1') {
+        tier = 'vital';
+        imp = 82;
+        urg = 85;
+      } else if (currentCategory === 'q2') {
+        tier = 'vital';
+        imp = 82;
+        urg = 35;
+        const nextWeek = new Date();
+        nextWeek.setDate(nextWeek.getDate() + 10);
+        dueDate = formatLocalDate(nextWeek);
+      } else if (currentCategory === 'q3') {
+        tier = 'minor';
+        imp = 25;
+        urg = 85;
+      } else if (currentCategory === 'q4') {
+        tier = 'minor';
+        imp = 25;
+        urg = 25;
+        dueDate = null;
+        timeMode = 'flexible';
+        urgencyPace = 'later';
+      }
 
       await handleSaveTask({
         title: quickTaskTitle.trim(),
         importance: imp,
         urgency: urg,
-        dueDate: formatLocalDate(new Date()),
+        importanceTier: tier,
+        impactSignals: [],
+        timeMode,
+        urgencyPace,
+        dueDate,
         estimatedMinutes: 30,
       });
       setQuickTaskTitle('');
@@ -422,13 +610,21 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     title: string;
     importance: number;
     urgency: number;
-    dueDate: string;
+    importanceTier: ImportanceTier;
+    impactSignals: ImpactSignal[];
+    timeMode: TimeMode;
+    urgencyPace: UrgencyPace;
+    dueDate: string | null;
     estimatedMinutes?: number;
   }) => {
     handleSaveTask({
       title: data.title,
       importance: data.importance,
       urgency: data.urgency,
+      importanceTier: data.importanceTier,
+      impactSignals: data.impactSignals,
+      timeMode: data.timeMode,
+      urgencyPace: data.urgencyPace,
       dueDate: data.dueDate,
       estimatedMinutes: data.estimatedMinutes,
     });
@@ -441,25 +637,43 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     if (!target) return;
 
     const willComplete = !target.isCompleted;
+    const todayStr = formatLocalDate(new Date());
 
     // 乐观更新 UI
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              isCompleted: willComplete,
-              completedDates: willComplete ? [formatLocalDate(new Date())] : [],
-              completedAt: willComplete ? new Date().toISOString() : null,
-            }
-          : t
-      )
+    setRawServerTasks((prev) =>
+      prev.map((t) => {
+        if (String(t.id) !== taskId) return t;
+        let completedDates: string[] = [];
+        try {
+          completedDates = Array.isArray(t.completed_dates)
+            ? t.completed_dates
+            : t.completed_dates
+            ? JSON.parse(t.completed_dates)
+            : [];
+        } catch {}
+        const nextDates = willComplete
+          ? Array.from(new Set([...completedDates, todayStr]))
+          : completedDates.filter((d) => d !== todayStr);
+        if (t.time_mode === 'daily_fixed') {
+          return {
+            ...t,
+            completed_dates: JSON.stringify(nextDates),
+            urgency: willComplete ? 15 : t.urgency,
+          };
+        }
+        return {
+          ...t,
+          status: willComplete ? 'completed' : 'scheduled',
+          completed_dates: JSON.stringify(nextDates),
+        };
+      })
     );
 
     try {
       await api.post(`/tasks/${taskId}/action`, {
         action: willComplete ? 'complete' : 'reopen',
       });
+      await fetchTasks();
     } catch (err) {
       console.error('切换完成状态失败:', err);
       fetchTasks();
@@ -470,7 +684,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   const handleDeleteTask = async (taskId: string) => {
     if (!window.confirm('确定要删除该待办事项吗？')) return;
 
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setRawServerTasks((prev) => prev.filter((t) => String(t.id) !== taskId));
     try {
       await api.delete(`/tasks/${taskId}`);
     } catch (err) {
@@ -495,6 +709,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           duration_minutes: t.estimatedMinutes || 60,
           importance: t.importance,
           urgency: t.urgency,
+          score_scale: 100,
           deadline: t.dueDate ? new Date(t.dueDate).toISOString() : null,
           notes: t.description || '',
           auto_schedule: true,
@@ -513,7 +728,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         await api.delete(`/tasks/${t.id}`);
       } catch (_) {}
     }
-    setTasks([]);
+    setRawServerTasks([]);
     setIsBackupOpen(false);
   };
 
@@ -851,14 +1066,16 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         onToggleComplete={handleToggleComplete}
         onDelete={handleDeleteTask}
         initialTask={editingTask}
-        defaultImportance={clickCoords?.importance ?? 7}
+        defaultImportance={clickCoords?.importance ?? 58}
         defaultUrgency={clickCoords?.urgency}
         allExistingTags={allTags}
+        dailyBusyMinutesAhead={todayBusyMinutesAhead}
       />
 
       <WizardModal
         isOpen={isWizardOpen}
         onClose={() => setIsWizardOpen(false)}
+        dailyBusyMinutesAhead={todayBusyMinutesAhead}
         onConfirmTask={handleWizardConfirm}
       />
 

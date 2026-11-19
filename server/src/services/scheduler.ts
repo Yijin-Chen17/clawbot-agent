@@ -1,5 +1,10 @@
 import { db } from '../config/database.js';
 import { Task, UserSettings, ExternalEvent, WorkSlot } from '../models/types.js';
+import {
+  calculateQuadrant100,
+  normalizeScoreTo100,
+  calculateDynamicUrgency,
+} from '../utils/priorityAlgorithm.js';
 
 export type EnergyZoneType = 'peak' | 'moderate' | 'low' | 'fragment';
 
@@ -176,47 +181,115 @@ export function getStrategyLabel(zone: EnergyZoneType, quadrant: string, isSessi
 }
 
 /**
- * 依据重要度与紧迫度计算四象限
+ * 依据重要度与紧迫度计算四象限 (统一归一化到 0~100 分制，阈值 50)
  */
-export function calculateQuadrant(importance: number, urgency: number): 'q1' | 'q2' | 'q3' | 'q4' {
-  const imp = importance <= 5 ? importance * 2 : importance;
-  const urg = urgency <= 5 ? urgency * 2 : urgency;
-  const isImportant = imp >= 5;
-  const isUrgent = urg >= 5;
-  if (isImportant && isUrgent) return 'q1';
-  if (isImportant && !isUrgent) return 'q2';
-  if (!isImportant && isUrgent) return 'q3';
-  return 'q4';
+export function calculateQuadrant(
+  importance: number,
+  urgency: number,
+  scoreScale?: number | null
+): 'q1' | 'q2' | 'q3' | 'q4' {
+  const imp = normalizeScoreTo100(importance, scoreScale);
+  const urg = normalizeScoreTo100(urgency, scoreScale);
+  return calculateQuadrant100(imp, urg);
 }
 
 /**
- * 计算任务的综合排程优先级得分
+ * 计算今日剩余工作窗口内的已占用分钟数（外部日历 + 今日已排程任务，供每日固定任务紧迫度测算使用）
+ */
+export function computeTodayBusyMinutes(
+  userId: number,
+  currentTime: Date = new Date(),
+  excludeTaskId?: number
+): number {
+  const dayEnd = new Date(currentTime);
+  dayEnd.setHours(22, 0, 0, 0);
+  if (dayEnd.getTime() <= currentTime.getTime()) return 0;
+
+  const startIso = currentTime.toISOString();
+  const endIso = dayEnd.toISOString();
+
+  const extEvents = db.prepare(`
+    SELECT start_time, end_time FROM external_events
+    WHERE user_id = ? AND is_all_day = 0 AND end_time > ? AND start_time < ?
+  `).all(userId, startIso, endIso) as { start_time: string; end_time: string }[];
+
+  const scheduledTasks = db.prepare(`
+    SELECT id, scheduled_start, scheduled_end FROM tasks
+    WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
+      AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
+      AND scheduled_end > ? AND scheduled_start < ?
+  `).all(userId, startIso, endIso) as { id: number; scheduled_start: string; scheduled_end: string }[];
+
+  const intervals: { start: number; end: number }[] = [];
+  for (const ev of extEvents) {
+    intervals.push({
+      start: Math.max(currentTime.getTime(), new Date(ev.start_time).getTime()),
+      end: Math.min(dayEnd.getTime(), new Date(ev.end_time).getTime()),
+    });
+  }
+  for (const t of scheduledTasks) {
+    if (excludeTaskId !== undefined && t.id === excludeTaskId) continue;
+    intervals.push({
+      start: Math.max(currentTime.getTime(), new Date(t.scheduled_start).getTime()),
+      end: Math.min(dayEnd.getTime(), new Date(t.scheduled_end).getTime()),
+    });
+  }
+
+  intervals.sort((a, b) => a.start - b.start);
+  let busyMs = 0;
+  let curStart = -1;
+  let curEnd = -1;
+  for (const iv of intervals) {
+    if (iv.end <= iv.start) continue;
+    if (curStart === -1) {
+      curStart = iv.start;
+      curEnd = iv.end;
+    } else if (iv.start <= curEnd) {
+      curEnd = Math.max(curEnd, iv.end);
+    } else {
+      busyMs += curEnd - curStart;
+      curStart = iv.start;
+      curEnd = iv.end;
+    }
+  }
+  if (curStart !== -1) busyMs += curEnd - curStart;
+  return Math.round(busyMs / 60000);
+}
+
+/**
+ * 计算任务的综合排程优先级得分 (0~100 分制尺度)
  */
 export function computeTaskPriorityScore(task: {
   importance: number;
   urgency: number;
+  score_scale?: number | null;
+  time_mode?: string | null;
   deadline?: string | null;
 }, targetDate: Date): number {
-  const imp = task.importance <= 5 ? task.importance * 2 : task.importance;
-  const urg = task.urgency <= 5 ? task.urgency * 2 : task.urgency;
-  const quad = calculateQuadrant(task.importance, task.urgency);
+  const imp = normalizeScoreTo100(task.importance, task.score_scale);
+  const urg = normalizeScoreTo100(task.urgency, task.score_scale);
+  const quad = calculateQuadrant100(imp, urg);
 
   let baseScore = imp * 1.6 + urg * 1.2;
 
-  if (quad === 'q1') baseScore += 15;
-  else if (quad === 'q2') baseScore += 8;
-  else if (quad === 'q3') baseScore += 2;
+  if (quad === 'q1') baseScore += 150;
+  else if (quad === 'q2') baseScore += 80;
+  else if (quad === 'q3') baseScore += 20;
+
+  if (task.time_mode === 'daily_fixed') {
+    baseScore += 60;
+  }
 
   if (task.deadline) {
     const due = new Date(task.deadline);
     if (!isNaN(due.getTime())) {
       const diffDays = (due.getTime() - targetDate.getTime()) / (1000 * 3600 * 24);
       if (diffDays <= 1) {
-        baseScore += 12;
+        baseScore += 120;
       } else if (diffDays <= 3) {
-        baseScore += 6;
+        baseScore += 60;
       } else if (diffDays <= 7) {
-        baseScore += 2;
+        baseScore += 20;
       }
     }
   }
@@ -463,6 +536,16 @@ function runSingleDaySchedule(
   const pendingTasks = tasks.filter(t => {
     if (t.status === 'completed') return false;
     if (targetDateStr < todayStr) return false;
+    if (t.time_mode === 'daily_fixed') {
+      let completedDates: string[] = [];
+      try {
+        completedDates = t.completed_dates ? JSON.parse(t.completed_dates) : [];
+      } catch {}
+      if (Array.isArray(completedDates) && completedDates.includes(targetDateStr)) {
+        return false;
+      }
+      return targetDateStr === todayStr;
+    }
     if (t.deadline) {
       const advanceDays = options.advanceDeadlineDays ?? 1;
       const ddlDate = new Date(t.deadline);
@@ -481,7 +564,7 @@ function runSingleDaySchedule(
 
   const activeCandidates: Task[] = [];
   for (const task of pendingTasks) {
-    const quad = calculateQuadrant(task.importance, task.urgency);
+    const quad = calculateQuadrant(task.importance, task.urgency, task.score_scale);
     if (autoFilterQ4 && quad === 'q4') {
       unscheduledTaskIds.push({
         taskId: task.id,
@@ -495,19 +578,19 @@ function runSingleDaySchedule(
 
   const getPriority = (t: Task) => {
     const base = computeTaskPriorityScore(t, targetDate);
-    return rolloverTaskIds?.has(t.id) ? base + 10 : base;
+    return rolloverTaskIds?.has(t.id) ? base + 100 : base;
   };
 
   const deepTasks = activeCandidates
     .filter(t => {
-      const q = calculateQuadrant(t.importance, t.urgency);
+      const q = calculateQuadrant(t.importance, t.urgency, t.score_scale);
       return q === 'q1' || q === 'q2';
     })
     .sort((a, b) => getPriority(b) - getPriority(a));
 
   const shallowTasks = activeCandidates
     .filter(t => {
-      const q = calculateQuadrant(t.importance, t.urgency);
+      const q = calculateQuadrant(t.importance, t.urgency, t.score_scale);
       return q === 'q3' || (q !== 'q1' && q !== 'q2');
     })
     .sort((a, b) => getPriority(b) - getPriority(a));
@@ -519,7 +602,7 @@ function runSingleDaySchedule(
 
   const scoreSlotForTask = (slot: TimeSlot, task: Task, requiredSpanMinutes: number, isContiguousFit: boolean): number => {
     const zone = slot.energyZone || classifySlotEnergy(slot.start, slot.durationMinutes);
-    const quad = calculateQuadrant(task.importance, task.urgency);
+    const quad = calculateQuadrant(task.importance, task.urgency, task.score_scale);
     let score = 0;
 
     if (quad === 'q1' || quad === 'q2') {
@@ -708,7 +791,7 @@ function runSingleDaySchedule(
     const unscheduledMin = Math.max(0, totalTaskMinutes - allocatedMinutesSum);
 
     if (partsAllocated.length > 0) {
-      const quad = calculateQuadrant(task.importance, task.urgency);
+      const quad = calculateQuadrant(task.importance, task.urgency, task.score_scale);
       const totalParts = partsAllocated.length;
       const isMultiSession = totalParts > 1;
 
@@ -806,7 +889,60 @@ export function replanUserTasks(userId: number): {
 
   const bufferMinutes = settings?.task_buffer_minutes ?? 10;
   const now = new Date();
+  const todayStr = formatLocalDate(now);
   const horizonDays = 14;
+
+  // 在重排前依据当日日程繁忙度动态刷新每日固定任务的紧迫度
+  const todayBusyMinutes = computeTodayBusyMinutes(userId, now);
+  for (const t of activeTasks) {
+    let completedDates: string[] = [];
+    try {
+      completedDates = t.completed_dates ? JSON.parse(t.completed_dates) : [];
+    } catch {}
+    const isCompletedToday = Array.isArray(completedDates) && completedDates.includes(todayStr);
+
+    if (t.time_mode === 'daily_fixed') {
+      // 若跨日，将其固定时间窗或待排状态刷新到今日
+      if (t.scheduled_start && t.scheduled_end && formatLocalDate(new Date(t.scheduled_start)) < todayStr) {
+        if (t.is_fixed === 1) {
+          const oldStart = new Date(t.scheduled_start);
+          const oldEnd = new Date(t.scheduled_end);
+          const newStart = new Date(now);
+          newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+          const newEnd = new Date(newStart.getTime() + Math.max(15 * 60000, oldEnd.getTime() - oldStart.getTime()));
+          t.scheduled_start = newStart.toISOString();
+          t.scheduled_end = newEnd.toISOString();
+          t.schedule_blocks = JSON.stringify([{ start: t.scheduled_start, end: t.scheduled_end, duration: t.duration_minutes }]);
+        } else {
+          t.scheduled_start = null;
+          t.scheduled_end = null;
+          t.schedule_blocks = null;
+        }
+      }
+
+      const imp100 = normalizeScoreTo100(t.importance, t.score_scale);
+      const urgRes = calculateDynamicUrgency({
+        timeMode: 'daily_fixed',
+        dueDate: t.deadline ? t.deadline.slice(0, 10) : null,
+        estimatedMinutes: t.duration_minutes,
+        importance: imp100,
+        scheduledStart: t.scheduled_start,
+        scheduledEnd: t.scheduled_end,
+        isCompletedToday,
+        dailyBusyMinutesAhead: todayBusyMinutes,
+        workEndHour,
+        currentTime: now,
+      });
+      t.urgency = urgRes.urgency;
+      t.importance = imp100;
+      t.score_scale = 100;
+      db.prepare('UPDATE tasks SET urgency = ?, importance = ?, score_scale = 100 WHERE id = ?').run(
+        t.urgency,
+        t.importance,
+        t.id
+      );
+    }
+  }
 
   // 获取外部日程
   const horizonEnd = new Date(now.getTime() + horizonDays * 86400000);
@@ -1263,8 +1399,14 @@ export function scheduleTask(
       const isEarlier = candidateStartTime < (directStartTime - 45 * 60 * 1000);
       // 收益指标：新任务得分大幅领先，或紧迫度领先 >= 2.5，或新任务为高优先 Q1 而候选任务为普通任务
       const scoreDiff = newTaskScore - candidateScore;
-      const urgDiff = (task.urgency || 0) - (candidate.urgency || 0);
-      const isSignificantGain = scoreDiff >= 12 || urgDiff >= 2.5 || ((task.importance || 0) >= 7 && (task.urgency || 0) >= 7 && (candidate.urgency || 0) < 6);
+      const newUrg = normalizeScoreTo100(task.urgency, 100);
+      const candUrg = normalizeScoreTo100(candidate.urgency, candidate.score_scale);
+      const newImp = normalizeScoreTo100(task.importance, 100);
+      const urgDiff = newUrg - candUrg;
+      const isSignificantGain =
+        scoreDiff >= 120 ||
+        urgDiff >= 25 ||
+        (newImp >= 70 && newUrg >= 70 && candUrg < 60);
 
       if (isEarlier && isSignificantGain) {
         isCandidateEligible = true;
