@@ -100,10 +100,10 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   `).all(userId, startIso, endIso) as any[];
 
   // 2. Scheduled tasks
-  const tasks = db.prepare(`
+    const tasks = db.prepare(`
     SELECT
       id, title, scheduled_start as start, scheduled_end as end,
-      duration_minutes, urgency, importance, status, deadline, notes, schedule_blocks,
+      duration_minutes, urgency, importance, score_scale, status, deadline, notes, schedule_blocks,
       is_fixed, is_concurrent
     FROM tasks
     WHERE user_id = ?
@@ -131,10 +131,12 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
       },
     })),
     ...tasks.flatMap(t => {
+      const urg100 = t.score_scale === 100 || t.urgency > 10 ? t.urgency : t.urgency <= 5 ? t.urgency * 20 : t.urgency * 10;
+      const imp100 = t.score_scale === 100 || t.importance > 10 ? t.importance : t.importance <= 5 ? t.importance * 20 : t.importance * 10;
       let color = '#3b82f6'; // default blue
       if (t.status === 'completed') color = '#10b981'; // emerald green
-      else if (t.urgency >= 4) color = '#ef4444';      // red/urgent
-      else if (t.importance >= 4) color = '#f59e0b';   // amber/important
+      else if (urg100 >= 65) color = '#ef4444';        // red/urgent
+      else if (imp100 >= 50) color = '#f59e0b';        // amber/important
 
       let blocks: any[] = [];
       if (t.schedule_blocks) {

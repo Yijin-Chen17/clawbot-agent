@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { calculateQuadrant, formatLocalDate, isTaskLastDay } from '../types/task';
 import type { TaskItem, QuadrantId, TaskFilterOptions } from '../types/task';
 import { useLocalStorage } from './useLocalStorage';
-import { calculateDynamicUrgency } from '../utils/priorityAlgorithm';
+import { calculateDynamicUrgency, normalizeScoreTo100, PRIORITY_THRESHOLD } from '../utils/priorityAlgorithm';
 
 const STORAGE_KEY = 'eisenhower_matrix_user_tasks';
 
@@ -29,9 +29,10 @@ export function useTasks() {
             currentTime: now,
           });
           const nextUrgency = result.urgency;
-          const nextIsImportant = task.importance >= 5;
-          const nextIsUrgent = nextUrgency >= 5;
-          const nextQuadrant = calculateQuadrant(task.importance, nextUrgency);
+          const imp100 = normalizeScoreTo100(task.importance, task.scoreScale);
+          const nextIsImportant = imp100 >= PRIORITY_THRESHOLD;
+          const nextIsUrgent = nextUrgency >= PRIORITY_THRESHOLD;
+          const nextQuadrant = calculateQuadrant(imp100, nextUrgency);
 
           if (
             task.urgency !== nextUrgency ||
@@ -102,9 +103,9 @@ export function useTasks() {
       const effectiveUrgency = result.urgency;
       const algorithmStatusText = result.statusText;
 
-      const isImportant = task.importance >= 5;
-      const isUrgent = effectiveUrgency >= 5;
-      const quadrant = calculateQuadrant(task.importance, effectiveUrgency);
+      const isImportant = normalizeScoreTo100(task.importance, task.scoreScale) >= PRIORITY_THRESHOLD;
+      const isUrgent = effectiveUrgency >= PRIORITY_THRESHOLD;
+      const quadrant = calculateQuadrant(normalizeScoreTo100(task.importance, task.scoreScale), effectiveUrgency);
 
       return {
         ...task,
@@ -130,18 +131,19 @@ export function useTasks() {
     tags?: string[];
     estimatedMinutes?: number;
   }) => {
-    const importance = Math.max(0, Math.min(10, Number(data.importance) || 5));
+    const importance = normalizeScoreTo100(Number(data.importance) || 50, 100);
     const effectiveDueDate = data.dueDate || formatLocalDate(new Date());
 
     const result = calculateDynamicUrgency({
       dueDate: effectiveDueDate,
       estimatedMinutes: data.estimatedMinutes,
+      importance,
       currentTime: new Date(),
     });
     const urgency = result.urgency;
 
-    const isImportant = importance >= 5;
-    const isUrgent = urgency >= 5;
+    const isImportant = importance >= PRIORITY_THRESHOLD;
+    const isUrgent = urgency >= PRIORITY_THRESHOLD;
     const quadrant = calculateQuadrant(importance, urgency);
 
     const newTask: TaskItem = {
@@ -174,9 +176,9 @@ export function useTasks() {
       prev.map((item) => {
         if (item.id !== id) return item;
 
-        const nextImportance = updates.importance !== undefined 
-          ? Math.max(0, Math.min(10, Number(updates.importance))) 
-          : item.importance;
+        const nextImportance = updates.importance !== undefined
+          ? normalizeScoreTo100(Number(updates.importance), 100)
+          : normalizeScoreTo100(item.importance, item.scoreScale);
 
         const nextDueDate = (updates.dueDate !== undefined ? updates.dueDate : item.dueDate) || formatLocalDate(new Date());
         const nextEstimatedMinutes = updates.estimatedMinutes !== undefined ? updates.estimatedMinutes : item.estimatedMinutes;
@@ -184,12 +186,13 @@ export function useTasks() {
         const result = calculateDynamicUrgency({
           dueDate: nextDueDate,
           estimatedMinutes: nextEstimatedMinutes,
+          importance: nextImportance,
           currentTime: new Date(),
         });
         const nextUrgency = result.urgency;
 
-        const nextIsImportant = nextImportance >= 5;
-        const nextIsUrgent = nextUrgency >= 5;
+        const nextIsImportant = nextImportance >= PRIORITY_THRESHOLD;
+        const nextIsUrgent = nextUrgency >= PRIORITY_THRESHOLD;
         const nextQuadrant = calculateQuadrant(nextImportance, nextUrgency);
 
         return {
@@ -302,13 +305,14 @@ export function useTasks() {
   const importTasks = (newTasks: any[]) => {
     const now = new Date();
     const sanitized: TaskItem[] = newTasks.map((t) => {
-      const importance = typeof t.importance === 'number' 
-        ? Math.max(0, Math.min(10, t.importance)) 
-        : (t.isImportant ? 8 : 2);
+      const importance = typeof t.importance === 'number'
+        ? normalizeScoreTo100(t.importance, t.scoreScale)
+        : (t.isImportant ? 82 : 25);
       const effectiveDueDate = t.dueDate || formatLocalDate(now);
       const result = calculateDynamicUrgency({
         dueDate: effectiveDueDate,
         estimatedMinutes: t.estimatedMinutes,
+        importance,
         currentTime: now,
       });
       const urgency = result.urgency;
@@ -319,9 +323,10 @@ export function useTasks() {
         description: t.description || undefined,
         importance,
         urgency,
+        scoreScale: 100,
         useAutoUrgency: true,
-        isImportant: importance >= 5,
-        isUrgent: urgency >= 5,
+        isImportant: importance >= PRIORITY_THRESHOLD,
+        isUrgent: urgency >= PRIORITY_THRESHOLD,
         quadrant: calculateQuadrant(importance, urgency),
         isCompleted: !!t.isCompleted,
         completedDates: Array.isArray(t.completedDates) ? t.completedDates : [],

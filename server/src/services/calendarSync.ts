@@ -182,7 +182,7 @@ export function generateUserTodoIcal(userId: number, username: string): string {
         block.strategyLabel ? `排程策略：${block.strategyLabel}` : '',
         `任务状态：${isCompleted ? '已完成' : '待进行'}`,
         `预计耗时：${t.duration_minutes} 分钟`,
-        `紧急程度：${t.urgency} / 5  ·  重要程度：${t.importance} / 5`,
+        `紧急程度：${t.urgency} / 100  ·  重要程度：${t.importance} / 100`,
         t.deadline ? `截止时间：${new Date(t.deadline).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : '',
         t.notes ? `备注：${t.notes}` : '',
       ].filter(Boolean);

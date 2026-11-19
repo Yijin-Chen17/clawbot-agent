@@ -3,7 +3,15 @@ import axios from 'axios';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
 import { parseUserMessageWithLLM } from './llm.js';
-import { scheduleTask, replanUserTasks, completeTaskPart } from './scheduler.js';
+import { scheduleTask, replanUserTasks, completeTaskPart, computeTodayBusyMinutes } from './scheduler.js';
+import {
+  calculateDynamicImportance,
+  calculateDynamicUrgency,
+  inferTierFromScore,
+  normalizeScoreTo100,
+  type ImpactSignal,
+  type TimeMode,
+} from '../utils/priorityAlgorithm.js';
 import { syncAllUserSubscriptions } from './calendarSync.js';
 import { renderCalendarImage, renderWeekCalendarImage, renderTodoListImage } from './cardRenderer.js';
 import { templates } from './clawbot.js';
@@ -780,10 +788,10 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-              deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
+              score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run(
             userId,
             newTask.title,
@@ -808,9 +816,9 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-              deadline, is_fixed, is_concurrent, status, created_at, updated_at
+              score_scale, deadline, is_fixed, is_concurrent, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_slot', datetime('now', 'localtime'), datetime('now', 'localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, 100, ?, 0, ?, 'pending_slot', datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run(
             userId,
             newTask.title,
@@ -1070,34 +1078,56 @@ export async function processWeChatMessage(
     } else if (parsed.intent === 'create_task') {
       const title = parsed.title || pendingTask?.title || '未命名任务';
       const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
-      let importance = parsed.importance ?? pendingTask?.importance ?? 7.0; // 默认重要度 7.0
-      let deadline = parsed.deadline || pendingTask?.deadline || null;
+      const deadline = parsed.deadline || pendingTask?.deadline || null;
       const dueDate = parsed.dueDate || (deadline ? deadline.split('T')[0] : null) || pendingTask?.dueDate || null;
-      if (!deadline && dueDate) {
-        deadline = `${dueDate}T23:59:59`;
-      }
+      const resolvedDeadline = !deadline && dueDate ? `${dueDate}T23:59:59` : deadline;
+      const timeMode: TimeMode =
+        parsed.time_mode || pendingTask?.time_mode || (resolvedDeadline ? 'deadline' : 'flexible');
+      const impactSignals = (parsed.impact_signals || pendingTask?.impact_signals || []) as ImpactSignal[];
 
-      // 根据 oxoxox-oxox 算法：如果有 deadline / dueDate，紧迫度可通过 calculateDynamicUrgency 自动推导
-      let urgency = parsed.urgency ?? pendingTask?.urgency ?? null;
-      if (deadline || dueDate) {
-        try {
-          const { calculateDynamicUrgency } = await import('../utils/priorityAlgorithm.js');
-          const dyn = calculateDynamicUrgency({
-            dueDate: dueDate || deadline,
-            estimatedMinutes: duration || 30,
-            fallbackUrgency: urgency ?? 5.0,
-          });
-          urgency = dyn.urgency;
-        } catch {
-          if (!urgency) urgency = 6.0;
-        }
+      const rawImp = parsed.importance ?? pendingTask?.importance ?? 70;
+      let importance = normalizeScoreTo100(rawImp, rawImp <= 10 ? 10 : 100);
+      if (parsed.importance_tier) {
+        importance = calculateDynamicImportance({
+          tier: parsed.importance_tier,
+          estimatedMinutes: duration || 60,
+          impactSignals,
+          isFixed: Boolean(parsed.is_fixed),
+        }).importance;
       }
+      const importanceTier = parsed.importance_tier || inferTierFromScore(importance);
 
-      const merged = { title, duration_minutes: duration, urgency, importance, deadline, dueDate };
+      const rawUrg = parsed.urgency ?? pendingTask?.urgency ?? null;
+      const fallbackUrg = rawUrg !== null ? normalizeScoreTo100(rawUrg, rawUrg <= 10 ? 10 : 100) : 55;
+      const urgency =
+        resolvedDeadline || dueDate || timeMode === 'daily_fixed'
+          ? calculateDynamicUrgency({
+              timeMode,
+              dueDate: dueDate || resolvedDeadline,
+              estimatedMinutes: duration || 30,
+              importance,
+              scheduledStart: parsed.fixed_start || null,
+              scheduledEnd: parsed.fixed_end || null,
+              dailyBusyMinutesAhead: computeTodayBusyMinutes(userId),
+              fallbackUrgency: fallbackUrg,
+            }).urgency
+          : fallbackUrg;
+
+      const merged = {
+        title,
+        duration_minutes: duration,
+        urgency,
+        importance,
+        importance_tier: importanceTier,
+        impact_signals: impactSignals,
+        time_mode: timeMode,
+        deadline: resolvedDeadline,
+        dueDate,
+      };
       const missing = {
         duration: !duration || duration <= 0,
-        deadline: !deadline && !dueDate,
-        urgency: false, // 紧迫度依据截止期自动推导，不强制追问
+        deadline: !resolvedDeadline && !dueDate && timeMode !== 'daily_fixed',
+        urgency: false, // 紧迫度依据截止期与日程负荷自动推导，不强制追问
         importance: !importance,
       };
 
@@ -1130,10 +1160,15 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, fixedStart, fixedEnd, 1, isConcurrent, JSON.stringify(singleBlock));
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?)
+          `).run(
+            userId, title, duration, originalDuration, urgency, importance,
+            importanceTier, JSON.stringify(impactSignals), timeMode,
+            resolvedDeadline, fixedStart, fixedEnd, 1, isConcurrent, JSON.stringify(singleBlock)
+          );
 
           replanUserTasks(userId);
 
@@ -1163,7 +1198,7 @@ export async function processWeChatMessage(
           duration_minutes: duration!,
           urgency: urgency!,
           importance: importance!,
-          deadline: deadline,
+          deadline: resolvedDeadline,
         });
 
         // 如果触发了顶替或有效时间内无法完成的调整建议，提醒用户是否同步修改
@@ -1195,7 +1230,7 @@ export async function processWeChatMessage(
               originalDuration,
               urgency: urgency!,
               importance: importance!,
-              deadline,
+              deadline: resolvedDeadline,
               isConcurrent: Boolean(isConcurrent),
               directPlan: plan.success ? {
                 start: plan.scheduled_start,
@@ -1225,10 +1260,15 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?)
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, isConcurrent, plan.schedule_blocks || null);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?)
+          `).run(
+            userId, title, duration, originalDuration, urgency, importance,
+            importanceTier, JSON.stringify(impactSignals), timeMode,
+            resolvedDeadline, plan.scheduled_start, plan.scheduled_end, isConcurrent, plan.schedule_blocks || null
+          );
 
           // Dynamically optimize and adjust other pending tasks
           replanUserTasks(userId);
@@ -1271,10 +1311,15 @@ export async function processWeChatMessage(
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+              importance_tier, impact_signals, time_mode, score_scale,
               deadline, is_fixed, is_concurrent, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_slot')
-          `).run(userId, title, duration, originalDuration, urgency, importance, deadline, isConcurrent);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, 0, ?, 'pending_slot')
+          `).run(
+            userId, title, duration, originalDuration, urgency, importance,
+            importanceTier, JSON.stringify(impactSignals), timeMode,
+            resolvedDeadline, isConcurrent
+          );
 
           const reply = templates.scheduleFailed(title, duration!, plan.message);
           addDebugLog('Scheduler', 'warn', `新待办规划未找到合适时隙，置为待安排: "${title}" (${plan.message})`);

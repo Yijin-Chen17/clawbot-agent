@@ -2,8 +2,16 @@ import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState } from '../models/types.js';
 import { parseUserMessageWithLLM } from '../services/llm.js';
-import { scheduleTask } from '../services/scheduler.js';
+import { scheduleTask, computeTodayBusyMinutes } from '../services/scheduler.js';
 import { templates, sendClawbotMessage } from '../services/clawbot.js';
+import {
+  calculateDynamicImportance,
+  calculateDynamicUrgency,
+  inferTierFromScore,
+  normalizeScoreTo100,
+  type ImpactSignal,
+  type TimeMode,
+} from '../utils/priorityAlgorithm.js';
 
 export async function handleClawbotWebhook(req: Request, res: Response): Promise<void> {
   const { token } = req.params;
@@ -146,22 +154,68 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
     } else if (parsed.intent === 'create_task') {
       // Merge with pending task if present
       const title = parsed.title || pendingTask?.title || '未命名任务';
-      const duration = parsed.duration_minutes || pendingTask?.duration_minutes || null;
-      const urgency = parsed.urgency || pendingTask?.urgency || null;
-      const importance = parsed.importance || pendingTask?.importance || null;
+      const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || null;
       const deadline = parsed.deadline || pendingTask?.deadline || null;
+      const timeMode: TimeMode =
+        parsed.time_mode || pendingTask?.time_mode || (deadline ? 'deadline' : 'flexible');
+      const impactSignals = (parsed.impact_signals || pendingTask?.impact_signals || []) as ImpactSignal[];
 
-      const merged = { title, duration_minutes: duration, urgency, importance, deadline };
+      let importance: number | null =
+        parsed.importance !== undefined && parsed.importance !== null
+          ? normalizeScoreTo100(parsed.importance, parsed.importance <= 10 ? 10 : 100)
+          : pendingTask?.importance !== undefined && pendingTask?.importance !== null
+          ? normalizeScoreTo100(pendingTask.importance, pendingTask.importance <= 10 ? 10 : 100)
+          : null;
+
+      if (parsed.importance_tier) {
+        importance = calculateDynamicImportance({
+          tier: parsed.importance_tier,
+          estimatedMinutes: duration || 60,
+          impactSignals,
+          isFixed: Boolean(parsed.is_fixed),
+        }).importance;
+      }
+
+      const importanceTier = parsed.importance_tier || (importance !== null ? inferTierFromScore(importance) : 'support');
+      const rawUrgency =
+        parsed.urgency !== undefined && parsed.urgency !== null
+          ? normalizeScoreTo100(parsed.urgency, parsed.urgency <= 10 ? 10 : 100)
+          : pendingTask?.urgency !== undefined && pendingTask?.urgency !== null
+          ? normalizeScoreTo100(pendingTask.urgency, pendingTask.urgency <= 10 ? 10 : 100)
+          : null;
+
+      const urgency =
+        deadline || timeMode === 'daily_fixed'
+          ? calculateDynamicUrgency({
+              timeMode,
+              dueDate: deadline,
+              estimatedMinutes: duration || 60,
+              importance: importance ?? 58,
+              dailyBusyMinutesAhead: computeTodayBusyMinutes(userId),
+              fallbackUrgency: rawUrgency ?? 50,
+            }).urgency
+          : rawUrgency;
+
+      const merged = {
+        title,
+        duration_minutes: duration,
+        urgency,
+        importance,
+        importance_tier: importanceTier,
+        impact_signals: impactSignals,
+        time_mode: timeMode,
+        deadline,
+      };
 
       // Check missing fields
       const missing = {
         duration: !duration || duration <= 0,
-        deadline: !deadline,
-        urgency: !urgency,
-        importance: !importance,
+        deadline: !deadline && timeMode !== 'daily_fixed',
+        urgency: false,
+        importance: importance === null,
       };
 
-      const hasMissing = missing.duration || missing.deadline || missing.urgency || missing.importance;
+      const hasMissing = missing.duration || missing.deadline || missing.importance;
 
       if (hasMissing) {
         // Save pending conversation state
@@ -176,13 +230,14 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
 
         replyText = templates.askMissingFields(title, missing);
       } else {
-        // All 4 critical fields are available! Run scheduling algorithm!
+        // All critical fields are available! Run scheduling algorithm!
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
+        const finalUrgency = urgency ?? 55;
 
         const plan = scheduleTask(userId, {
           title,
           duration_minutes: duration!,
-          urgency: urgency!,
+          urgency: finalUrgency,
           importance: importance!,
           deadline: deadline,
         });
@@ -191,10 +246,24 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, urgency, importance,
+              importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'scheduled', ?)
-          `).run(userId, title, duration, urgency, importance, deadline, plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, 'scheduled', ?)
+          `).run(
+            userId,
+            title,
+            duration,
+            finalUrgency,
+            importance,
+            importanceTier,
+            JSON.stringify(impactSignals),
+            timeMode,
+            deadline,
+            plan.scheduled_start,
+            plan.scheduled_end,
+            plan.schedule_blocks || null
+          );
 
           const sStr = new Date(plan.scheduled_start).toLocaleString('zh-CN', {
             month: '2-digit',
@@ -209,16 +278,17 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
             hour12: false,
           });
 
-          replyText = templates.scheduleSuccess(title, sStr, eStr, duration!, urgency!, importance!);
+          replyText = templates.scheduleSuccess(title, sStr, eStr, duration!, finalUrgency, importance!);
         } else {
           // Save as pending slot
           db.prepare(`
             INSERT INTO tasks (
               user_id, title, duration_minutes, urgency, importance,
+              importance_tier, impact_signals, time_mode, score_scale,
               deadline, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'pending_slot')
-          `).run(userId, title, duration, urgency, importance, deadline);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, 'pending_slot')
+          `).run(userId, title, duration, finalUrgency, importance, importanceTier, JSON.stringify(impactSignals), timeMode, deadline);
 
           replyText = templates.scheduleFailed(title, duration!, plan.message);
         }

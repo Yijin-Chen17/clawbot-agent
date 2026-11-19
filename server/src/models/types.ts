@@ -74,8 +74,15 @@ export interface Task {
   title: string;
   duration_minutes: number;
   original_duration_minutes?: number;
-  urgency: number;    // 1 - 5
-  importance: number; // 1 - 5
+  urgency: number;    // 0 - 100
+  importance: number; // 0 - 100
+  importance_tier?: 'vital' | 'support' | 'minor' | null;
+  impact_signals?: string | null; // JSON array of ImpactSignal
+  time_mode?: 'deadline' | 'daily_fixed' | 'flexible' | null;
+  urgency_pace?: 'urgent' | 'soon' | 'later' | null;
+  importance_manual_override?: number | null;
+  completed_dates?: string | null; // JSON array of YYYY-MM-DD
+  score_scale?: number | null;
   deadline: string | null; // ISO
   scheduled_start: string | null; // ISO
   scheduled_end: string | null;   // ISO
@@ -105,8 +112,12 @@ export interface LLMExtractionResult {
   title?: string | null;
   description?: string | null;
   duration_minutes?: number | null;
-  urgency?: number | null; // 0.0 - 10.0
-  importance?: number | null; // 0.0 - 10.0
+  urgency?: number | null; // 0 - 100 (or legacy 0-10)
+  importance?: number | null; // 0 - 100 (or legacy 0-10)
+  importance_tier?: 'vital' | 'support' | 'minor' | null;
+  impact_signals?: string[] | null;
+  time_mode?: 'deadline' | 'daily_fixed' | 'flexible' | null;
+  urgency_pace?: 'urgent' | 'soon' | 'later' | null;
   deadline?: string | null; // ISO 8601 string or YYYY-MM-DD
   dueDate?: string | null; // 对齐 oxoxox-oxox: YYYY-MM-DD
   estimatedMinutes?: number | null; // 对齐 oxoxox-oxox: 预计耗时分钟数

@@ -82,8 +82,8 @@ export function initDatabase() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       duration_minutes INTEGER NOT NULL,
-      urgency INTEGER DEFAULT 3,
-      importance INTEGER DEFAULT 3,
+      urgency INTEGER DEFAULT 50,
+      importance INTEGER DEFAULT 50,
       deadline DATETIME,
       scheduled_start DATETIME,
       scheduled_end DATETIME,
@@ -177,6 +177,43 @@ export function initDatabase() {
   }
   if (!taskCols.includes('original_duration_minutes')) {
     db.exec('ALTER TABLE tasks ADD COLUMN original_duration_minutes INTEGER DEFAULT 0;');
+  }
+  if (!taskCols.includes('importance_tier')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN importance_tier TEXT DEFAULT NULL;');
+  }
+  if (!taskCols.includes('impact_signals')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN impact_signals TEXT DEFAULT '[]';");
+  }
+  if (!taskCols.includes('time_mode')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN time_mode TEXT DEFAULT 'deadline';");
+  }
+  if (!taskCols.includes('urgency_pace')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN urgency_pace TEXT DEFAULT 'soon';");
+  }
+  if (!taskCols.includes('importance_manual_override')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN importance_manual_override INTEGER DEFAULT NULL;');
+  }
+  if (!taskCols.includes('completed_dates')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN completed_dates TEXT DEFAULT '[]';");
+  }
+  if (!taskCols.includes('score_scale')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN score_scale INTEGER DEFAULT 100;');
+    // 将历史 1~5 / 0~10 分制存量数据一次性升级归一化为 0~100 分制
+    db.exec(`
+      UPDATE tasks
+      SET
+        importance = CASE
+          WHEN importance > 10 THEN MIN(100, MAX(0, ROUND(importance)))
+          WHEN importance <= 5 AND urgency <= 5 THEN MIN(100, MAX(0, ROUND(importance * 20)))
+          ELSE MIN(100, MAX(0, ROUND(importance * 10)))
+        END,
+        urgency = CASE
+          WHEN urgency > 10 THEN MIN(100, MAX(0, ROUND(urgency)))
+          WHEN importance <= 5 AND urgency <= 5 THEN MIN(100, MAX(0, ROUND(urgency * 20)))
+          ELSE MIN(100, MAX(0, ROUND(urgency * 10)))
+        END,
+        score_scale = 100;
+    `);
   }
 
   // 确保所有已有排程的任务均锁定为固定任务 (一旦安排日历，就不再做更改)
