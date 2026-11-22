@@ -311,7 +311,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       scheduledStart,
       scheduledEnd,
     });
-    onClose();
   };
 
   return (

@@ -1,3 +1,6 @@
+import { TaskModal, type TaskModalSavePayload } from './TaskModal';
+import type { TaskItem as EditableTask } from '../types/task';
+import { inferTierFromScore, type ImpactSignal, type TimeMode, type UrgencyPace } from '../utils/priorityAlgorithm';
 import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api/client';
@@ -78,6 +81,11 @@ interface TaskItem {
   duration_minutes: number;
   original_duration_minutes?: number | null;
   time_mode?: string;
+  importance_tier?: 'vital' | 'support' | 'minor' | null;
+  impact_signals?: string | null;
+  urgency_pace?: 'urgent' | 'soon' | 'later' | null;
+  importance_manual_override?: number | null;
+  deadline_kind?: 'hard' | 'soft' | null;
   completed_dates?: string | null;
   urgency: number;
   importance: number;
@@ -331,6 +339,61 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
   const [selectedDueTask, setSelectedDueTask] = useState<TaskItem | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
+  const [editError, setEditError] = useState('');
+
+  const openCalendarItem = (item: TimedSegment) => {
+    if (item.kind === 'task') setEditingTask(item.task);
+    else setSelectedItem(item);
+  };
+
+  const editInitialTask = (task: TaskItem): EditableTask => {
+    let impactSignals: ImpactSignal[] = [];
+    try {
+      const parsed = JSON.parse(task.impact_signals || '[]');
+      if (Array.isArray(parsed)) impactSignals = parsed;
+    } catch {}
+    const importance = normalizeScoreTo100(task.importance, task.score_scale);
+    const urgency = normalizeScoreTo100(task.urgency, task.score_scale);
+    const quadrant = getTaskQuadrant(task.importance, task.urgency, task.score_scale).key as EditableTask['quadrant'];
+    return {
+      id: String(task.id), title: task.title, description: task.notes || '', importance, urgency,
+      importanceTier: task.importance_tier || inferTierFromScore(importance), impactSignals,
+      timeMode: (task.time_mode || (task.deadline ? 'deadline' : 'flexible')) as TimeMode,
+      urgencyPace: (task.urgency_pace || 'soon') as UrgencyPace,
+      importanceManualOverride: task.importance_manual_override == null ? null : normalizeScoreTo100(task.importance_manual_override, task.score_scale),
+      deadlineAt: task.deadline, deadlineKind: task.deadline_kind || 'soft', dueDate: task.deadline,
+      estimatedMinutes: task.duration_minutes, isFixed: Boolean(task.is_fixed), isConcurrent: Boolean(task.is_concurrent),
+      scheduledStart: task.scheduled_start, scheduledEnd: task.scheduled_end,
+      isImportant: importance >= 50, isUrgent: urgency >= 50, quadrant,
+      isCompleted: task.status === 'completed', tags: [], createdAt: task.created_at || new Date().toISOString(),
+    };
+  };
+
+  const saveCalendarTask = async (taskId: number, data: TaskModalSavePayload) => {
+    setEditError('');
+    setPlanning({ title: '正在更新日程', status: 'working' });
+    try {
+      const response = await api.put(`/tasks/${taskId}`, {
+        title: data.title, notes: data.description || '', duration_minutes: data.estimatedMinutes,
+        importance: data.importance, urgency: data.urgency, importance_tier: data.importanceTier,
+        impact_signals: data.impactSignals, time_mode: data.timeMode, urgency_pace: data.urgencyPace,
+        importance_manual_override: data.importanceManualOverride, score_scale: 100,
+        deadline_kind: data.deadlineKind,
+        deadline: data.dueDate ? (data.dueDate.includes('T') ? new Date(data.dueDate).toISOString() : data.dueDate) : null,
+        scheduled_start: data.scheduledStart || null, scheduled_end: data.scheduledEnd || null,
+        is_fixed: data.isFixed ? 1 : 0, is_concurrent: data.isConcurrent ? 1 : 0,
+      });
+      setEditingTask(null);
+      setEditError('');
+      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.message });
+      await fetchData();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      setEditError(err.response?.data?.error || '保存失败，请重试');
+      setPlanning(null);
+    }
+  };
 
   // Add subscription form
   const [newSubName, setNewSubName] = useState('');
@@ -1062,7 +1125,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   <button
                     key={`overdue-${t.id}`}
                     type="button"
-                    onClick={() => setSelectedDueTask(t)}
+                    onClick={() => setEditingTask(t)}
                     className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
                   >
                     <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
@@ -1083,7 +1146,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                       <button
                         key={`due-${t.id}`}
                         type="button"
-                        onClick={() => setSelectedDueTask(t)}
+                        onClick={() => setEditingTask(t)}
                         className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer flex items-center justify-between text-xs"
                       >
                         <span className="truncate text-gray-700 dark:text-neutral-300">{t.title}</span>
@@ -1165,7 +1228,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                 {d.allDay.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setSelectedItem(item)}
+                    onClick={() => openCalendarItem(item)}
                     className="w-full text-left text-[11px] font-medium px-2 py-0.5 rounded-[4px] truncate text-white shadow-2xs hover:brightness-95 transition cursor-pointer"
                     style={{ backgroundColor: item.color }}
                   >
@@ -1246,7 +1309,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                       <button
                         key={seg.id}
                         type="button"
-                        onClick={() => setSelectedItem(seg)}
+                        onClick={() => openCalendarItem(seg)}
                         title={`${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`}
                         className={`absolute rounded p-1 text-left transition-all z-10 hover:z-20 shadow-xs hover:shadow-md hover:brightness-95 cursor-pointer overflow-hidden border-l-[3.5px] leading-tight ${
                           isCompact ? 'flex items-center gap-1.5 py-0 px-1.5' : ''
@@ -1556,6 +1619,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           </div>
         </div>
       )}
+
+      {editingTask && (
+        <TaskModal
+          isOpen
+          initialTask={editInitialTask(editingTask)}
+          onClose={() => { setEditingTask(null); setEditError(''); }}
+          onSave={(data) => { void saveCalendarTask(editingTask.id, data); }}
+          onToggleComplete={() => { void handleCompleteTask(editingTask.id); }}
+          onDelete={() => { void handleDeleteCalendarTask(editingTask.id); }}
+        />
+      )}
+      {editError && <div role="alert" className="fixed bottom-5 right-5 z-[110] rounded-xl bg-rose-600 px-4 py-3 text-xs text-white shadow-lg">{editError}</div>}
 
       {/* 3. 日程或待办详情模态框 */}
       {selectedItem && (
