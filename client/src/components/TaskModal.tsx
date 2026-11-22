@@ -523,7 +523,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 type="button"
                 onClick={() => {
                   setTimeMode('daily_fixed');
-                  setIsFixed(true);
                 }}
                 className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-medium transition cursor-pointer ${
                   timeMode === 'daily_fixed'

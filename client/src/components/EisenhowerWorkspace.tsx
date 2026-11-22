@@ -1,3 +1,4 @@
+import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
@@ -514,11 +515,14 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   }, []);
 
   // 保存任务 (新建 / 编辑)
+  const [planning, setPlanning] = useState<PlanningState | null>(null);
+
   const handleSaveTask = async (data: Partial<TaskModalSavePayload> & {
     title: string;
     importance: number;
     urgency: number;
   }) => {
+    setPlanning({ title: editingTask ? '正在更新日程' : '正在规划全部日程', status: 'working' });
     try {
       const payload = {
         title: data.title,
@@ -542,18 +546,16 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         auto_schedule: !data.isFixed,
       };
 
-      if (editingTask) {
-        await api.put(`/tasks/${editingTask.id}`, payload);
-      } else {
-        await api.post('/tasks', payload);
-      }
-
+      const response = editingTask
+        ? await api.put(`/tasks/${editingTask.id}`, payload)
+        : await api.post('/tasks', payload);
+      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.replan?.summary || response.data.message });
       await fetchTasks();
       setIsTaskModalOpen(false);
       setEditingTask(null);
       setClickCoords(null);
     } catch (err: any) {
-      alert(err.response?.data?.error || '保存任务失败，请重试');
+      setPlanning({ title: '保存失败', status: 'error', detail: err.response?.data?.error || '请重试' });
     }
   };
 
@@ -740,6 +742,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20]">
+      {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
       {/* 顶部极简操作工具栏 (主流 AI Agent 风格无缝顶栏) */}
       <header className="h-13 px-3 sm:px-6 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧: 移动端侧栏汉堡菜单 + 标题与分类 */}

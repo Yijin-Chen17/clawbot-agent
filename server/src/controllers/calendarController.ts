@@ -261,6 +261,14 @@ export async function syncAndReplanAll(req: AuthenticatedRequest, res: Response)
   }
 }
 
+export function replanAll(req: AuthenticatedRequest, res: Response): void {
+  try {
+    res.json(replanUserTasks(req.user!.id));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || '排程失败' });
+  }
+}
+
 /**
  * Preview today's calendar PNG card
  */

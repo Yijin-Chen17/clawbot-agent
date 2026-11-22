@@ -185,32 +185,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     status = 'scheduled';
     scheduleMsg = '固定任务已创建并锁定时间段！';
     scheduleBlocks = JSON.stringify([{ start: finalStart, end: finalEnd, duration: Number(duration_minutes) }]);
-  } else if (auto_schedule) {
-    const plan = scheduleTask(userId, {
-      title,
-      session_plan: sessionPlan,
-      duration_minutes: Number(duration_minutes),
-      urgency: resolvedUrgency,
-      importance: resolvedImportance,
-      deadline: deadline || null,
-      deadline_kind: deadline_kind === 'hard' ? 'hard' : 'soft',
-      urgency_pace: resolvedPace,
-      score_scale: 100,
-    });
 
-    if (plan.proposal) {
-      proposal = plan.proposal;
-    }
-
-    if (plan.success && plan.scheduled_start && plan.scheduled_end) {
-      finalStart = plan.scheduled_start;
-      finalEnd = plan.scheduled_end;
-      scheduleBlocks = plan.schedule_blocks || null;
-      status = 'scheduled';
-      scheduleMsg = is_fixed ? '任务已成功排程入日历并锁定！' : '任务已成功智能排程入日历！';
-    } else {
-      scheduleMsg = plan.message || '未找到合适时间槽，待手动调整。';
-    }
   }
 
   const result = db.prepare(`
@@ -246,13 +221,14 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
 
   const newId = result.lastInsertRowid;
   db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, newId);
-  replanUserTasks(userId);
-  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId);
+  const replan = replanUserTasks(userId);
+  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId) as Task | undefined;
 
   res.status(201).json({
-    message: scheduleMsg || '任务已创建并已智能排程入日历',
+    message: newTask?.scheduled_start ? (scheduleMsg || '任务已创建并排入日历') : '任务已创建，暂未找到合适时段',
     task: newTask,
     proposal,
+    replan,
   });
 }
 

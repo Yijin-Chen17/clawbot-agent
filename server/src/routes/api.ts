@@ -42,6 +42,7 @@ import {
   getCalendarEvents,
   exportDedicatedIcal,
   syncAndReplanAll,
+  replanAll,
   previewCalendarCard,
   previewTodoCard,
 } from '../controllers/calendarController.js';
@@ -101,6 +102,7 @@ router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);
 router.get('/calendar/events', requireAuth, getCalendarEvents);
 router.post('/calendar/sync-and-replan', requireAuth, syncAndReplanAll);
+router.post('/calendar/replan', requireAuth, replanAll);
 router.get('/calendar/preview-card', requireAuth, previewCalendarCard);
 router.get('/calendar/preview-todo-card', requireAuth, previewTodoCard);
 

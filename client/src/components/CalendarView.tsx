@@ -1,3 +1,4 @@
+import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -728,14 +729,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   };
 
   const [replanLoading, setReplanLoading] = useState(false);
+  const [planning, setPlanning] = useState<PlanningState | null>(null);
 
   const handleSyncAndReplanAll = async () => {
     setReplanLoading(true);
+    setPlanning({ title: '正在重排全部日程', status: 'working' });
     try {
-      await api.post('/calendar/sync-and-replan');
-      fetchData();
+      const response = await api.post('/calendar/replan');
+      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.summary });
+      await fetchData();
     } catch (e: any) {
-      alert(`排程失败: ${e.response?.data?.error || e.message}`);
+      setPlanning({ title: '排程失败', status: 'error', detail: e.response?.data?.error || e.message });
     } finally {
       setReplanLoading(false);
     }
@@ -809,6 +813,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
+      {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
       {/* 1. Google Calendar 经典顶部工具栏 */}
       <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧：菜单切换 + 今天按钮 + 翻周箭头 + 月份年份 */}
@@ -885,7 +890,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
-            <span>{replanLoading ? t('calendar.replanning') : t('calendar.replan')}</span>
+            <span>{replanLoading ? '正在重排' : '重排全部'}</span>
           </button>
 
           {/* 导出高清大图按钮 */}
@@ -1624,13 +1629,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   <button
                     type="button"
                     onClick={async () => {
+                      setPlanning({ title: '正在重新安排任务', status: 'working', single: true });
                       try {
-                        await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
+                        const response = await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
                         setSelectedItem(null);
+                        setPlanning({ title: '任务已重新安排', status: 'success', detail: response.data.message });
                         await fetchData();
                       } catch (error) {
                         const err = error as { response?: { data?: { error?: string } } };
-                        alert(err.response?.data?.error || '重新排程失败');
+                        setPlanning({ title: '重新排程失败', status: 'error', detail: err.response?.data?.error || '请重试' });
                       }
                     }}
                     className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
