@@ -76,6 +76,7 @@ export interface ScheduleProposal {
     scheduled_start: string;
     scheduled_end: string;
     duration_minutes: number;
+    session_plan?: string | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
@@ -120,7 +121,7 @@ function parseClockToHour(clock: string, isEndBoundary: boolean): number | null 
   if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 24 || m < 0 || m >= 60) {
     return null;
   }
-  if (h === 24 && m > 0) return 24;
+  if (h === 24 && m > 0) return null;
   if (isEndBoundary && h === 0 && m === 0) return 24;
   return h + m / 60;
 }
@@ -134,7 +135,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
   workWindows: WorkWindow[];
 } {
   const fallback: WorkWindow[] = [{ startHour: 8, endHour: 22 }];
-  if (!settings || !settings.work_slots) {
+  if (!settings || settings.work_slots === undefined || settings.work_slots === null) {
     return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
   }
 
@@ -145,7 +146,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     } else if (typeof settings.work_slots === 'string') {
       const trimmed = settings.work_slots.trim();
       if (!trimmed) {
-        return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+        return { workStartHour: 0, workEndHour: 0, workWindows: [] };
       }
       if (trimmed.startsWith('[')) {
         const parsed = JSON.parse(trimmed);
@@ -163,7 +164,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     }
 
     if (!Array.isArray(parsedSlots) || parsedSlots.length === 0) {
-      return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      return { workStartHour: 0, workEndHour: 0, workWindows: [] };
     }
 
     const raw: WorkWindow[] = [];
@@ -189,7 +190,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     }
 
     if (raw.length === 0) {
-      return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      return { workStartHour: 0, workEndHour: 0, workWindows: [] };
     }
 
     raw.sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour);
@@ -209,7 +210,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
       workWindows: merged,
     };
   } catch {
-    return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+    return { workStartHour: 0, workEndHour: 0, workWindows: [] };
   }
 }
 
@@ -713,31 +714,8 @@ export function runSingleDaySchedule(
     constrainedFreeSlots = intersected.sort((a, b) => a.start.getTime() - b.start.getTime());
   }
 
-  // 14:30 黄金深度区切分
-  const afternoonPivot = new Date(targetDate);
-  afternoonPivot.setHours(14, 30, 0, 0);
-
   const workingFreeSlots: TimeSlot[] = [];
   for (const slot of constrainedFreeSlots) {
-    if (slot.start.getTime() < afternoonPivot.getTime() && slot.end.getTime() > afternoonPivot.getTime()) {
-      const beforeMin = Math.floor((afternoonPivot.getTime() - slot.start.getTime()) / 60000);
-      const afterMin = Math.floor((slot.end.getTime() - afternoonPivot.getTime()) / 60000);
-      if (beforeMin >= 30 && afterMin >= 90) {
-        workingFreeSlots.push({
-          start: new Date(slot.start),
-          end: new Date(afternoonPivot),
-          durationMinutes: beforeMin,
-          energyZone: classifySlotEnergy(slot.start, beforeMin),
-        });
-        workingFreeSlots.push({
-          start: new Date(afternoonPivot),
-          end: new Date(slot.end),
-          durationMinutes: afterMin,
-          energyZone: classifySlotEnergy(afternoonPivot, afterMin),
-        });
-        continue;
-      }
-    }
     workingFreeSlots.push({
       start: new Date(slot.start),
       end: new Date(slot.end),
@@ -966,7 +944,20 @@ export function runSingleDaySchedule(
       continue;
     }
 
-    const plannedSessions = splitIntoFocusSessions(taskMinutesForToday, maxContinuousMinutes);
+    let semanticSessions: number[] = [];
+    try {
+      const plan = JSON.parse(task.session_plan || 'null');
+      if (Array.isArray(plan) && plan.length && plan.every(n => Number.isInteger(n) && n > 0)) {
+        let consumed = Math.max(0, plan.reduce((a, b) => a + b, 0) - totalTaskMinutes);
+        for (const minutes of plan) {
+          const remaining = Math.max(0, minutes - consumed);
+          consumed = Math.max(0, consumed - minutes);
+          if (remaining) semanticSessions.push(remaining);
+        }
+        taskMinutesForToday = totalTaskMinutes;
+      }
+    } catch {}
+    const plannedSessions = semanticSessions.length ? semanticSessions : splitIntoFocusSessions(taskMinutesForToday, maxContinuousMinutes);
     const totalContiguousSpan =
       plannedSessions.reduce((acc, m) => acc + m, 0) +
       Math.max(0, plannedSessions.length - 1) * taskRestMinutes;
@@ -995,6 +986,15 @@ export function runSingleDaySchedule(
 
     if (bestContiguousSlot && taskMinutesForToday <= remainingCapacity) {
       allocateSessionsInSlot(bestContiguousSlot, plannedSessions, partsAllocated);
+    } else if (semanticSessions.length) {
+      for (const minutes of semanticSessions) {
+        if (dailyScheduledMinutes + minutes > hardDailyCapMinutes) break;
+        const slot = [...workingFreeSlots]
+          .filter(s => s.durationMinutes >= minutes)
+          .sort((a, b) => scoreSlotForTask(b, task, minutes, true) - scoreSlotForTask(a, task, minutes, true))[0];
+        if (!slot) break;
+        allocateSessionsInSlot(slot, [minutes], partsAllocated);
+      }
     } else if (allowSplit) {
       let remainingToSchedule = Math.min(taskMinutesForToday, remainingCapacity);
 
@@ -1417,6 +1417,7 @@ function simulateTaskInHorizon(
     id?: number;
     title: string;
     duration_minutes: number;
+    session_plan?: string | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
@@ -1437,6 +1438,7 @@ function simulateTaskInHorizon(
     user_id: userId,
     title: task.title,
     duration_minutes: task.duration_minutes,
+    session_plan: task.session_plan,
     urgency: task.urgency,
     importance: task.importance,
     deadline: task.deadline || null,
@@ -1536,6 +1538,7 @@ export function scheduleTask(
     id?: number;
     title: string;
     duration_minutes: number;
+    session_plan?: string | null;
     urgency: number;
     importance: number;
     deadline?: string | null;

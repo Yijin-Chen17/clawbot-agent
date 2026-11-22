@@ -517,7 +517,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     try {
       const payload = {
         title: data.title,
-        duration_minutes: data.estimatedMinutes || 60,
+        duration_minutes: data.estimatedMinutes,
         importance: data.importance,
         urgency: data.urgency,
         importance_tier: data.importanceTier || inferTierFromScore(data.importance),
@@ -706,7 +706,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       try {
         await api.post('/tasks', {
           title: t.title,
-          duration_minutes: t.estimatedMinutes || 60,
+          duration_minutes: t.estimatedMinutes,
           importance: t.importance,
           urgency: t.urgency,
           score_scale: 100,

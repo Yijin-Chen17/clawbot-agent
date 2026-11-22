@@ -407,6 +407,59 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     }
   }, [weekStart]);
 
+  // Edge resistance for wheel and touch input, with a spring back to the scroll boundary.
+  useEffect(() => {
+    const container = scrollRef.current;
+    const content = container?.firstElementChild as HTMLElement | null;
+    if (!container || !content) return;
+    let offset = 0;
+    let touchY: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reset = () => {
+      offset = 0;
+      content.style.transition = 'transform 420ms cubic-bezier(.22, 1.4, .36, 1)';
+      content.style.transform = '';
+    };
+    const pull = (delta: number) => {
+      const atTop = container.scrollTop <= 0 && delta < 0;
+      const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 1 && delta > 0;
+      if (!atTop && !atBottom) return false;
+      if (timer) clearTimeout(timer);
+      offset = Math.max(-80, Math.min(80, offset - delta * 0.25 * (1 - Math.abs(offset) / 100)));
+      content.style.transition = 'none';
+      content.style.transform = `translateY(${offset}px)`;
+      timer = setTimeout(reset, 120);
+      return true;
+    };
+    const wheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && pull(event.deltaY)) event.preventDefault();
+    };
+    const start = (event: TouchEvent) => { touchY = event.touches.length === 1 ? event.touches[0].clientY : null; };
+    const move = (event: TouchEvent) => {
+      if (touchY === null || event.touches.length !== 1) return;
+      const y = event.touches[0].clientY;
+      const delta = touchY - y;
+      touchY = y;
+      if (pull(delta)) event.preventDefault();
+    };
+    const end = () => { touchY = null; if (timer) clearTimeout(timer); reset(); };
+    container.addEventListener('wheel', wheel, { passive: false });
+    container.addEventListener('touchstart', start, { passive: true });
+    container.addEventListener('touchmove', move, { passive: false });
+    container.addEventListener('touchend', end);
+    container.addEventListener('touchcancel', end);
+    return () => {
+      if (timer) clearTimeout(timer);
+      container.removeEventListener('wheel', wheel);
+      container.removeEventListener('touchstart', start);
+      container.removeEventListener('touchmove', move);
+      container.removeEventListener('touchend', end);
+      container.removeEventListener('touchcancel', end);
+      content.style.transform = '';
+      content.style.transition = '';
+    };
+  }, []);
+
   // Map subscriptions to colors
   const subColorMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -1040,7 +1093,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
         {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
         <div
           ref={scrollRef}
-          className="flex-1 bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto relative transition-colors scrollbar-thin"
+          className="flex-1 bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
         >
           <div
             className="grid min-w-[780px] bg-white dark:bg-[#1e1f20]"

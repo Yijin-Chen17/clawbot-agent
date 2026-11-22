@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { planTaskWithLLM } from '../services/llm.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task } from '../models/types.js';
@@ -56,11 +57,11 @@ export function listTasks(req: AuthenticatedRequest, res: Response): void {
   res.json({ tasks });
 }
 
-export function createTask(req: AuthenticatedRequest, res: Response): void {
+export async function createTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const {
     title,
-    duration_minutes = 60,
+    duration_minutes: inputDuration,
     urgency,
     importance,
     importance_tier,
@@ -83,6 +84,26 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
+  if (inputDuration !== undefined && inputDuration !== null && inputDuration !== '' &&
+      (!Number.isInteger(Number(inputDuration)) || Number(inputDuration) <= 0 || Number(inputDuration) > 100000)) {
+    res.status(400).json({ error: '预计耗时必须为有效的正整数分钟数' });
+    return;
+  }
+  let duration_minutes = Number(inputDuration);
+  let sessions: number[] = [];
+  try {
+    const plan = await planTaskWithLLM(userId, title, duration_minutes > 0 ? duration_minutes : undefined, notes);
+    duration_minutes = plan.minutes;
+    sessions = plan.sessions;
+  } catch {
+    if (!(duration_minutes > 0)) {
+      res.status(400).json({ error: '无法预估任务耗时，请检查 LLM 配置或填写预计耗时' });
+      return;
+    }
+    // 显式耗时在 LLM 不可用时仍可创建，保持任务整体性。
+    sessions = [duration_minutes];
+  }
+  const sessionPlan = JSON.stringify(sessions);
   const parsedSignals = parseJsonArray<ImpactSignal>(impact_signals);
   const manualOverrideNum =
     importance_manual_override !== undefined &&
@@ -153,6 +174,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   } else if (auto_schedule) {
     const plan = scheduleTask(userId, {
       title,
+      session_plan: sessionPlan,
       duration_minutes: Number(duration_minutes),
       urgency: resolvedUrgency,
       importance: resolvedImportance,
@@ -205,6 +227,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   );
 
   const newId = result.lastInsertRowid;
+  db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, newId);
   replanUserTasks(userId);
   const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId);
 
@@ -215,7 +238,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   });
 }
 
-export function updateTask(req: AuthenticatedRequest, res: Response): void {
+export async function updateTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const { id } = req.params;
   const {
@@ -376,6 +399,13 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     userId
   );
 
+  if (nextDuration !== existing.duration_minutes || (title && title !== existing.title)) {
+    let sessions = [nextDuration];
+    try {
+      sessions = (await planTaskWithLLM(userId, title || existing.title, nextDuration, notes || existing.notes || undefined)).sessions;
+    } catch {}
+    db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(sessions), id, userId);
+  }
   replanUserTasks(userId);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
@@ -404,7 +434,7 @@ export function deleteTask(req: AuthenticatedRequest, res: Response): void {
   res.json({ message: '任务已删除并自适应更新日历排程' });
 }
 
-export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
+export async function rescheduleTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const { id } = req.params;
 
@@ -414,10 +444,19 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
+  let sessionPlan = task.session_plan;
+  if (!sessionPlan) {
+    try {
+      sessionPlan = JSON.stringify((await planTaskWithLLM(userId, task.title, task.duration_minutes, task.notes || undefined)).sessions);
+    } catch {
+      sessionPlan = JSON.stringify([task.duration_minutes]);
+    }
+  }
   const plan = scheduleTask(userId, {
     id: task.id,
     title: task.title,
     duration_minutes: task.duration_minutes,
+    session_plan: sessionPlan,
     urgency: task.urgency,
     importance: task.importance,
     deadline: task.deadline,
@@ -441,6 +480,7 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, task.is_fixed ? 1 : 0, id);
   }
 
+  db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, id);
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task;
 
   res.json({

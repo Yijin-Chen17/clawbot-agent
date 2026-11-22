@@ -273,3 +273,32 @@ test('all-day events and fractional busy boundaries are never scheduled over', (
   ], { targetDate: day, workStartHour: 9, workEndHour: 22, bufferMinutes: 0 });
   assert.ok(result.scheduledBlocks.every(block => block.end <= busyStart || block.start >= busyEnd));
 });
+
+
+test('semantic plan keeps coursework in 2h and 3h blocks inside Work Slots', () => {
+  const day = new Date(); day.setDate(day.getDate() + 1); day.setHours(0, 0, 0, 0);
+  const result = runSingleDaySchedule([makeTask({ duration_minutes: 300, session_plan: '[120,180]' })], [], {
+    targetDate: day, workStartHour: 8, workEndHour: 22,
+    workWindows: [{ startHour: 9, endHour: 11 }, { startHour: 15, endHour: 18 }], bufferMinutes: 0,
+  });
+  assert.deepEqual(result.scheduledBlocks.map(b => b.durationMinutes), [120,180]);
+  assert.ok(result.scheduledBlocks.every(b => (b.start.getHours() >= 9 && b.end.getHours() <= 11) || (b.start.getHours() >= 15 && b.end.getHours() <= 18)));
+});
+
+test('semantic sessions are deferred instead of fragmented into small free windows', () => {
+  const day = new Date(); day.setDate(day.getDate() + 1);
+  const result = runSingleDaySchedule([makeTask({ duration_minutes: 300, session_plan: '[120,180]' })], [], {
+    targetDate: day, workStartHour: 9, workEndHour: 17,
+    workWindows: [{ startHour: 9, endHour: 10 }, { startHour: 15, endHour: 16 }],
+  });
+  assert.equal(result.scheduledBlocks.length, 0);
+  assert.equal(result.unscheduledTaskIds[0].remainingMinutes, 300);
+});
+
+test('empty or invalid configured Work Slots never broaden to default hours', () => {
+  for (const work_slots of ['[]', 'invalid', '']) {
+    const windows = parseWorkSlotWindows({ work_slots } as UserSettings);
+    assert.equal(windows.workStartHour, windows.workEndHour);
+    assert.deepEqual(windows.workWindows, []);
+  }
+});

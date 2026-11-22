@@ -94,6 +94,7 @@ export interface Task {
   title: string;
   duration_minutes: number;
   original_duration_minutes?: number;
+  session_plan?: string | null;
   urgency: number;    // 0 - 100
   importance: number; // 0 - 100
   importance_tier?: 'vital' | 'support' | 'minor' | null;
