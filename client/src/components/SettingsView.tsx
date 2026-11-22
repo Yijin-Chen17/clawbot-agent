@@ -2272,12 +2272,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
                   {/* 核心统计指标卡片 (总消费、输入 Tokens、输出 Tokens) */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3.5 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/70 dark:border-emerald-800/50 shadow-2xs">
-                      <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+                    <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
+                      <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
                         <DollarSign className="w-3.5 h-3.5" />
                         <span>{t('llm.total_cost')}</span>
                       </span>
-                      <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         ¥{(llmUsageData?.summary?.totalCostCny || 0).toFixed(4)}
                       </div>
                       <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1">
@@ -2300,12 +2300,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-200/70 dark:border-indigo-800/50 shadow-2xs">
-                      <span className="text-[11px] text-indigo-700 dark:text-indigo-400 font-semibold flex items-center gap-1.5">
+                    <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
+                      <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5" />
                         <span>输出 Tokens (Output)</span>
                       </span>
-                      <div className="text-xl font-bold font-mono text-indigo-600 dark:text-indigo-400 mt-1">
+                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         {(llmUsageData?.summary?.completionTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">
