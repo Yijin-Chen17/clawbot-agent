@@ -126,7 +126,7 @@ function parseClockToHour(clock: string, isEndBoundary: boolean): number | null 
 }
 
 /**
- * 解析用户配置的 work_slots 为当日不重叠的有序工作窗口
+ * 解析用户配置的 work_slots 为当日不重叠的有序工作窗口（支持 JSON 数组、纯文本时段及跨零点时段如 22:00-02:00）
  */
 export function parseWorkSlotWindows(settings?: UserSettings): {
   workStartHour: number;
@@ -139,10 +139,29 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
   }
 
   try {
-    const parsedSlots: WorkSlot[] =
-      typeof settings.work_slots === 'string'
-        ? JSON.parse(settings.work_slots)
-        : settings.work_slots;
+    let parsedSlots: WorkSlot[] = [];
+    if (Array.isArray(settings.work_slots)) {
+      parsedSlots = settings.work_slots;
+    } else if (typeof settings.work_slots === 'string') {
+      const trimmed = settings.work_slots.trim();
+      if (!trimmed) {
+        return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      }
+      if (trimmed.startsWith('[')) {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) parsedSlots = parsed;
+      } else {
+        // 兼容纯文本格式："09:00-12:00, 14:00-18:00"
+        const parts = trimmed.split(/[,，;\n\r]+/).map(p => p.trim()).filter(Boolean);
+        for (const part of parts) {
+          const match = part.match(/^(\d{1,2}:\d{2})\s*[-~至到]\s*(\d{1,2}:\d{2})$/);
+          if (match) {
+            parsedSlots.push({ start: match[1], end: match[2] });
+          }
+        }
+      }
+    }
+
     if (!Array.isArray(parsedSlots) || parsedSlots.length === 0) {
       return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
     }
@@ -150,12 +169,18 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     const raw: WorkWindow[] = [];
     for (const s of parsedSlots) {
       const startHour = parseClockToHour(s?.start, false);
-      let endHour = parseClockToHour(s?.end, true);
+      const endHour = parseClockToHour(s?.end, true);
       if (startHour === null || endHour === null) continue;
-      if (endHour <= startHour && s?.end === '00:00') {
-        endHour = 24;
-      }
-      if (endHour > startHour) {
+
+      if (endHour <= startHour) {
+        // 跨零点工作时段（如 22:00-02:00）拆分为当日 [22:00, 24:00] 与次晨 [00:00, 02:00]
+        if (startHour < 24) {
+          raw.push({ startHour: Math.max(0, startHour), endHour: 24 });
+        }
+        if (endHour > 0 && endHour < 24) {
+          raw.push({ startHour: 0, endHour: Math.min(24, endHour) });
+        }
+      } else {
         raw.push({
           startHour: Math.max(0, startHour),
           endHour: Math.min(24, endHour),
@@ -691,7 +716,7 @@ export function runSingleDaySchedule(
       for (const win of allowedIntervals) {
         const sMs = Math.max(slot.start.getTime(), win.startMs);
         const eMs = Math.min(slot.end.getTime(), win.endMs);
-        const durMin = Math.round((eMs - sMs) / 60000);
+        const durMin = Math.floor((eMs - sMs) / 60000);
         if (durMin >= 15) {
           intersected.push({
             start: new Date(sMs),
@@ -739,7 +764,7 @@ export function runSingleDaySchedule(
 
   const refreshSlots = () => {
     for (const s of workingFreeSlots) {
-      s.durationMinutes = Math.max(0, Math.round((s.end.getTime() - s.start.getTime()) / 60000));
+      s.durationMinutes = Math.max(0, Math.floor((s.end.getTime() - s.start.getTime()) / 60000));
       if (s.durationMinutes > 0) {
         s.energyZone = classifySlotEnergy(s.start, s.durationMinutes);
       }
@@ -896,6 +921,7 @@ export function runSingleDaySchedule(
 
       const blockStart = new Date(slot.start);
       const blockEnd = new Date(blockStart.getTime() + sessionMin * 60 * 1000);
+      if (blockEnd.getTime() > slot.end.getTime()) break;
 
       let breakAfter = 0;
       const breakEnd = new Date(blockEnd.getTime() + taskRestMinutes * 60 * 1000);

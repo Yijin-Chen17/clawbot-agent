@@ -910,9 +910,10 @@ export async function processWeChatMessage(
         if (plan.success && plan.scheduled_start && plan.scheduled_end) {
           db.prepare(`
             UPDATE tasks
-            SET scheduled_start = ?, scheduled_end = ?, status = 'scheduled', start_reminder_sent = 0, end_reminder_sent = 0, updated_at = CURRENT_TIMESTAMP
+            SET scheduled_start = ?, scheduled_end = ?, schedule_blocks = ?, status = 'scheduled', start_reminder_sent = 0, end_reminder_sent = 0, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-          `).run(plan.scheduled_start, plan.scheduled_end, activeTask.id);
+          `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, activeTask.id);
+          replanUserTasks(userId);
 
           const sStr = new Date(plan.scheduled_start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(plan.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -1263,7 +1264,7 @@ export async function processWeChatMessage(
               importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, ?, 'scheduled', ?)
           `).run(
             userId, title, duration, originalDuration, urgency, importance,
             importanceTier, JSON.stringify(impactSignals), timeMode,

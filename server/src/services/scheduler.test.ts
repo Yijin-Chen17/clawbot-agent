@@ -188,3 +188,60 @@ test('taskToBusyEvents splits schedule_blocks cleanly and projects locked daily_
   assert.equal(formatLocalDate(projected[0].start), formatLocalDate(baseDate));
   assert.equal(formatLocalDate(projected[1].start), formatLocalDate(new Date(2026, 10, 24)));
 });
+
+test('parseWorkSlotWindows handles overnight slots and plain-text strings', () => {
+  const overnight = parseWorkSlotWindows({
+    work_slots: JSON.stringify([{ start: '20:00', end: '02:00' }]),
+  } as UserSettings);
+  assert.equal(overnight.workStartHour, 0);
+  assert.equal(overnight.workEndHour, 24);
+  assert.deepEqual(overnight.workWindows, [
+    { startHour: 0, endHour: 2 },
+    { startHour: 20, endHour: 24 },
+  ]);
+
+  const plainText = parseWorkSlotWindows({
+    work_slots: '09:00-12:00, 14:00-18:00',
+  } as UserSettings);
+  assert.equal(plainText.workStartHour, 9);
+  assert.equal(plainText.workEndHour, 18);
+  assert.deepEqual(plainText.workWindows, [
+    { startHour: 9, endHour: 12 },
+    { startHour: 14, endHour: 18 },
+  ]);
+});
+
+test('runSingleDaySchedule strictly clamps blocks within workWindows without fractional overshoot', () => {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+
+  const { workStartHour, workEndHour, workWindows } = parseWorkSlotWindows({
+    work_slots: JSON.stringify([{ start: '14:00', end: '18:00' }]),
+  } as UserSettings);
+
+  // External event ends at 16:50:20, leaving 59m40s + 10m buffer? Use bufferMinutes=0 -> 59m40s before 18:00:00.
+  // Should NOT schedule a 60m block that spills to 18:00:20 past work window end 18:00:00!
+  const extStart = new Date(tomorrow);
+  extStart.setHours(14, 0, 0, 0);
+  const extEnd = new Date(tomorrow);
+  extEnd.setHours(17, 0, 20, 0);
+
+  const task = makeTask({ id: 31, duration_minutes: 60, importance: 90, urgency: 90 });
+  const res = runSingleDaySchedule([task], [
+    { id: 'ext-sec', title: '带秒会议', start: extStart, end: extEnd, isAllDay: false },
+  ], {
+    targetDate: tomorrow,
+    workStartHour,
+    workEndHour,
+    workWindows,
+    bufferMinutes: 0,
+  });
+
+  const windowEnd = new Date(tomorrow);
+  windowEnd.setHours(18, 0, 0, 0);
+  for (const b of res.scheduledBlocks) {
+    assert.ok(b.end.getTime() <= windowEnd.getTime(), `Block ${b.end.toISOString()} exceeded work window end ${windowEnd.toISOString()}`);
+  }
+});
+

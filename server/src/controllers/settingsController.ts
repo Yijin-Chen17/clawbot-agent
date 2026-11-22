@@ -5,6 +5,7 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { UserSettings } from '../models/types.js';
 import { recordApiUsage, getUserUsageStats, clearUserUsageLogs } from '../services/llmPricing.js';
+import { replanUserTasks } from '../services/scheduler.js';
 
 export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -108,6 +109,15 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     calendar_sync_interval_minutes ?? 60,
     advance_deadline_days ?? 1
   );
+
+  // 工作时段或排程参数变更后，立即重排非固定待办，避免旧排程残留在工作时间外
+  if (work_slots !== undefined || task_buffer_minutes !== undefined || advance_deadline_days !== undefined) {
+    try {
+      replanUserTasks(userId);
+    } catch (err) {
+      console.warn('[Settings] Replan after settings update warning:', err);
+    }
+  }
 
   res.json({ message: '配置已保存成功！' });
 }
