@@ -120,8 +120,8 @@ JSON 格式规范：
 
 意图识别与场景规则：
 1. 创建任务 (create_task):
-   - 常规任务：如“明天下午写代码2小时” -> intent: "create_task", title: "写代码", duration_minutes: 120, is_fixed: false, is_concurrent: false
-   - 固定时间任务 (is_fixed: true): 当用户指定了具体固定时间点或时段且锁定不可改动（如“安排固定任务 明天下午2点到4点开会”、“明天上午10点必须开会”、“锁定在明天15:00开组会”），必须提取 is_fixed: true，并根据当前参考时间计算转化为完整的 ISO 8601 字符串填入 fixed_start 与 fixed_end。若未指定具体起止点（如仅有截止期或仅有耗时）则为 false。
+   - 常规任务：如“明天写代码2小时” -> intent: "create_task", title: "写代码", duration_minutes: 120, is_fixed: false, is_concurrent: false
+   - 固定时间任务 (is_fixed: true): 当用户明确指定任务执行的具体时间点或时间段，即使没有说“固定”也视为固定任务（如“明天晚上19点看论文一小时”），而仅表示截止时间（如“明天19点之前完成”）不视为固定任务。固定任务不需要截止日期，当给出开始时间及持续时间时必须推算结束时间（如“安排固定任务 明天下午2点到4点开会”、“明天上午10点必须开会”、“锁定在明天15:00开组会”），必须提取 is_fixed: true，并根据当前参考时间计算转化为完整的 ISO 8601 字符串填入 fixed_start 与 fixed_end。若未指定具体起止点（如仅有截止期或仅有耗时）则为 false。
    - 双线程任务 (is_concurrent: true): 当用户表明任务属于背景性、轻脑力或允许与其他日程/会议同时并行重叠（如“安排双线程任务 听英文播客1小时”、“边散步边背单词”、“可以同时进行/允许重叠”），必须提取 is_concurrent: true。默认独占专注任务为 false。
    - 双线程固定任务：如“安排双线程固定任务 明天下午3点听播客1小时” -> is_fixed: true, is_concurrent: true, fixed_start: "...15:00...", fixed_end: "...16:00...", duration_minutes: 60
    - 长时间任务，如"15天后期末考我要复习20小时" -> intent: "create_task", title: "期末考复习", duration_minutes: 1200, importance: 90, importance_tier: "vital", urgency: 30, time_mode: "deadline", dueDate: 15天后日期

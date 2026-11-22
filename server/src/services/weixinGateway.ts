@@ -1,3 +1,4 @@
+import { resolveFixedTaskTime } from './fixedTaskTime.js';
 import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
@@ -1097,7 +1098,8 @@ export async function processWeChatMessage(
       return { replyText: reply, imageBuffer, diagnostics: { intent: parsed.intent, todayTasksCount: todayTasks.length } };
     } else if (parsed.intent === 'create_task') {
       const title = parsed.title || pendingTask?.title || '未命名任务';
-      const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
+      const fixedTime = resolveFixedTaskTime(parsed, pendingTask || {});
+      const duration = fixedTime.duration || parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
       const deadline = parsed.deadline || pendingTask?.deadline || null;
       const dueDate = parsed.dueDate || (deadline ? deadline.split('T')[0] : null) || pendingTask?.dueDate || null;
       const resolvedDeadline = !deadline && dueDate ? `${dueDate}T23:59:59` : deadline;
@@ -1143,15 +1145,19 @@ export async function processWeChatMessage(
         time_mode: timeMode,
         deadline: resolvedDeadline,
         dueDate,
+        is_fixed: fixedTime.fixed,
+        fixed_start: fixedTime.start,
+        fixed_end: fixedTime.end,
+        is_concurrent: parsed.is_concurrent ?? pendingTask?.is_concurrent ?? false,
       };
       const missing = {
         duration: !duration || duration <= 0,
-        deadline: !resolvedDeadline && !dueDate && timeMode !== 'daily_fixed',
+        deadline: !resolvedDeadline && !dueDate && timeMode !== 'daily_fixed' && !fixedTime.fixed,
         urgency: false, // 紧迫度依据截止期与日程负荷自动推导，不强制追问
         importance: !importance,
       };
 
-      const hasMissing = missing.duration || missing.deadline;
+      const hasMissing = missing.duration || missing.deadline || (fixedTime.fixed && !fixedTime.end);
 
       if (hasMissing) {
         db.prepare(`
@@ -1169,10 +1175,10 @@ export async function processWeChatMessage(
       } else {
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
 
-        const isFixed = parsed.is_fixed ? 1 : 0;
-        const isConcurrent = parsed.is_concurrent ? 1 : 0;
-        const fixedStart = parsed.fixed_start || null;
-        const fixedEnd = parsed.fixed_end || null;
+        const isFixed = fixedTime.fixed ? 1 : 0;
+        const isConcurrent = (parsed.is_concurrent ?? pendingTask?.is_concurrent) ? 1 : 0;
+        const fixedStart = fixedTime.start;
+        const fixedEnd = fixedTime.end;
         const originalDuration = duration || 60;
 
         if (isFixed && fixedStart && fixedEnd) {

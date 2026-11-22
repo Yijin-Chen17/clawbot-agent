@@ -1,3 +1,4 @@
+import { resolveFixedTaskTime } from '../services/fixedTaskTime.js';
 import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState } from '../models/types.js';
@@ -156,7 +157,8 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
     } else if (parsed.intent === 'create_task') {
       // Merge with pending task if present
       const title = parsed.title || pendingTask?.title || '未命名任务';
-      const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || null;
+      const fixedTime = resolveFixedTaskTime(parsed, pendingTask || {});
+      const duration = fixedTime.duration || parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || null;
       const deadline = parsed.deadline || pendingTask?.deadline || null;
       const timeMode: TimeMode =
         parsed.time_mode || pendingTask?.time_mode || (deadline ? 'deadline' : 'flexible');
@@ -207,17 +209,18 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
         impact_signals: impactSignals,
         time_mode: timeMode,
         deadline,
+        is_fixed: fixedTime.fixed, fixed_start: fixedTime.start, fixed_end: fixedTime.end,
       };
 
       // Check missing fields
       const missing = {
         duration: !duration || duration <= 0,
-        deadline: !deadline && timeMode !== 'daily_fixed',
+        deadline: !deadline && timeMode !== 'daily_fixed' && !fixedTime.fixed,
         urgency: false,
         importance: importance === null,
       };
 
-      const hasMissing = missing.duration || missing.deadline || missing.importance;
+      const hasMissing = missing.duration || missing.deadline || missing.importance || (fixedTime.fixed && !fixedTime.end);
 
       if (hasMissing) {
         // Save pending conversation state
@@ -236,6 +239,16 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
         const finalUrgency = urgency ?? 55;
 
+        if (fixedTime.fixed && fixedTime.start && fixedTime.end) {
+          const blocks = JSON.stringify([{ start: fixedTime.start, end: fixedTime.end, duration }]);
+          db.prepare(`INSERT INTO tasks (user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+            importance_tier, impact_signals, time_mode, score_scale, deadline, scheduled_start, scheduled_end, is_fixed, status, schedule_blocks)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, 'scheduled', ?)`)
+            .run(userId, title, duration, duration, finalUrgency, importance, importanceTier, JSON.stringify(impactSignals), timeMode,
+              deadline, fixedTime.start, fixedTime.end, blocks);
+          replanUserTasks(userId);
+          replyText = `已安排「${title}」：${new Date(fixedTime.start).toLocaleString('zh-CN')}，持续 ${duration} 分钟。`;
+        } else {
         const plan = scheduleTask(userId, {
           title,
           duration_minutes: duration!,
@@ -294,6 +307,7 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
 
           replyText = templates.scheduleFailed(title, duration!, plan.message);
         }
+      }
       }
     } else {
       replyText =
