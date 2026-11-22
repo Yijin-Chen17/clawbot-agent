@@ -319,7 +319,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 shadow-2xl overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-full max-w-2xl max-h-[92vh] flex flex-col rounded-2xl bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 shadow-2xl overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-150">
         {/* 顶部标题栏 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-neutral-800">
           <div className="flex items-center gap-2.5">
@@ -377,7 +377,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     key={key}
                     type="button"
                     onClick={() => setImportanceTier(key)}
-                    className={`flex flex-col items-center justify-center gap-0.5 py-2 px-2 rounded-xl border text-center transition cursor-pointer ${
+                    className={`flex items-center justify-center gap-2 py-2 px-2 rounded-xl border text-center transition cursor-pointer ${
                       active
                         ? activeCls
                         : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-neutral-700 dark:bg-[#28292a] dark:text-neutral-300'
@@ -385,7 +385,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     title={cfg.description}
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />
-                    <span className="text-[11px] font-medium mt-1">{cfg.label}</span>
+                    <span className="text-[11px] font-medium">{cfg.label}</span>
                   </button>
                 );
               })}
@@ -396,7 +396,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               <span className="text-[11px] text-gray-500 dark:text-neutral-400 block">
                 影响因素（可选）
               </span>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 lg:flex-nowrap">
                 {IMPACT_KEYS.map((sigKey) => {
                   const meta = IMPACT_SIGNAL_WEIGHTS[sigKey];
                   const selected = impactSignals.includes(sigKey);
@@ -405,7 +405,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                       key={sigKey}
                       type="button"
                       onClick={() => toggleSignal(sigKey)}
-                      className={`text-[10.5px] px-2.5 py-1 rounded-lg border transition cursor-pointer ${
+                      className={`text-[10.5px] px-2.5 py-1 rounded-lg border transition cursor-pointer whitespace-nowrap ${
                         selected
                           ? 'bg-blue-600 text-white border-blue-600 font-medium shadow-2xs'
                           : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 dark:bg-[#28292a] dark:text-neutral-300 dark:border-neutral-700'
@@ -487,9 +487,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-800 dark:text-neutral-200">
                 时间安排
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
-                紧迫度 {urgency} / 100
               </span>
             </div>
 
@@ -701,9 +698,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   {computedQuadrantMeta.name}
                 </span>
               </div>
-              <span className="text-[11px] text-gray-500 dark:text-neutral-400">
-                {urgencyResult.statusText}
-              </span>
             </div>
           </div>
 
