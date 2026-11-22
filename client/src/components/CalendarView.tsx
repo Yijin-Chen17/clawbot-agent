@@ -24,6 +24,9 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeft,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react';
 
 // Google Calendar standard 24-hour grid constants
@@ -294,7 +297,17 @@ interface CalendarViewProps {
 
 export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
   const { user } = useAuth();
-  const { isDark, t, language } = useTheme();
+  const { isDark, t, language, themeMode, setThemeMode } = useTheme();
+
+  const cycleTheme = () => {
+    if (themeMode === 'light') {
+      setThemeMode('dark');
+    } else if (themeMode === 'dark') {
+      setThemeMode('system');
+    } else {
+      setThemeMode('light');
+    }
+  };
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -951,6 +964,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             title={t('calendar.refresh_btn')}
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+
+          {/* 主题模式切换 (亮色 / 暗色 / 系统) */}
+          <button
+            type="button"
+            onClick={cycleTheme}
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            title={
+              themeMode === 'light'
+                ? '当前：亮色模式 (点击切换为暗色)'
+                : themeMode === 'dark'
+                ? '当前：暗色模式 (点击切换为跟随系统)'
+                : '当前：跟随系统 (点击切换为亮色)'
+            }
+          >
+            {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
+            {themeMode === 'dark' && <Moon className="w-4 h-4 text-blue-400" />}
+            {themeMode === 'system' && <Monitor className="w-4 h-4" />}
           </button>
         </div>
       </header>

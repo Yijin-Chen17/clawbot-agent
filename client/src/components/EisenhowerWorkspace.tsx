@@ -21,12 +21,10 @@ import { WizardModal } from './WizardModal';
 import { StatsModal } from './StatsModal';
 import { BackupModal } from './BackupModal';
 import {
-  LayoutGrid,
   Plus,
   RefreshCw,
   Search,
   Check,
-  CheckSquare,
   Clock,
   Inbox,
   Flame,
@@ -38,9 +36,11 @@ import {
   Calendar as CalendarIcon,
   CheckCircle2,
   Menu,
-  Languages,
   ChevronDown,
   ChevronRight,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react';
 
 interface EisenhowerWorkspaceProps {
@@ -62,7 +62,7 @@ interface EisenhowerWorkspaceProps {
 
 export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   currentView: propsCurrentView = 'matrix',
-  onSwitchView,
+  onSwitchView: _onSwitchView,
   activeCategory: propsActiveCategory,
   setActiveCategory: propsSetActiveCategory,
   onCountsUpdate,
@@ -76,7 +76,17 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  const { t, language, setLanguage } = useTheme();
+  const { t, themeMode, setThemeMode } = useTheme();
+
+  const cycleTheme = () => {
+    if (themeMode === 'light') {
+      setThemeMode('dark');
+    } else if (themeMode === 'dark') {
+      setThemeMode('system');
+    } else {
+      setThemeMode('light');
+    }
+  };
 
   // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list)
   const [internalCurrentView, setInternalCurrentView] = useState<'matrix' | 'list'>(propsCurrentView);
@@ -88,11 +98,6 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       setInternalCurrentView(propsCurrentView);
     }
   }, [propsCurrentView, internalCurrentView]);
-
-  const handleToggleViewMode = (v: 'matrix' | 'list') => {
-    setInternalCurrentView(v);
-    onSwitchView?.(v);
-  };
 
   // 分类筛选控制
   const [internalActiveCategory, setInternalActiveCategory] = useState<string>('all');
@@ -768,39 +773,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           </div>
         </div>
 
-        {/* 右侧: 看板/列表双模态切换 + 搜索框 + 刷新 + 添加任务 */}
+        {/* 右侧: 搜索框 + 刷新 + 明暗/系统主题切换 */}
         <div className="flex items-center gap-2">
-          {/* 看板 / 列表快速切换胶囊 */}
-          <div className="flex items-center p-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-xs font-medium border border-gray-200/50 dark:border-neutral-700/60">
-            <button
-              type="button"
-              onClick={() => handleToggleViewMode('matrix')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                viewMode === 'matrix'
-                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-              }`}
-              title={t('general.view_matrix_desc')}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>{t('nav.matrix')}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleToggleViewMode('list')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                viewMode === 'list'
-                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-              }`}
-              title={t('general.view_list_desc')}
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>{t('nav.list')}</span>
-            </button>
-          </div>
-
           {/* 搜索框 */}
           <div className="relative w-28 sm:w-44">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
@@ -823,28 +797,22 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
           </button>
 
-          {/* 快捷中英文切换 */}
+          {/* 主题模式切换 (亮色 / 暗色 / 系统) */}
           <button
             type="button"
-            onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}
+            onClick={cycleTheme}
             className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
-            title={language === 'zh' ? 'Switch to English' : '切换为简体中文'}
+            title={
+              themeMode === 'light'
+                ? '当前：亮色模式 (点击切换为暗色)'
+                : themeMode === 'dark'
+                ? '当前：暗色模式 (点击切换为跟随系统)'
+                : '当前：跟随系统 (点击切换为亮色)'
+            }
           >
-            <Languages className="w-3.5 h-3.5" />
-          </button>
-
-          {/* 新建任务 */}
-          <button
-            type="button"
-            onClick={() => {
-              setEditingTask(null);
-              setClickCoords(null);
-              setIsTaskModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-xs transition cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span className="hidden sm:inline">{t('workspace.add_task')}</span>
+            {themeMode === 'light' && <Sun className="w-3.5 h-3.5 text-amber-500" />}
+            {themeMode === 'dark' && <Moon className="w-3.5 h-3.5 text-blue-400" />}
+            {themeMode === 'system' && <Monitor className="w-3.5 h-3.5" />}
           </button>
         </div>
       </header>
