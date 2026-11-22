@@ -127,6 +127,7 @@ router.get('/admin/global-llm', requireAdmin, getGlobalLlmSettings);
 router.put('/admin/global-llm', requireAdmin, updateGlobalLlmSettings);
 router.post('/admin/global-llm/test', requireAdmin, testGlobalLlmSettings);
 router.post('/admin/users/:id/recharge', requireAdmin, rechargeUserBalance);
+router.post('/admin/users/recharge', requireAdmin, rechargeUserBalance);
 router.post('/admin/redemption-codes/generate', requireAdmin, generateRedemptionCodes);
 router.get('/admin/redemption-codes', requireAdmin, listRedemptionCodes);
 router.delete('/admin/redemption-codes/:id', requireAdmin, deleteRedemptionCode);

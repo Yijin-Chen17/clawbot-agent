@@ -16,6 +16,7 @@ import {
   Settings,
   Users,
   Terminal,
+  KeyRound,
   Plus,
   X,
 } from 'lucide-react';
@@ -271,6 +272,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {pendingUsersCount}
                 </span>
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectView('api')}
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition cursor-pointer ${
+                activeTab === 'api'
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold'
+                  : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>{t('nav.api_manage', 'API 管理')}</span>
             </button>
             <button
               type="button"

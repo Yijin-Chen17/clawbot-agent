@@ -7,6 +7,7 @@ import { EisenhowerWorkspace } from './components/EisenhowerWorkspace';
 import { CalendarView } from './components/CalendarView';
 import { SettingsView } from './components/SettingsView';
 import { AdminUsersView } from './components/AdminUsersView';
+import { AdminApiView } from './components/AdminApiView';
 import { SystemDebugger } from './components/SystemDebugger';
 import { api } from './api/client';
 
@@ -139,6 +140,11 @@ const DashboardContent: React.FC = () => {
         {activeTab === 'admin' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
             <AdminUsersView onRefreshCount={fetchPendingCount} />
+          </div>
+        )}
+        {activeTab === 'api' && user.role === 'admin' && (
+          <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <AdminApiView />
           </div>
         )}
         {activeTab === 'debug' && user.role === 'admin' && (

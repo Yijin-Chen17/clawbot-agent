@@ -411,11 +411,11 @@ export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Resp
 }
 
 /**
- * 直接充值指定用户账户额度
+ * 直接充值指定用户账户额度（支持通过 UID 或用户名充值）
  */
 export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
-  const { amount } = req.body;
+  const { amount, username } = req.body;
 
   const numAmount = Number(amount);
   if (isNaN(numAmount) || numAmount <= 0) {
@@ -423,9 +423,21 @@ export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): v
     return;
   }
 
-  const target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE id = ?').get(id) as any;
-  if (!target) {
-    res.status(404).json({ error: '用户不存在' });
+  let target: any = null;
+  if (username && typeof username === 'string' && username.trim()) {
+    target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE username = ? COLLATE NOCASE').get(username.trim());
+    if (!target) {
+      res.status(404).json({ error: `用户「${username}」不存在` });
+      return;
+    }
+  } else if (id && id !== 'by-username') {
+    target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE id = ?').get(id);
+    if (!target) {
+      res.status(404).json({ error: '用户不存在' });
+      return;
+    }
+  } else {
+    res.status(400).json({ error: '缺少充值目标用户信息（UID 或 用户名）' });
     return;
   }
 
@@ -434,11 +446,12 @@ export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): v
     UPDATE users
     SET balance = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(newBalance, id);
+  `).run(newBalance, target.id);
 
-  addDebugLog('Auth', 'info', `管理员为用户「${target.username}」(ID: ${id}) 充值 ¥${numAmount.toFixed(2)}，当前余额: ¥${newBalance.toFixed(2)}`);
+  addDebugLog('Auth', 'info', `管理员为用户「${target.username}」(ID: ${target.id}) 充值 ¥${numAmount.toFixed(2)}，当前余额: ¥${newBalance.toFixed(2)}`);
   res.json({
     success: true,
+    user: { id: target.id, username: target.username },
     newBalance,
     message: `已成功为用户「${target.username}」充值 ¥${numAmount.toFixed(2)} 元！当前余额：¥${newBalance.toFixed(2)} 元`,
   });

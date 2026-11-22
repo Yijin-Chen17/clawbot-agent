@@ -2081,7 +2081,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <div className="p-4 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/30 dark:from-blue-950/20 dark:via-[#1e1f20] dark:to-indigo-950/20 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-100 dark:border-neutral-800">
                       <div>
-                        <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">{t('llm.official_balance')} (官方智能调用)</div>
+                        <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">{t('llm.official_balance')}</div>
                         <div className="text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 flex items-baseline gap-1 mt-0.5">
                           <span className="text-base font-normal">¥</span>
                           <span>{userBalance.toFixed(4)}</span>
