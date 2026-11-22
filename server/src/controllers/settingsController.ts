@@ -16,6 +16,13 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const globalKeyRow = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key') as any;
   const hasGlobalLlm = Boolean((globalKeyRow?.value && globalKeyRow.value.trim().length > 3) || process.env.DEEPSEEK_API_KEY);
 
+  const globalModelRow = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_model') as any;
+  const globalModel = globalModelRow?.value || 'deepseek-chat';
+  const isDeepSeek = globalModel.toLowerCase().includes('deepseek');
+  const priceInputRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_input'").get() as any;
+  const priceOutputRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_output'").get() as any;
+  const priceCacheHitRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_cache_hit'").get() as any;
+
   const host = req.get('host') || 'localhost:5178';
   const protocol = req.protocol;
 
@@ -26,6 +33,13 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
     settings: settings || null,
     user_balance: userBalance,
     has_global_llm: hasGlobalLlm,
+    global_llm_info: {
+      model: globalModel,
+      isDeepSeek,
+      priceInput: parseFloat(priceInputRow?.value || '2.0') || 2.0,
+      priceOutput: parseFloat(priceOutputRow?.value || '8.0') || 8.0,
+      priceCacheHit: parseFloat(priceCacheHitRow?.value || '0.5') || 0.5,
+    },
     urls: {
       webhookUrl,
       icalSubscriptionUrl,

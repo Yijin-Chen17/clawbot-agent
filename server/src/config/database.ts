@@ -219,6 +219,15 @@ export function initDatabase() {
   if (!existingGlobalKey && process.env.DEEPSEEK_API_KEY) {
     db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_api_key', process.env.DEEPSEEK_API_KEY);
   }
+  const initPriceSetting = (k: string, val: string) => {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(k);
+    if (!row) {
+      db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run(k, val);
+    }
+  };
+  initPriceSetting('global_llm_price_input', '2.0');
+  initPriceSetting('global_llm_price_output', '8.0');
+  initPriceSetting('global_llm_price_cache_hit', '0.5');
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);

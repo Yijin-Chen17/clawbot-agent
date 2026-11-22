@@ -2,6 +2,7 @@ import { db } from '../config/database.js';
 
 export interface DeepSeekPricingPeriod {
   isPeak: boolean;
+  isDeepSeek?: boolean;
   periodLabel: string;
   beijingTimeStr: string;
   rates: {
@@ -10,6 +11,8 @@ export interface DeepSeekPricingPeriod {
     outputPerMillion: number;
   };
 }
+
+export type ModelPricingPeriod = DeepSeekPricingPeriod;
 
 /**
  * 获取当前北京时间 (UTC+8) 的峰谷时段信息与单价（元/百万 Tokens）
@@ -82,7 +85,67 @@ export function getDeepSeekPricingPeriod(
 
   return {
     isPeak,
+    isDeepSeek: true,
     periodLabel,
+    beijingTimeStr,
+    rates: {
+      cacheHitPerMillion,
+      cacheMissPerMillion,
+      outputPerMillion,
+    },
+  };
+}
+
+/**
+ * 依据模型类型获取生效的定价规则与费率（元/百万 Tokens）：
+ * - 若模型名称包含 deepseek（如 deepseek-chat, deepseek-reasoner 等），使用 DeepSeek 官方峰谷动态计费
+ * - 若为非 deepseek 模型，采用系统管理员在 system_settings 中设置的自定义单价（输入、输出、缓存命中）
+ */
+export function getModelPricingPeriod(
+  date: Date = new Date(),
+  model: string = 'deepseek-chat',
+  isOfficial: boolean = false
+): ModelPricingPeriod {
+  const isDeepSeek = model.toLowerCase().includes('deepseek');
+  if (isDeepSeek) {
+    return getDeepSeekPricingPeriod(date, model);
+  }
+
+  const getSetting = (key: string, def: string) => {
+    try {
+      const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value || def;
+    } catch {
+      return def;
+    }
+  };
+
+  const cacheMissPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_input', '2.0')) || 2.0);
+  const outputPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_output', '8.0')) || 8.0);
+  const cacheHitPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_cache_hit', '0.5')) || 0.5);
+
+  const bjFormatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'short',
+  });
+  const parts = bjFormatter.formatToParts(date);
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || '';
+  const hour = getPart('hour');
+  const minute = getPart('minute');
+  const weekdayStr = getPart('weekday');
+  const beijingTimeStr = `${getPart('year')}-${getPart('month')}-${getPart('day')} ${hour}:${minute} (${weekdayStr})`;
+
+  return {
+    isPeak: false,
+    isDeepSeek: false,
+    periodLabel: `自定义单价 (输入: ¥${cacheMissPerMillion}/M, 输出: ¥${outputPerMillion}/M, 缓存: ¥${cacheHitPerMillion}/M)`,
     beijingTimeStr,
     rates: {
       cacheHitPerMillion,
@@ -136,7 +199,7 @@ export function recordApiUsage(
     usage.prompt_cache_miss_tokens ??
     Math.max(0, promptTokens - cacheHitTokens);
 
-  const { isPeak, rates } = getDeepSeekPricingPeriod(new Date(), model);
+  const { isPeak, rates } = getModelPricingPeriod(new Date(), model, isOfficial);
 
   const inputCostCny =
     (cacheHitTokens / 1_000_000) * rates.cacheHitPerMillion +
@@ -244,7 +307,7 @@ export interface UserUsageStats {
  * 查询指定用户的用量统计汇总与前 1天/7天/30天 价格曲线数据
  */
 export function getUserUsageStats(userId: number, currentModel: string = 'deepseek-chat'): UserUsageStats {
-  const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
+  const currentStatus = getModelPricingPeriod(new Date(), currentModel);
 
   try {
     const agg = db.prepare(`
@@ -272,7 +335,9 @@ export function getUserUsageStats(userId: number, currentModel: string = 'deepse
     const inputCostCny = agg?.input_cost_cny || 0;
     const outputCostCny = agg?.output_cost_cny || 0;
 
-    const baselineCost = (promptTokens / 1_000_000) * 2.0 + (completionTokens / 1_000_000) * 8.0;
+    const baselineCost =
+      (promptTokens / 1_000_000) * currentStatus.rates.cacheMissPerMillion +
+      (completionTokens / 1_000_000) * currentStatus.rates.outputPerMillion;
     const savedCostCny = Math.max(0, baselineCost - totalCostCny);
     const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
 
@@ -585,10 +650,19 @@ export function getGlobalDailyHistory(scope: 'official' | 'all' = 'official'): {
  * @param scope 'official' (默认，仅统计官方全局接口) 或 'all' (全平台所有调用，包含用户私有Key)
  */
 export function getGlobalUsageStats(
-  currentModel: string = 'deepseek-chat',
+  currentModel?: string,
   scope: 'official' | 'all' = 'official'
 ): UserUsageStats {
-  const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
+  const getSetting = (key: string, def: string) => {
+    try {
+      const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value || def;
+    } catch {
+      return def;
+    }
+  };
+  const effectiveModel = currentModel || getSetting('global_llm_model', 'deepseek-chat');
+  const currentStatus = getModelPricingPeriod(new Date(), effectiveModel, true);
   const whereClause = scope === 'official' ? 'WHERE is_official = 1' : '';
 
   try {
@@ -617,7 +691,9 @@ export function getGlobalUsageStats(
     const inputCostCny = agg?.input_cost_cny || 0;
     const outputCostCny = agg?.output_cost_cny || 0;
 
-    const baselineCost = (promptTokens / 1_000_000) * 2.0 + (completionTokens / 1_000_000) * 8.0;
+    const baselineCost =
+      (promptTokens / 1_000_000) * currentStatus.rates.cacheMissPerMillion +
+      (completionTokens / 1_000_000) * currentStatus.rates.outputPerMillion;
     const savedCostCny = Math.max(0, baselineCost - totalCostCny);
     const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
 

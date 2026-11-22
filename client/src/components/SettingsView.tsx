@@ -346,6 +346,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
+  // 官方全局 LLM 模型与计费信息
+  const [globalLlmInfo, setGlobalLlmInfo] = useState<{
+    model: string;
+    isDeepSeek: boolean;
+    priceInput: number;
+    priceOutput: number;
+    priceCacheHit: number;
+  } | null>(null);
+
   // API Usage Monitoring State
   const [llmUsageLoading, setLlmUsageLoading] = useState(false);
   const [llmUsageData, setLlmUsageData] = useState<{
@@ -526,6 +535,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       }
       if (has_global_llm !== undefined) {
         setHasGlobalLlm(Boolean(has_global_llm));
+      }
+      if (res.data.global_llm_info) {
+        setGlobalLlmInfo(res.data.global_llm_info);
       }
       if (settings) {
         setApiMode(settings.api_mode || 'official');
@@ -2100,6 +2112,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         </button>
                       </div>
                     </div>
+
+                    {/* 官方模型与计费单价透明展示 */}
+                    {globalLlmInfo && (
+                      <div className="p-2.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-[11px] text-gray-600 dark:text-neutral-400 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-gray-700 dark:text-gray-300">当前官方模型:</span>
+                          <span className="font-mono font-medium text-blue-600 dark:text-blue-400">{globalLlmInfo.model}</span>
+                        </div>
+                        <div>
+                          {globalLlmInfo.isDeepSeek ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-medium">
+                              DeepSeek 动态峰谷计费 (闲时/周末 5折)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 text-[10px] font-medium">
+                              输入 ¥{globalLlmInfo.priceInput}/M · 输出 ¥{globalLlmInfo.priceOutput}/M · 缓存 ¥{globalLlmInfo.priceCacheHit}/M
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {userBalance <= 0 && (
                       <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">

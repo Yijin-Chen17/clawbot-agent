@@ -312,6 +312,10 @@ export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): 
     apiKey = process.env.DEEPSEEK_API_KEY;
   }
 
+  const priceInput = parseFloat(getSetting('global_llm_price_input', '2.0')) || 2.0;
+  const priceOutput = parseFloat(getSetting('global_llm_price_output', '8.0')) || 8.0;
+  const priceCacheHit = parseFloat(getSetting('global_llm_price_cache_hit', '0.5')) || 0.5;
+
   let apiKeyMasked = '';
   if (apiKey) {
     apiKeyMasked = apiKey.length > 8
@@ -324,6 +328,9 @@ export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): 
     model,
     apiKeyMasked,
     hasKey: Boolean(apiKey && apiKey.length > 3),
+    priceInput,
+    priceOutput,
+    priceCacheHit,
   });
 }
 
@@ -331,7 +338,7 @@ export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): 
  * 更新全局大模型 API 设置
  */
 export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
-  const { endpoint, api_key, model } = req.body;
+  const { endpoint, api_key, model, price_input, price_output, price_cache_hit } = req.body;
 
   const upsert = (key: string, value: string) => {
     db.prepare(`
@@ -350,9 +357,21 @@ export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response
   if (api_key !== undefined && typeof api_key === 'string' && !api_key.includes('****')) {
     upsert('global_llm_api_key', api_key.trim());
   }
+  if (price_input !== undefined) {
+    const num = Math.max(0, parseFloat(String(price_input)) || 0);
+    upsert('global_llm_price_input', num.toString());
+  }
+  if (price_output !== undefined) {
+    const num = Math.max(0, parseFloat(String(price_output)) || 0);
+    upsert('global_llm_price_output', num.toString());
+  }
+  if (price_cache_hit !== undefined) {
+    const num = Math.max(0, parseFloat(String(price_cache_hit)) || 0);
+    upsert('global_llm_price_cache_hit', num.toString());
+  }
 
   addDebugLog('System', 'info', `管理员更新了系统全局 LLM API 配置 (Model: ${model || 'default'})`);
-  res.json({ message: '全局 API 配置已成功保存！' });
+  res.json({ message: '全局 API 配置及模型单价已成功保存！' });
 }
 
 /**

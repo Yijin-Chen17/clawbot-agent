@@ -18,6 +18,9 @@ import {
   ShieldCheck,
   Layers,
   Info,
+  Zap,
+  Calculator,
+  Clock,
 } from 'lucide-react';
 
 interface RedemptionCodeItem {
@@ -89,6 +92,9 @@ export const AdminApiView: React.FC = () => {
   const [globalApiKey, setGlobalApiKey] = useState('');
   const [globalApiKeyMasked, setGlobalApiKeyMasked] = useState('');
   const [globalModel, setGlobalModel] = useState('deepseek-chat');
+  const [globalPriceInput, setGlobalPriceInput] = useState('2.0');
+  const [globalPriceOutput, setGlobalPriceOutput] = useState('8.0');
+  const [globalPriceCacheHit, setGlobalPriceCacheHit] = useState('0.5');
   const [globalHasKey, setGlobalHasKey] = useState(false);
   const [globalTesting, setGlobalTesting] = useState(false);
   const [globalTestResult, setGlobalTestResult] = useState<{ success: boolean; msg: string } | null>(null);
@@ -102,6 +108,9 @@ export const AdminApiView: React.FC = () => {
       setGlobalModel(res.data.model || 'deepseek-chat');
       setGlobalApiKeyMasked(res.data.apiKeyMasked || '');
       setGlobalHasKey(Boolean(res.data.hasKey));
+      if (res.data.priceInput !== undefined) setGlobalPriceInput(String(res.data.priceInput));
+      if (res.data.priceOutput !== undefined) setGlobalPriceOutput(String(res.data.priceOutput));
+      if (res.data.priceCacheHit !== undefined) setGlobalPriceCacheHit(String(res.data.priceCacheHit));
     } catch (err) {
       console.error('获取全局 API 配置失败:', err);
     }
@@ -118,6 +127,9 @@ export const AdminApiView: React.FC = () => {
         endpoint: globalEndpoint,
         api_key: globalApiKey || undefined,
         model: globalModel,
+        price_input: parseFloat(globalPriceInput) || 0,
+        price_output: parseFloat(globalPriceOutput) || 0,
+        price_cache_hit: parseFloat(globalPriceCacheHit) || 0,
       });
       setGlobalSaveSuccess(true);
       setGlobalApiKey('');
@@ -538,9 +550,186 @@ export const AdminApiView: React.FC = () => {
                 className="w-full px-3.5 py-2.5 bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
               <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
-                推荐 deepseek-chat 或兼容 OpenAI 标准的语言模型型号
+                支持 deepseek-chat / deepseek-reasoner 或任意兼容 OpenAI 标准的语言模型
               </span>
             </div>
+
+            {/* 模型价格与计费体系配置 */}
+            {globalModel.trim().toLowerCase().includes('deepseek') ? (
+              /* DeepSeek 官方系列模型：峰谷动态计费卡片 */
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-blue-50/20 dark:from-blue-950/30 dark:via-indigo-950/20 dark:to-blue-950/10 border border-blue-200/80 dark:border-blue-900/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-blue-900 dark:text-blue-200 font-bold">
+                    <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
+                    <span>DeepSeek 官方智能峰谷时段计费体系 (已自动启用)</span>
+                  </div>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/70 text-blue-700 dark:text-blue-300">
+                    动态时段定价
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 dark:text-neutral-400 leading-relaxed">
+                  系统检测到模型为 DeepSeek 系列，用户调用官方接口时将全自动依据北京时间精确折算扣减账户额度，无需手动输入单价。
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  <div className="p-3 rounded-xl bg-white/80 dark:bg-[#1e1f20]/80 border border-blue-100 dark:border-neutral-800 space-y-1.5">
+                    <div className="flex items-center justify-between font-semibold text-gray-800 dark:text-gray-200 text-[11px]">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-rose-500" />
+                        <span>工作日高峰时段 (峰时)</span>
+                      </span>
+                      <span className="text-[10px] text-gray-400">09:00-12:00, 14:00-18:00</span>
+                    </div>
+                    <div className="text-[11px] font-mono text-gray-600 dark:text-neutral-300 space-y-0.5">
+                      <div>输入 (未命中): <span className="font-bold text-gray-900 dark:text-gray-100">¥2.00</span> / 百万Tokens</div>
+                      <div>输出 (生成): <span className="font-bold text-gray-900 dark:text-gray-100">¥8.00</span> / 百万Tokens</div>
+                      <div>缓存命中: <span className="font-bold text-emerald-600 dark:text-emerald-400">¥0.50</span> / 百万Tokens</div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/80 dark:bg-[#1e1f20]/80 border border-blue-100 dark:border-neutral-800 space-y-1.5">
+                    <div className="flex items-center justify-between font-semibold text-gray-800 dark:text-gray-200 text-[11px]">
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-emerald-500" />
+                        <span>闲时优惠时段 (谷时 5折)</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">夜间/早晨/周末全天</span>
+                    </div>
+                    <div className="text-[11px] font-mono text-gray-600 dark:text-neutral-300 space-y-0.5">
+                      <div>输入 (未命中): <span className="font-bold text-gray-900 dark:text-gray-100">¥1.00</span> / 百万Tokens</div>
+                      <div>输出 (生成): <span className="font-bold text-gray-900 dark:text-gray-100">¥4.00</span> / 百万Tokens</div>
+                      <div>缓存命中: <span className="font-bold text-emerald-600 dark:text-emerald-400">¥0.10</span> / 百万Tokens</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* 非 DeepSeek 模型：自定义输入单价（输入、输出、缓存命中） */
+              <div className="p-4 rounded-2xl bg-[#f8fafd] dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
+                    <Calculator className="w-4 h-4 text-purple-500" />
+                    <span>自定义模型计费单价设置（元 / 百万 Tokens）</span>
+                  </div>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 self-start sm:self-auto">
+                    用户按此单价扣费
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-500 dark:text-neutral-400">
+                  当前模型非 DeepSeek 系列，系统将严格按照您在此处设定的单价折算扣除调用官方接口用户的账户额度。
+                </p>
+
+                {/* 快捷预设按钮组 */}
+                <div className="flex items-center flex-wrap gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-gray-400 mr-1">快捷预设:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlobalPriceInput('18.0');
+                      setGlobalPriceOutput('72.0');
+                      setGlobalPriceCacheHit('9.0');
+                    }}
+                    className="px-2 py-1 text-[10px] rounded-lg bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+                  >
+                    GPT-4o (18 / 72 / 9)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlobalPriceInput('1.1');
+                      setGlobalPriceOutput('4.4');
+                      setGlobalPriceCacheHit('0.55');
+                    }}
+                    className="px-2 py-1 text-[10px] rounded-lg bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+                  >
+                    GPT-4o-mini (1.1 / 4.4 / 0.55)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlobalPriceInput('0.8');
+                      setGlobalPriceOutput('2.0');
+                      setGlobalPriceCacheHit('0.1');
+                    }}
+                    className="px-2 py-1 text-[10px] rounded-lg bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+                  >
+                    通义千问 Qwen-Plus (0.8 / 2.0 / 0.1)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlobalPriceInput('1.0');
+                      setGlobalPriceOutput('1.0');
+                      setGlobalPriceCacheHit('0.5');
+                    }}
+                    className="px-2 py-1 text-[10px] rounded-lg bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
+                  >
+                    GLM-4 (1.0 / 1.0 / 0.5)
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  {/* 输入单价 */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-700 dark:text-gray-300 block">
+                      输入单价 (未命中缓存)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-gray-400 font-mono text-xs">¥</span>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={globalPriceInput}
+                        onChange={(e) => setGlobalPriceInput(e.target.value)}
+                        placeholder="2.0"
+                        className="w-full pl-7 pr-3 py-2 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-gray-400 block">元 / 百万 Tokens (Cache Miss)</span>
+                  </div>
+
+                  {/* 输出单价 */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-700 dark:text-gray-300 block">
+                      输出单价 (生成内容)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-gray-400 font-mono text-xs">¥</span>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={globalPriceOutput}
+                        onChange={(e) => setGlobalPriceOutput(e.target.value)}
+                        placeholder="8.0"
+                        className="w-full pl-7 pr-3 py-2 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-gray-400 block">元 / 百万 Tokens (Completion)</span>
+                  </div>
+
+                  {/* 缓存命中单价 */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-700 dark:text-gray-300 block">
+                      缓存命中单价 (Prompt Cache)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-gray-400 font-mono text-xs">¥</span>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={globalPriceCacheHit}
+                        onChange={(e) => setGlobalPriceCacheHit(e.target.value)}
+                        placeholder="0.5"
+                        className="w-full pl-7 pr-3 py-2 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-gray-400 block">元 / 百万 Tokens (Cache Hit)</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Buttons */}
             <div className="flex items-center gap-3 pt-2">
