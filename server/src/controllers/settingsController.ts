@@ -5,6 +5,7 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { UserSettings } from '../models/types.js';
 import { recordApiUsage, getUserUsageStats, clearUserUsageLogs } from '../services/llmPricing.js';
+import { getGlobalApiConfig } from '../services/globalApiConfig.js';
 
 export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -13,15 +14,18 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userRow = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as any;
   const userBalance = Number(userRow?.balance || 0);
 
-  const globalKeyRow = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key') as any;
-  const hasGlobalLlm = Boolean((globalKeyRow?.value && globalKeyRow.value.trim().length > 3) || process.env.DEEPSEEK_API_KEY);
+  const globalConfig = getGlobalApiConfig();
+  const hasGlobalLlm = Boolean(
+    (globalConfig.api1.apiKey && globalConfig.api1.apiKey.trim().length > 3) ||
+    (globalConfig.api2.enabled && globalConfig.api2.apiKey && globalConfig.api2.apiKey.trim().length > 3) ||
+    process.env.DEEPSEEK_API_KEY
+  );
 
-  const globalModelRow = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_model') as any;
-  const globalModel = globalModelRow?.value || 'deepseek-chat';
+  const globalModel = globalConfig.api1.model || 'deepseek-chat';
   const isDeepSeek = globalModel.toLowerCase().includes('deepseek');
-  const priceInputRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_input'").get() as any;
-  const priceOutputRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_output'").get() as any;
-  const priceCacheHitRow = db.prepare("SELECT value FROM system_settings WHERE key = 'global_llm_price_cache_hit'").get() as any;
+  const priceInput = globalConfig.pricing.priceInput;
+  const priceOutput = globalConfig.pricing.priceOutput;
+  const priceCacheHit = globalConfig.pricing.priceCacheHit;
 
   const host = req.get('host') || 'localhost:5178';
   const protocol = req.protocol;
@@ -36,9 +40,9 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
     global_llm_info: {
       model: globalModel,
       isDeepSeek,
-      priceInput: parseFloat(priceInputRow?.value || '2.0') || 2.0,
-      priceOutput: parseFloat(priceOutputRow?.value || '8.0') || 8.0,
-      priceCacheHit: parseFloat(priceCacheHitRow?.value || '0.5') || 0.5,
+      priceInput,
+      priceOutput,
+      priceCacheHit,
     },
     urls: {
       webhookUrl,

@@ -1429,18 +1429,27 @@ class WeixinTransitManager {
 
   public getWorkerStatusList() {
     const allSettings = db.prepare(`
-      SELECT us.*, u.username, u.role
+      SELECT us.*, u.username, u.role, u.balance
       FROM user_settings us
       JOIN users u ON us.user_id = u.id
       ORDER BY us.user_id ASC
-    `).all() as (UserSettings & { username: string; role: string })[];
+    `).all() as (UserSettings & { username: string; role: string; balance?: number })[];
 
     return allSettings.map((s) => {
       const worker = this.activeWorkers.get(s.user_id);
+      const apiMode = s.api_mode === 'custom' ? 'custom' : 'official';
+      const balance = Number(s.balance) || 0;
+      // 官方接口：只要余额大于零就显示已配置；自定义 API Key：检查用户是否填入有效 Key
+      const isLlmConfigured = apiMode === 'official'
+        ? balance > 0
+        : Boolean(s.llm_api_key && s.llm_api_key.trim().length > 3);
+
       return {
         userId: s.user_id,
         username: s.username,
         role: s.role,
+        apiMode,
+        balance,
         weixinConnected: Boolean(s.weixin_connected),
         weixinBotId: s.weixin_bot_id || '',
         weixinUserId: s.weixin_user_id || '',
@@ -1448,10 +1457,7 @@ class WeixinTransitManager {
         hasBotToken: Boolean(s.weixin_bot_token && s.weixin_bot_token.length > 5),
         hasSyncBuf: Boolean(s.weixin_sync_buf),
         hasContextToken: Boolean(s.weixin_context_token || contextTokenMap.has(s.user_id)),
-        hasLlmKey: (() => {
-          const cfg = getEffectiveLlmConfig(s.user_id, s);
-          return Boolean(cfg.apiKey && cfg.apiKey.length > 3 && (!cfg.isOfficial || cfg.userBalance > 0));
-        })(),
+        hasLlmKey: isLlmConfigured,
         workerRunning: Boolean(worker?.running),
         startedAt: worker?.startedAt ? new Date(worker.startedAt).toISOString() : null,
         lastPollAt: worker?.lastPollAt ? new Date(worker.lastPollAt).toISOString() : null,

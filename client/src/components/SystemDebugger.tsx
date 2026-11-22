@@ -40,6 +40,8 @@ interface WorkerStatus {
   hasSyncBuf: boolean;
   hasContextToken: boolean;
   hasLlmKey: boolean;
+  apiMode?: 'official' | 'custom';
+  balance?: number;
   workerRunning: boolean;
   startedAt: string | null;
   lastPollAt: string | null;
@@ -786,7 +788,7 @@ export const SystemDebugger: React.FC = () => {
                   <th className="pb-2.5">微信账号 ID</th>
                   <th className="pb-2.5">Worker 管道状态</th>
                   <th className="pb-2.5">Context Token</th>
-                  <th className="pb-2.5">LLM Key</th>
+                  <th className="pb-2.5">大模型接口</th>
                   <th className="pb-2.5">最近轮询时间</th>
                   <th className="pb-2.5 text-right">操作</th>
                 </tr>
@@ -824,10 +826,30 @@ export const SystemDebugger: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3">
-                      {w.hasLlmKey ? (
-                        <span className="text-blue-600 font-semibold">已配置</span>
+                      {w.apiMode === 'custom' ? (
+                        w.hasLlmKey ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                            已配置 (自定义)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                            未填 Key
+                          </span>
+                        )
                       ) : (
-                        <span className="text-rose-500 font-semibold">未填 Key</span>
+                        (w.balance !== undefined ? w.balance > 0 : w.hasLlmKey) ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                            已配置 (官方 ¥{(w.balance ?? 0).toFixed(2)})
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            额度不足 (¥0.00)
+                          </span>
+                        )
                       )}
                     </td>
                     <td className="py-3 font-mono text-[10px] text-gray-500">

@@ -543,6 +543,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         setApiMode(settings.api_mode || 'official');
         setLlmEndpoint(settings.llm_endpoint || 'https://api.deepseek.com/v1');
         setLlmApiKey(settings.llm_api_key || '');
+        if (settings.llm_api_key && settings.llm_api_key.trim().length > 3) {
+          setLlmApiKeyValid(true);
+        }
         setLlmModel(settings.llm_model || 'deepseek-chat');
 
         // Weixin status
@@ -793,7 +796,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   }
 
   const isWeixinDone = Boolean(wxConnected);
-  const isLlmDone = apiMode === 'official' ? (userBalance > 0 && hasGlobalLlm) : Boolean(llmApiKeyValid);
+  const isLlmDone = apiMode === 'official' ? userBalance > 0 : Boolean(llmApiKeyValid || (llmApiKey && llmApiKey.trim().length > 3));
 
   const navMenuItems = [
     {
@@ -2028,11 +2031,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 isLlmDone ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    {t('llm.valid_badge')}
+                    {apiMode === 'official' ? '官方接口已就绪' : t('llm.valid_badge')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    {t('llm.unverified_badge')}
+                    {apiMode === 'official' ? '额度不足，请充值' : t('llm.unverified_badge')}
                   </span>
                 )
               )}
@@ -2131,6 +2134,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                             </span>
                           )}
                         </div>
+                      </div>
+                    )}
+
+                    {!hasGlobalLlm && (
+                      <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 text-[11px] text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>平台尚未配置全局官方接口，请联系管理员在后台配置全局 API。</span>
                       </div>
                     )}
 
