@@ -3,26 +3,11 @@ import { createPortal } from 'react-dom';
 import { Check, X, RotateCcw, Palette } from 'lucide-react';
 
 export const PRESET_CALENDAR_COLORS = [
-  { hex: '#E53935', name: '番茄红' },
-  { hex: '#F4511E', name: '橘红' },
-  { hex: '#FB8C00', name: '活力橙' },
-  { hex: '#F59E0B', name: '琥珀黄' },
-  { hex: '#F6BF26', name: '香蕉黄' },
-  { hex: '#84CC16', name: '青柠绿' },
-  { hex: '#33B679', name: '鼠尾草绿' },
-  { hex: '#10B981', name: '翡翠绿' },
-  { hex: '#009688', name: '水鸭青' },
-  { hex: '#06B6D4', name: '天蓝' },
-  { hex: '#039BE5', name: '孔雀蓝' },
   { hex: '#2563EB', name: '经典蓝' },
-  { hex: '#3F51B5', name: '靛蓝' },
-  { hex: '#7C3AED', name: '紫罗兰' },
+  { hex: '#10B981', name: '翡翠绿' },
+  { hex: '#F59E0B', name: '琥珀黄' },
+  { hex: '#EF4444', name: '番茄红' },
   { hex: '#8E24AA', name: '葡萄紫' },
-  { hex: '#C2185B', name: '品红' },
-  { hex: '#E11D48', name: '玫瑰粉' },
-  { hex: '#E67C73', name: '火烈鸟' },
-  { hex: '#64748B', name: '石板灰' },
-  { hex: '#374151', name: '石墨黑' },
 ];
 
 interface CalendarColorPickerProps {
@@ -59,8 +44,8 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
     const updatePosition = () => {
       if (!triggerRef.current) return;
       const rect = triggerRef.current.getBoundingClientRect();
-      const popoverWidth = 244;
-      const popoverHeight = onReset ? 290 : 255;
+      const popoverWidth = 220;
+      const popoverHeight = onReset ? 240 : 200;
 
       // Position horizontally: prefer right side of the trigger
       let left = rect.right + 10;
@@ -150,7 +135,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
             left: `${popoverPosition.left}px`,
             zIndex: 99999,
           }}
-          className="w-60 bg-white dark:bg-[#252627] rounded-2xl shadow-2xl border border-gray-200/90 dark:border-neutral-700/80 p-3.5 space-y-3 animate-fadeIn text-xs select-none backdrop-blur-md"
+          className="w-54 bg-white dark:bg-[#252627] rounded-2xl shadow-2xl border border-gray-200/90 dark:border-neutral-700/80 p-3 space-y-2.5 animate-fadeIn text-xs select-none backdrop-blur-md"
         >
           {/* Header */}
           <div className="flex items-center justify-between gap-2 pb-2 border-b border-gray-100 dark:border-neutral-800">
@@ -271,11 +256,11 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
         ) : (
           <button
             type="button"
-            className="w-4.5 h-4.5 rounded-full ring-2 ring-white dark:ring-[#1e1f20] shadow-2xs hover:scale-120 active:scale-95 transition-all cursor-pointer relative group flex items-center justify-center shrink-0"
+            className="w-4.5 h-4.5 rounded-full ring-2 ring-white dark:ring-[#1e1f20] shadow-2xs transition-colors cursor-pointer relative group flex items-center justify-center shrink-0"
             style={{ backgroundColor: color }}
             title={`修改【${name}】颜色`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-white/70 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <span className="w-1.5 h-1.5 rounded-full bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
           </button>
         )}
       </div>

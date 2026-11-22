@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  MoreVertical,
   RefreshCw,
   Calendar as CalendarIcon,
   Trash2,
@@ -1083,7 +1082,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
               <div className="space-y-1 text-xs">
                 {/* Clawbot 主待办 */}
-                <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group transition-colors">
+                <div className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 transition-colors">
                   <div className="flex items-center gap-2.5 truncate min-w-0">
                     <CalendarColorPicker
                       color={taskCalendarColor || '#3b82f6'}
@@ -1095,20 +1094,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                       Clawbot 待办日程
                     </span>
                   </div>
-                  <CalendarColorPicker
-                    color={taskCalendarColor || '#3b82f6'}
-                    name="Clawbot 待办日程"
-                    onChange={(c) => void updateColor('tasks', c)}
-                    onReset={() => void updateColor('tasks', null)}
-                  >
-                    <button
-                      type="button"
-                      className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                      title="修改颜色"
-                    >
-                      <MoreVertical className="w-3.5 h-3.5" />
-                    </button>
-                  </CalendarColorPicker>
                 </div>
                 {/* 订阅外部日历 */}
                 {subscriptions.map((sub, idx) => {
@@ -1116,7 +1101,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   return (
                     <div
                       key={sub.id}
-                      className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group transition-colors"
+                      className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 transition-colors"
                     >
                       <div className="flex items-center gap-2.5 truncate min-w-0">
                         <CalendarColorPicker
@@ -1127,25 +1112,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                         />
                         <span className="text-gray-700 dark:text-neutral-300 truncate select-none">{sub.name}</span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0 ml-1">
-                        <span className="text-[10px] text-gray-400 font-mono group-hover:hidden">
-                          {sub.event_count}
-                        </span>
-                        <CalendarColorPicker
-                          color={color}
-                          name={sub.name}
-                          onChange={(c) => void updateColor(sub.id, c)}
-                          onReset={() => void updateColor(sub.id, null)}
-                        >
-                          <button
-                            type="button"
-                            className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 hidden group-hover:inline-flex transition cursor-pointer"
-                            title={`修改【${sub.name}】颜色`}
-                          >
-                            <MoreVertical className="w-3.5 h-3.5" />
-                          </button>
-                        </CalendarColorPicker>
-                      </div>
+                      <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
+                        {sub.event_count}
+                      </span>
                     </div>
                   );
                 })}
