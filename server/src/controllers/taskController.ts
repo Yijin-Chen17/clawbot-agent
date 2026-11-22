@@ -456,58 +456,22 @@ export async function rescheduleTask(req: AuthenticatedRequest, res: Response): 
     return;
   }
 
-  if (task.time_mode === 'daily_fixed' && task.is_fixed) {
-    res.status(400).json({ error: '请编辑任务以调整每日固定时间' });
+  if (task.is_fixed) {
+    res.status(400).json({ error: '固定时间任务请先编辑并解除固定，再重新排程' });
     return;
   }
 
-  let sessionPlan = task.session_plan;
-  if (!sessionPlan) {
-    try {
-      sessionPlan = JSON.stringify((await planTaskWithLLM(userId, task.title, task.duration_minutes, task.notes || undefined)).sessions);
-    } catch {
-      sessionPlan = null;
-    }
+  try {
+    const result = db.transaction(() => {
+      const replan = replanUserTasks(userId);
+      const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task;
+      if (!updated.scheduled_start) throw new Error('暂无合适空闲时段，原日程已保留');
+      return { task: updated, replan };
+    })();
+    res.json({ message: '已重新规划全部可移动任务', ...result });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || '重新排程失败' });
   }
-  const plan = scheduleTask(userId, {
-    id: task.id,
-    title: task.title,
-    duration_minutes: task.duration_minutes,
-    session_plan: sessionPlan,
-    urgency: task.urgency,
-    importance: task.importance,
-    deadline: task.deadline,
-    deadline_kind: task.deadline_kind,
-    urgency_pace: task.urgency_pace,
-    score_scale: task.score_scale,
-  });
-
-  if (!plan.success || !plan.scheduled_start || !plan.scheduled_end) {
-    res.status(400).json({ error: plan.message, proposal: plan.proposal });
-    return;
-  }
-
-  if (plan.success && plan.scheduled_start && plan.scheduled_end) {
-    db.prepare(`
-      UPDATE tasks
-      SET scheduled_start = ?,
-          scheduled_end = ?,
-          schedule_blocks = ?,
-          is_fixed = ?,
-          status = 'scheduled',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, task.is_fixed ? 1 : 0, id);
-  }
-
-  db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, id);
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task;
-
-  res.json({
-    message: updated.scheduled_start ? '任务已完成自适应重新排程并同步锁定至日历' : '排程失败，暂无合适空闲时段',
-    task: updated,
-    proposal: plan.proposal,
-  });
 }
 
 export function applyProposal(req: AuthenticatedRequest, res: Response): void {

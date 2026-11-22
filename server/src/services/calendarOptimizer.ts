@@ -227,13 +227,19 @@ export function selectCalendarBlocks(
         const sum = eligible.reduce((a, b) => a + b, 0);
         const debt = s.debt.map((d, j) => d + minutes * eligible[j] / sum - (i === j ? minutes : 0));
         const cut = minutes < desired ? 0.5 + 0.5 * (1 - minutes / desired) ** 2 : 0;
+        // Account for the cost of letting other overdue work wait during this block.
+        const overdueWaiting = items.reduce((sum, other, j) => {
+          if (j === i || !s.remaining[j] || other.hard || !Number.isFinite(other.due)) return sum;
+          const overdueDays = Math.max(0, (s.cursor - other.due) / 86400_000);
+          return sum + (overdueDays > 0 ? 0.6 * other.importance * (1 + Math.min(overdueDays / 7, 1)) : 0);
+        }, 0) * minutes / BLOCK;
         const switching = s.last >= 0 && s.last !== i ? 0.12 : 0;
         const night = new Date(s.cursor).getHours() < 6 ? 0.15 : 0;
         const onTime = !item.hard && end <= item.due && Number.isFinite(item.due) ? 0.2 : 0;
         const delay = Math.max(0, s.cursor - initial.cursor) / Math.max(MINUTE, terminal - initial.cursor);
         push({ ...s, cursor: end + pause * MINUTE, used: s.used + minutes, remaining, debt, last: i,
           blocks: [...s.blocks, { index: i, start: s.cursor, minutes, rest: pause }],
-          cost: s.cost + cut + switching + (night - onTime + 0.08 * delay * item.importance + fairness(debt, remaining)) * minutes / BLOCK });
+          cost: s.cost + cut + switching + overdueWaiting + (night - onTime + 0.08 * delay * item.importance + fairness(debt, remaining)) * minutes / BLOCK });
       }
     }
     next.sort(compare);

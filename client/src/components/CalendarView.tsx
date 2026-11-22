@@ -1629,7 +1629,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   <button
                     type="button"
                     onClick={async () => {
-                      setPlanning({ title: '正在重新安排任务', status: 'working', single: true });
+                      setPlanning({ title: '正在重新安排任务', status: 'working' });
                       try {
                         const response = await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
                         setSelectedItem(null);

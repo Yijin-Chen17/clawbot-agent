@@ -363,3 +363,15 @@ test('hard deadlines protect shared capacity and an impossible phase cannot cons
   assert.equal(result.scheduledBlocks[0].end.getTime(), deadline.getTime());
   assert.match(result.unscheduledTaskIds.find(t => t.taskId === 2)!.reason, /不可逾期/);
 });
+
+
+test('overdue task is placed before a similar task with a future deadline', () => {
+  const day = new Date(); day.setDate(day.getDate() + 1); day.setHours(0, 0, 0, 0);
+  const past = new Date(day); past.setDate(past.getDate() - 6);
+  const later = new Date(day); later.setDate(later.getDate() + 7);
+  const result = runSingleDaySchedule([
+    makeTask({ id: 1, duration_minutes: 300, importance: 80, urgency: 45, deadline: later.toISOString(), session_plan: '[120,180]' }),
+    makeTask({ id: 2, duration_minutes: 180, importance: 80, urgency: 95, deadline: past.toISOString(), session_plan: '[180]' }),
+  ], [], { targetDate: day, workStartHour: 8, workEndHour: 18, taskRestMinutes: 0, maxDailyTaskMinutes: 480 });
+  assert.equal(result.scheduledBlocks[0]?.taskId, 2);
+});
