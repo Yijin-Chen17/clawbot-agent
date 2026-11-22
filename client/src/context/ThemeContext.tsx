@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { translations, type Language } from '../i18n/translations';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
-export type ThemeColor = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'neutral';
+export type ThemeColor = 'blue' | 'emerald' | 'violet';
 export type DisplayDensity = 'comfortable' | 'compact';
 export type { Language };
 export type DefaultView = 'matrix' | 'list' | 'calendar';
@@ -39,7 +39,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [themeColor, setThemeColorState] = useState<ThemeColor>(() => {
     const saved = localStorage.getItem('clawbot_theme_color');
-    return (saved as ThemeColor) || 'blue';
+    if (saved === 'blue' || saved === 'emerald' || saved === 'violet') {
+      return saved;
+    }
+    return 'blue';
   });
 
   const [displayDensity, setDisplayDensityState] = useState<DisplayDensity>(() => {

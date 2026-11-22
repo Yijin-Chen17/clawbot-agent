@@ -200,8 +200,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     setDisplayDensity,
     language,
     setLanguage,
-    defaultView,
-    setDefaultView,
     defaultTaskDuration,
     setDefaultTaskDuration,
     soundEnabled,
@@ -953,9 +951,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 items-stretch overflow-hidden">
         {/* Left Column: Vertical Nav List */}
         <aside className="hidden lg:flex flex-col w-72 xl:w-80 shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-3 shadow-xs space-y-1.5 overflow-y-auto scrollbar-thin">
-          <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5 flex items-center justify-between">
-            <span>{t('set.catalog')}</span>
-          </div>
           {navMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
@@ -1306,12 +1301,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'general' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Sliders className="w-5 h-5" />
                 </div>,
                 t('general.title'),
                 t('general.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300">
                   {t('general.instant_badge')}
                 </span>,
                 true
@@ -1320,7 +1315,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 1. 界面语言 (下拉选择框) */}
               <div className="space-y-2 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <Languages className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>{t('general.lang_title')}</span>
                 </div>
                 <div className="max-w-xs pt-1">
@@ -1338,38 +1333,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </p>
               </div>
 
-              {/* 2. 默认起始视图 */}
-              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
-                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  {t('general.view_title')}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                  {[
-                    { id: 'matrix' as const, name: t('general.view_matrix'), desc: t('general.view_matrix_desc') },
-                    { id: 'list' as const, name: t('general.view_list'), desc: t('general.view_list_desc') },
-                    { id: 'calendar' as const, name: t('general.view_calendar'), desc: t('general.view_calendar_desc') },
-                  ].map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => setDefaultView(v.id)}
-                      className={`p-3.5 rounded-xl border text-left transition cursor-pointer ${
-                        defaultView === v.id
-                          ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
-                          : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold">{v.name}</span>
-                        {defaultView === v.id && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                      </div>
-                      <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">{v.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 3. 默认新建任务耗时 */}
+              {/* 2. 默认新建任务耗时 */}
               <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('general.duration_title')}
@@ -1385,7 +1349,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       onClick={() => setDefaultTaskDuration(mins)}
                       className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                         defaultTaskDuration === mins
-                          ? 'bg-indigo-600 text-white shadow-xs'
+                          ? 'bg-blue-600 text-white shadow-xs'
                           : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
                       }`}
                     >
@@ -1395,11 +1359,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* 4. 声音与音效反馈 */}
+              {/* 3. 声音与音效反馈 */}
               <div className="pb-6 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-neutral-800 flex items-center justify-center text-gray-600 dark:text-neutral-300 shrink-0">
-                    {soundEnabled ? <Volume2 className="w-4 h-4 text-indigo-600" /> : <VolumeX className="w-4 h-4" />}
+                    {soundEnabled ? <Volume2 className="w-4 h-4 text-blue-600 dark:text-blue-400" /> : <VolumeX className="w-4 h-4" />}
                   </div>
                   <div>
                     <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
@@ -1414,7 +1378,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   type="button"
                   onClick={() => setSoundEnabled(!soundEnabled)}
                   className={`w-11 h-6 rounded-full p-1 transition cursor-pointer shrink-0 ${
-                    soundEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-neutral-700'
+                    soundEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-neutral-700'
                   }`}
                 >
                   <div
@@ -1425,10 +1389,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </button>
               </div>
 
-              {/* 5. 键盘快捷键速查 */}
+              {/* 4. 键盘快捷键速查 */}
               <div className="space-y-3 pt-1">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  <Keyboard className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <Keyboard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>{t('general.shortcuts_title')}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
@@ -1459,7 +1423,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'appearance' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Palette className="w-5 h-5" />
                 </div>,
                 t('appearance.title'),
@@ -1511,14 +1475,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('appearance.accent_title')}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   {[
                     { id: 'blue' as const, name: t('appearance.accent_blue'), hex: '#2563eb' },
                     { id: 'emerald' as const, name: t('appearance.accent_emerald'), hex: '#059669' },
                     { id: 'violet' as const, name: t('appearance.accent_violet'), hex: '#7c3aed' },
-                    { id: 'amber' as const, name: t('appearance.accent_amber'), hex: '#d97706' },
-                    { id: 'rose' as const, name: t('appearance.accent_rose'), hex: '#e11d48' },
-                    { id: 'neutral' as const, name: t('appearance.accent_neutral'), hex: '#374151' },
                   ].map((c) => {
                     const isSelected = themeColor === c.id;
                     return (
@@ -1593,7 +1554,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'weixin' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Bot className="w-5 h-5" />
                 </div>,
                 t('weixin.title'),
@@ -1936,7 +1897,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'notification' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Bell className="w-5 h-5" />
                 </div>,
                 t('notification.title'),
@@ -2037,7 +1998,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'llm' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-300 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Brain className="w-5 h-5" />
                 </div>,
                 t('llm.title'),
@@ -2369,7 +2330,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'calendar' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
                 </div>,
                 t('calendar.title'),
