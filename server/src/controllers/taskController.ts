@@ -168,7 +168,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       finalEnd = plan.scheduled_end;
       scheduleBlocks = plan.schedule_blocks || null;
       status = 'scheduled';
-      scheduleMsg = '任务已成功自动排程入日历并锁定！';
+      scheduleMsg = is_fixed ? '任务已成功排程入日历并锁定！' : '任务已成功智能排程入日历！';
     } else {
       scheduleMsg = plan.message || '未找到合适时间槽，待手动调整。';
     }
@@ -197,7 +197,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     deadline || null,
     finalStart,
     finalEnd,
-    status === 'scheduled' ? 1 : (is_fixed ? 1 : 0),
+    is_fixed ? 1 : 0,
     is_concurrent ? 1 : 0,
     status,
     scheduleBlocks,
@@ -436,11 +436,11 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
       SET scheduled_start = ?,
           scheduled_end = ?,
           schedule_blocks = ?,
-          is_fixed = 1,
+          is_fixed = ?,
           status = 'scheduled',
-          updated_at = datetime('now', 'localtime')
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, id);
+    `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, task.is_fixed ? 1 : 0, id);
   }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task;

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState } from '../models/types.js';
 import { parseUserMessageWithLLM } from '../services/llm.js';
-import { scheduleTask, computeTodayBusyMinutes } from '../services/scheduler.js';
+import { scheduleTask, computeTodayBusyMinutes, replanUserTasks } from '../services/scheduler.js';
 import { templates, sendClawbotMessage } from '../services/clawbot.js';
 import {
   calculateDynamicImportance,
@@ -121,12 +121,14 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
             SET
               scheduled_start = ?,
               scheduled_end = ?,
+              schedule_blocks = ?,
               status = 'scheduled',
               start_reminder_sent = 0,
               end_reminder_sent = 0,
               updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-          `).run(plan.scheduled_start, plan.scheduled_end, activeTask.id);
+          `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, activeTask.id);
+          replanUserTasks(userId);
 
           const sStr = new Date(plan.scheduled_start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
           const eStr = new Date(plan.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -249,7 +251,7 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
               importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, 'scheduled', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, 'scheduled', ?)
           `).run(
             userId,
             title,
