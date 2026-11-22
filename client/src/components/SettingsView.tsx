@@ -874,7 +874,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const renderCardHeader = (
     icon: React.ReactNode,
     title: string,
-    subtitle: string,
     statusBadge?: React.ReactNode,
     _hideGlobalSave?: boolean
   ) => (
@@ -893,12 +892,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
           {icon}
         </div>
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">{title}</h2>
-            {statusBadge}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">{subtitle}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">{title}</h2>
+          {statusBadge}
         </div>
       </div>
 
@@ -1009,7 +1005,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <User className="w-5 h-5" />
                 </div>,
                 t('account.title'),
-                t('account.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
                   @{user?.username}
                 </span>,
@@ -1305,10 +1300,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <Sliders className="w-5 h-5" />
                 </div>,
                 t('general.title'),
-                t('general.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300">
-                  {t('general.instant_badge')}
-                </span>,
+                undefined,
                 true
               )}
 
@@ -1328,9 +1320,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <option value="en">English (US)</option>
                   </select>
                 </div>
-                <p className="text-[10px] text-gray-400 dark:text-neutral-500">
-                  {t('general.lang_tip')}
-                </p>
               </div>
 
               {/* 2. 默认新建任务耗时 */}
@@ -1338,9 +1327,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('general.duration_title')}
                 </div>
-                <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                  {t('general.duration_tip')}
-                </p>
                 <div className="flex flex-wrap gap-2.5 pt-1">
                   {[30, 45, 60, 90].map((mins) => (
                     <button
@@ -1427,7 +1413,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <Palette className="w-5 h-5" />
                 </div>,
                 t('appearance.title'),
-                t('appearance.subtitle'),
                 undefined,
                 true
               )}
@@ -1558,7 +1543,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <Bot className="w-5 h-5" />
                 </div>,
                 t('weixin.title'),
-                t('weixin.subtitle'),
                 wxConnected ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1736,9 +1720,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Clock className="w-5 h-5" />
                 </div>,
-                t('scheduler.title'),
-                t('scheduler.subtitle'),
-                undefined
+                t('scheduler.title')
               )}
 
               {/* 1. Manual Work Slots Input */}
@@ -1900,9 +1882,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Bell className="w-5 h-5" />
                 </div>,
-                t('notification.title'),
-                t('notification.subtitle'),
-                undefined
+                t('notification.title')
               )}
 
               {/* 1. Start reminder */}
@@ -2002,7 +1982,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <Brain className="w-5 h-5" />
                 </div>,
                 t('llm.title'),
-                t('llm.subtitle'),
                 isLlmDone ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -2333,9 +2312,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
                 </div>,
-                t('calendar.title'),
-                t('calendar.subtitle'),
-                undefined
+                t('calendar.title')
               )}
 
               {/* 1. Export TODO link */}
