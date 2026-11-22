@@ -488,7 +488,6 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
     SET scheduled_start = ?,
         scheduled_end = ?,
         schedule_blocks = ?,
-        is_fixed = 1,
         status = 'scheduled',
         updated_at = datetime('now', 'localtime')
     WHERE id = ? AND user_id = ?
@@ -508,7 +507,6 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
       SET scheduled_start = ?,
           scheduled_end = ?,
           schedule_blocks = ?,
-          is_fixed = 1,
           status = 'scheduled',
           updated_at = datetime('now', 'localtime')
       WHERE id = ? AND user_id = ?
@@ -526,7 +524,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
         score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
       userId,
       newTask.title,
@@ -537,6 +535,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
       newTask.deadline || null,
       proposal.newTaskSchedule.start,
       proposal.newTaskSchedule.end,
+      newTask.is_fixed ? 1 : 0,
       newTask.is_concurrent ? 1 : 0,
       proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null
     );
@@ -545,7 +544,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
 
   res.json({
     success: true,
-    message: `已同步调整「${proposal.conflictTask.title}」并锁定新日程`,
+    message: `已同步调整「${proposal.conflictTask.title}」日程`,
     taskId,
   });
 }

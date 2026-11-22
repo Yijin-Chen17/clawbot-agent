@@ -291,15 +291,6 @@ export function initDatabase() {
     `);
   }
 
-  // 确保所有已有排程的任务均锁定为固定任务 (一旦安排日历，就不再做更改)
-  db.exec(`
-    UPDATE tasks
-    SET is_fixed = 1
-    WHERE status IN ('scheduled', 'in_progress')
-      AND scheduled_start IS NOT NULL
-      AND (is_fixed IS NULL OR is_fixed = 0);
-  `);
-
   // Seed initial admin if database has no users
   const config = getAppConfig();
   const defaultAdminPassword = config.admin_default_password || process.env.ADMIN_DEFAULT_PASSWORD || '123456';

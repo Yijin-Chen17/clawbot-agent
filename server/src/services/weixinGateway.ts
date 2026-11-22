@@ -595,7 +595,6 @@ export async function processWeChatMessage(
         SET scheduled_start = ?,
             scheduled_end = ?,
             schedule_blocks = ?,
-            is_fixed = 1,
             status = 'scheduled',
             updated_at = datetime('now', 'localtime')
         WHERE id = ? AND user_id = ?
@@ -607,14 +606,14 @@ export async function processWeChatMessage(
         userId
       );
 
-      // 2. 插入新任务并锁定
+      // 2. 插入新任务
       db.prepare(`
         INSERT INTO tasks (
           user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
           deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       `).run(
         userId,
         newTask.title,
@@ -635,10 +634,9 @@ export async function processWeChatMessage(
       const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
       const replyText =
-        `✅ 已为您同步调整日程并锁定：\n` +
+        `✅ 已为您同步调整日程：\n` +
         `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
-        `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
-        `📌 一旦安排日历，事件均已固定锁定。`;
+        `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}`;
 
       addDebugLog('Scheduler', 'success', `用户 #${userId} 快捷确认同步修改日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
       return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied' } };
@@ -654,7 +652,7 @@ export async function processWeChatMessage(
             deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
             created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
         `).run(
           userId,
           newTask.title,
@@ -755,7 +753,6 @@ export async function processWeChatMessage(
           SET scheduled_start = ?,
               scheduled_end = ?,
               schedule_blocks = ?,
-              is_fixed = 1,
               status = 'scheduled',
               updated_at = datetime('now', 'localtime')
           WHERE id = ? AND user_id = ?
@@ -767,14 +764,14 @@ export async function processWeChatMessage(
           userId
         );
 
-        // 2. 插入新任务并锁定
+        // 2. 插入新任务
         db.prepare(`
           INSERT INTO tasks (
             user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
             deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
             created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
         `).run(
           userId,
           newTask.title,
@@ -795,10 +792,9 @@ export async function processWeChatMessage(
         const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
         const replyText =
-          `✅ 已为您同步调整日程并锁定：\n` +
+          `✅ 已为您同步调整日程：\n` +
           `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
-          `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
-          `📌 一旦安排日历，事件均已固定锁定。`;
+          `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}`;
 
         addDebugLog('Scheduler', 'success', `LLM 判定用户同意调整日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
         return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied', parsed } };
@@ -814,7 +810,7 @@ export async function processWeChatMessage(
               score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run(
             userId,
             newTask.title,
