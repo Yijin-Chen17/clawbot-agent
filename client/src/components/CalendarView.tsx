@@ -76,6 +76,9 @@ interface TaskItem {
   id: number;
   title: string;
   duration_minutes: number;
+  original_duration_minutes?: number | null;
+  time_mode?: string;
+  completed_dates?: string | null;
   urgency: number;
   importance: number;
   score_scale?: number | null;
@@ -373,8 +376,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
   const fetchData = async () => {
     setLoading(true);
     try {
+      const rangeStart = addDays(weekStart, -7).toISOString();
+      const rangeEnd = addDays(weekStart, 14).toISOString();
       const [eventsRes, tasksRes] = await Promise.all([
-        api.get('/calendar/events'),
+        api.get('/calendar/events', { params: { start: rangeStart, end: rangeEnd } }),
         api.get('/tasks'),
       ]);
       setEvents(eventsRes.data.events || []);
@@ -392,7 +397,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [weekStart]);
 
   // Auto-scroll to morning hours (08:00) on mount / week change
   useEffect(() => {
@@ -441,8 +446,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           const color =
             (ev.subscriptionId && subColorMap.get(ev.subscriptionId)) || '#039BE5';
           if (ev.allDay) {
+            const startMs = new Date(ev.start).getTime();
+            const endMs = new Date(ev.end).getTime();
             const startsOn = dateKeyFromIso(ev.start);
-            const endsOn = dateKeyFromIso(ev.end);
+            // RFC 5545 全天事件的 DTEND 为次日 00:00（左闭右开），减去 1ms 得到实际最后一天
+            const endsOn = endMs > startMs ? localDateKey(new Date(endMs - 1)) : startsOn;
             if (key >= startsOn && key <= endsOn) {
               allDayItems.push({
                 kind: 'event',
@@ -473,28 +481,40 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
           }
         });
 
-      // 2. Scheduled and Completed Tasks (已完成任务根据完成时间往前推)
-      tasks.forEach((t) => {
-        const isCompleted = t.status === 'completed';
-        let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
+      // 2. Scheduled and Completed Tasks (优先展示真实 schedule_blocks；无排程记录的已完成任务按完成时间倒推)
+      const parseCompletedDates = (raw?: string | null): string[] => {
+        if (!raw) return [];
+        try {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
 
-        if (isCompleted) {
-          // 根据完成时间往前推
-          const compEnd = parseDbIso(t.updated_at) || (t.scheduled_end ? new Date(t.scheduled_end) : (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now())));
-          const durMs = (t.duration_minutes || 30) * 60000;
+      tasks.forEach((t) => {
+        const completedDates = parseCompletedDates(t.completed_dates);
+        const isCompletedForDay =
+          t.status === 'completed' || (t.time_mode === 'daily_fixed' && completedDates.includes(key));
+
+        let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
+
+        if (t.schedule_blocks) {
+          try {
+            const parsedBlocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+            if (Array.isArray(parsedBlocks)) {
+              blocks = parsedBlocks;
+            }
+          } catch {}
+        }
+        if (blocks.length === 0 && t.scheduled_start && t.scheduled_end) {
+          blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+        }
+        if (blocks.length === 0 && t.status === 'completed') {
+          const compEnd = parseDbIso(t.updated_at) || (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now()));
+          const durMs = (t.original_duration_minutes || t.duration_minutes || 30) * 60000;
           const compStart = new Date(compEnd.getTime() - durMs);
           blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
-        } else {
-          if (t.schedule_blocks) {
-            try {
-              blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
-            } catch {}
-          }
-          if (!Array.isArray(blocks) || blocks.length === 0) {
-            if (t.scheduled_start && t.scheduled_end) {
-              blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
-            }
-          }
         }
 
         blocks.forEach((block, bIdx) => {
@@ -505,16 +525,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
             windowEndIso
           );
           if (range) {
+            const blockDone = isCompletedForDay || Boolean(block.completed);
             const quad = getTaskQuadrant(t.importance, t.urgency, t.score_scale);
             const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-            let titlePrefix = isCompleted ? '✓ ' : '';
-            if (!isCompleted) {
+            let titlePrefix = blockDone ? '✓ ' : '';
+            if (!blockDone) {
               if (t.is_fixed) titlePrefix += '📌 ';
               if (t.is_concurrent) titlePrefix += '⚡ ';
             }
 
-            let qBadge = isCompleted ? '已完成' : quad.name;
-            if (!isCompleted) {
+            let qBadge = blockDone ? '已完成' : quad.name;
+            if (!blockDone) {
               if (t.is_fixed && t.is_concurrent) qBadge = '固定·双线程';
               else if (t.is_fixed) qBadge = '固定任务';
               else if (t.is_concurrent) qBadge = '双线程';
@@ -522,12 +543,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
 
             timedItems.push({
               kind: 'task',
-              id: `task-${t.id}-${bIdx}-${isCompleted ? 'done' : 'active'}`,
+              id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
               title: `${titlePrefix}${t.title}${partSuffix}`,
               start: range.start,
               end: range.end,
               allDay: false,
-              color: isCompleted ? '#10B981' : quad.color,
+              color: blockDone ? '#10B981' : quad.color,
               qClass: quad.key,
               qName: qBadge,
               task: t,
@@ -538,12 +559,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
 
       // 3. Due tasks for this day
       const dueTasks = tasks
-        .filter(
-          (t) =>
-            t.deadline &&
-            dateKeyFromIso(t.deadline) === key &&
-            t.status !== 'completed'
-        )
+        .filter((t) => {
+          if (!t.deadline || t.status === 'completed') return false;
+          if (dateKeyFromIso(t.deadline) !== key) return false;
+          if (t.time_mode === 'daily_fixed' && parseCompletedDates(t.completed_dates).includes(key)) {
+            return false;
+          }
+          return true;
+        })
         .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
 
       return {
@@ -560,14 +583,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
   // Overdue tasks
   const overdueTasks = useMemo(() => {
     return tasks
-      .filter(
-        (t) =>
-          t.deadline &&
-          dateKeyFromIso(t.deadline) < weekStartKey &&
-          t.status !== 'completed'
-      )
+      .filter((t) => {
+        if (!t.deadline || t.status === 'completed') return false;
+        if (t.time_mode === 'daily_fixed' && t.completed_dates) {
+          try {
+            const doneDates = JSON.parse(t.completed_dates);
+            if (Array.isArray(doneDates) && doneDates.includes(todayKey)) return false;
+          } catch {}
+        }
+        return dateKeyFromIso(t.deadline) < weekStartKey;
+      })
       .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
-  }, [tasks, weekStartKey]);
+  }, [tasks, weekStartKey, todayKey]);
 
   // Due groups this week
   const dueGroups = useMemo(() => {
@@ -1156,8 +1183,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
                     const startD = new Date(seg.start);
                     const endD = new Date(seg.end);
 
-                    const startMinutes = startD.getHours() * 60 + startD.getMinutes();
-                    const endMinutes = endD.getHours() * 60 + endD.getMinutes();
+                    const startMinutes = Math.max(0, Math.round((startD.getTime() - d.windowStartMs) / 60000));
+                    const endMinutes = Math.min(24 * 60, Math.round((endD.getTime() - d.windowStartMs) / 60000));
                     const durationMinutes = Math.max(15, endMinutes - startMinutes);
 
                     const top = (startMinutes / 60) * HOUR_HEIGHT;
