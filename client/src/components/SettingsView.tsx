@@ -1983,7 +1983,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>,
                 t('llm.title'),
                 isLlmDone ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                     {apiMode === 'official' ? '官方接口已就绪' : t('llm.valid_badge')}
                   </span>
@@ -2006,15 +2006,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       onClick={() => setApiMode('official')}
                       className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
                         apiMode === 'official'
-                          ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 shadow-sm ring-1 ring-blue-500'
-                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
+                          ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-600 text-gray-900 dark:text-gray-100 font-semibold shadow-2xs'
+                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-neutral-700'
                       }`}
                     >
-                      <span className="font-semibold text-xs flex items-center gap-1.5">
-                        <Sparkles className="w-4 h-4 text-blue-500" />
+                      <span className="font-semibold text-xs flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
                         {t('llm.mode_official')}
                       </span>
-                      {apiMode === 'official' && <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                      {apiMode === 'official' && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                     </button>
 
                     <button
@@ -2022,15 +2022,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       onClick={() => setApiMode('custom')}
                       className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
                         apiMode === 'custom'
-                          ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 shadow-sm ring-1 ring-blue-500'
-                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
+                          ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-600 text-gray-900 dark:text-gray-100 font-semibold shadow-2xs'
+                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-neutral-700'
                       }`}
                     >
-                      <span className="font-semibold text-xs flex items-center gap-1.5">
-                        <KeyRound className="w-4 h-4 text-gray-500 dark:text-neutral-400" />
+                      <span className="font-semibold text-xs flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
                         {t('llm.mode_custom')}
                       </span>
-                      {apiMode === 'custom' && <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                      {apiMode === 'custom' && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                     </button>
                   </div>
                 </div>
@@ -2041,8 +2041,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-200 dark:border-neutral-800">
                       <div>
                         <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">{t('llm.official_balance')}</div>
-                        <div className="text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 flex items-baseline gap-1 mt-0.5">
-                          <span className="text-base font-normal">¥</span>
+                        <div className="text-2xl font-bold font-mono tracking-tight text-gray-900 dark:text-gray-100 flex items-baseline gap-1 mt-0.5">
+                          <span className="text-base font-normal text-gray-500 dark:text-neutral-400">¥</span>
                           <span>{userBalance.toFixed(4)}</span>
                           <span className="text-xs font-normal text-gray-400 dark:text-neutral-500 ml-1">元</span>
                         </div>
@@ -2052,9 +2052,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         <button
                           type="button"
                           onClick={fetchSettings}
-                          className="px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-white dark:bg-[#1a1b1e] border border-blue-200 dark:border-blue-800 rounded-lg hover:bg-blue-50 transition flex items-center gap-1 cursor-pointer"
+                          className="px-2.5 py-1.5 text-xs text-gray-700 dark:text-neutral-300 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800 transition flex items-center gap-1.5 cursor-pointer"
                         >
-                          <RefreshCw className="w-3.5 h-3.5" />
+                          <RefreshCw className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
                           <span>刷新余额</span>
                         </button>
                       </div>
@@ -2065,15 +2065,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       <div className="p-2.5 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-[11px] text-gray-600 dark:text-neutral-400 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-gray-700 dark:text-gray-300">当前官方模型:</span>
-                          <span className="font-mono font-medium text-blue-600 dark:text-blue-400">{globalLlmInfo.model}</span>
+                          <span className="font-mono font-semibold text-gray-900 dark:text-gray-100">{globalLlmInfo.model}</span>
                         </div>
                         <div>
                           {globalLlmInfo.isDeepSeek ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-medium">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 text-[10px] font-medium font-mono">
                               DeepSeek 动态峰谷计费 (闲时/周末 5折)
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-300 text-[10px] font-medium">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 text-[10px] font-medium font-mono">
                               输入 ¥{globalLlmInfo.priceInput}/M · 输出 ¥{globalLlmInfo.priceOutput}/M · 缓存 ¥{globalLlmInfo.priceCacheHit}/M
                             </span>
                           )}
@@ -2083,16 +2083,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
                     {!hasGlobalLlm && (
                       <div className="p-3 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <AlertCircle className="w-4 h-4 shrink-0 text-gray-400 dark:text-neutral-500" />
                         <span>平台尚未配置全局官方接口，请联系管理员在后台配置全局 API。</span>
                       </div>
                     )}
 
                     {userBalance <= 0 && (
-                      <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
+                      <div className="p-3 rounded-lg bg-gray-50 dark:bg-neutral-800/50 border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 text-xs flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
                         <div>
-                          <div className="font-semibold">{t('llm.official_balance_zero_tip')}</div>
+                          <div className="font-semibold text-rose-600 dark:text-rose-400">{t('llm.official_balance_zero_tip')}</div>
                         </div>
                       </div>
                     )}
@@ -2100,7 +2100,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     {/* 兑换码兑换输入 */}
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-                        <Gift className="w-3.5 h-3.5 text-amber-500" />
+                        <Gift className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
                         <span>{t('llm.official_redeem_title')}</span>
                       </label>
                       <div className="flex gap-2">
@@ -2117,7 +2117,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           disabled={redeeming || !redeemCodeInput.trim()}
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
                         >
-                          {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
+                          {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5 text-white/80" />}
                           <span>{redeeming ? '兑换中...' : t('llm.official_redeem_btn')}</span>
                         </button>
                       </div>
@@ -2199,15 +2199,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         type="button"
                         onClick={handleTestLlmKey}
                         disabled={llmTesting || !llmApiKey.trim()}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                        className="flex items-center gap-1.5 px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-800 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
                       >
-                        {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />}
                         <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
                       </button>
 
                       {isLlmDone && (
-                        <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                          <CheckCircle2 className="w-4 h-4" />
+                        <span className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-neutral-300 font-medium">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                           <span>{t('llm.valid_badge')}</span>
                         </span>
                       )}
@@ -2230,7 +2230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="pt-6 border-t border-gray-100 dark:border-neutral-800 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <Coins className="w-4 h-4 text-amber-500" />
+                      <Coins className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
                       <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
                         {t('llm.usage_title')}
                       </h3>
@@ -2242,14 +2242,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         disabled={llmUsageLoading}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 ${llmUsageLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 ${llmUsageLoading ? 'animate-spin' : ''}`} />
                         <span>{t('llm.refresh_usage')}</span>
                       </button>
                       <button
                         type="button"
                         onClick={handleClearLlmUsage}
                         disabled={!llmUsageData?.summary?.totalRequests}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl text-gray-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>{t('llm.clear_usage')}</span>
@@ -2275,11 +2275,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
                         输入 Tokens (Prompt)
                       </span>
-                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
+                      <div className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1">
                         {(llmUsageData?.summary?.promptTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-mono flex items-center gap-1.5">
-                        <span className="text-emerald-600 dark:text-emerald-400">命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
+                        <span>命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
                         <span>·</span>
                         <span>未中 {(llmUsageData?.summary?.cacheMissTokens || 0).toLocaleString()}</span>
                       </div>
@@ -2289,7 +2289,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
                         输出 Tokens (Output)
                       </span>
-                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
+                      <div className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1">
                         {(llmUsageData?.summary?.completionTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">

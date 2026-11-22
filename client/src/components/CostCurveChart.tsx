@@ -135,14 +135,10 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
       {/* 顶栏：图表标题与范围快速切换胶囊 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-            <TrendingUp className="w-4 h-4" />
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-              <span>{t('llm.curve_title')}</span>
-            </h4>
-          </div>
+          <TrendingUp className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
+          <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+            {t('llm.curve_title')}
+          </h4>
         </div>
 
         {/* 1天 / 7天 / 30天 切换器 */}
@@ -155,7 +151,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '1d'
-                ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -169,7 +165,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '7d'
-                ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -183,7 +179,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '30d'
-                ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -196,7 +192,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
       <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-gray-50/70 dark:bg-neutral-800/40 border border-gray-100 dark:border-neutral-800/80">
         <div>
           <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <DollarSign className="w-3 h-3 text-emerald-500" />
+            <DollarSign className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
             <span>{t('llm.period_total')}</span>
           </span>
           <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
@@ -205,20 +201,20 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
         </div>
         <div>
           <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <Zap className="w-3 h-3 text-blue-500" />
+            <Zap className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
             <span>{t('llm.total_tokens')}</span>
           </span>
-          <div className="text-base font-bold font-mono text-blue-600 dark:text-blue-400 mt-0.5">
+          <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
             {stats.totalTokens.toLocaleString()}
           </div>
         </div>
         <div>
           <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <Calendar className="w-3 h-3 text-purple-500" />
+            <Calendar className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
             <span>{t('llm.total_requests')}</span>
           </span>
-          <div className="text-base font-bold font-mono text-purple-600 dark:text-purple-400 mt-0.5">
-            {stats.totalRequests}
+          <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
+            {stats.totalRequests.toLocaleString()}
           </div>
         </div>
       </div>
@@ -356,9 +352,9 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
               >
                 <div className="text-[11px] font-bold text-gray-300 flex items-center justify-between gap-3 border-b border-gray-800 pb-1">
                   <span>{activePoint.point.date || activePoint.point.label}</span>
-                  <span className="text-amber-400 font-semibold">{activePoint.point.requests} 次调用</span>
+                  <span className="text-gray-300 font-medium">{activePoint.point.requests} 次调用</span>
                 </div>
-                <div className="text-emerald-400 font-bold text-sm">
+                <div className="text-white font-bold text-sm">
                   ¥{activePoint.point.cost_cny.toFixed(4)}
                 </div>
                 <div className="text-[10px] text-gray-400">
