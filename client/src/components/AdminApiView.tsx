@@ -21,6 +21,8 @@ import {
   Zap,
   Calculator,
   Clock,
+  Server,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 interface RedemptionCodeItem {
@@ -87,30 +89,63 @@ export const AdminApiView: React.FC = () => {
     }
   };
 
-  // ================= 2. 全局官方 API 配置 =================
+  // ================= 2. 全局官方 API 配置 (主节点 API 1 + 备用节点 API 2) =================
+  // API 1 (主节点)
   const [globalEndpoint, setGlobalEndpoint] = useState('https://api.deepseek.com/v1');
   const [globalApiKey, setGlobalApiKey] = useState('');
   const [globalApiKeyMasked, setGlobalApiKeyMasked] = useState('');
   const [globalModel, setGlobalModel] = useState('deepseek-chat');
-  const [globalPriceInput, setGlobalPriceInput] = useState('2.0');
-  const [globalPriceOutput, setGlobalPriceOutput] = useState('8.0');
-  const [globalPriceCacheHit, setGlobalPriceCacheHit] = useState('0.5');
   const [globalHasKey, setGlobalHasKey] = useState(false);
   const [globalTesting, setGlobalTesting] = useState(false);
   const [globalTestResult, setGlobalTestResult] = useState<{ success: boolean; msg: string } | null>(null);
+
+  // API 2 (备用节点)
+  const [backupEnabled, setBackupEnabled] = useState(false);
+  const [backupEndpoint, setBackupEndpoint] = useState('https://api.deepseek.com/v1');
+  const [backupApiKey, setBackupApiKey] = useState('');
+  const [backupApiKeyMasked, setBackupApiKeyMasked] = useState('');
+  const [backupModel, setBackupModel] = useState('deepseek-chat');
+  const [backupHasKey, setBackupHasKey] = useState(false);
+  const [backupTesting, setBackupTesting] = useState(false);
+  const [backupTestResult, setBackupTestResult] = useState<{ success: boolean; msg: string } | null>(null);
+
+  // 模型计费价格
+  const [globalPriceInput, setGlobalPriceInput] = useState('2.0');
+  const [globalPriceOutput, setGlobalPriceOutput] = useState('8.0');
+  const [globalPriceCacheHit, setGlobalPriceCacheHit] = useState('0.5');
+
   const [globalSaving, setGlobalSaving] = useState(false);
   const [globalSaveSuccess, setGlobalSaveSuccess] = useState(false);
 
   const fetchGlobalLlm = async () => {
     try {
       const res = await api.get('/admin/global-llm');
-      setGlobalEndpoint(res.data.endpoint || 'https://api.deepseek.com/v1');
-      setGlobalModel(res.data.model || 'deepseek-chat');
-      setGlobalApiKeyMasked(res.data.apiKeyMasked || '');
-      setGlobalHasKey(Boolean(res.data.hasKey));
-      if (res.data.priceInput !== undefined) setGlobalPriceInput(String(res.data.priceInput));
-      if (res.data.priceOutput !== undefined) setGlobalPriceOutput(String(res.data.priceOutput));
-      if (res.data.priceCacheHit !== undefined) setGlobalPriceCacheHit(String(res.data.priceCacheHit));
+      // API 1
+      const api1 = res.data.api1 || {};
+      setGlobalEndpoint(api1.endpoint || res.data.endpoint || 'https://api.deepseek.com/v1');
+      setGlobalModel(api1.model || res.data.model || 'deepseek-chat');
+      setGlobalApiKeyMasked(api1.apiKeyMasked || res.data.apiKeyMasked || '');
+      setGlobalHasKey(Boolean(api1.hasKey ?? res.data.hasKey));
+
+      // API 2
+      const api2 = res.data.api2 || {};
+      setBackupEndpoint(api2.endpoint || 'https://api.deepseek.com/v1');
+      setBackupModel(api2.model || api1.model || 'deepseek-chat');
+      setBackupApiKeyMasked(api2.apiKeyMasked || '');
+      setBackupHasKey(Boolean(api2.hasKey));
+      setBackupEnabled(Boolean(api2.enabled));
+
+      // 价格
+      const pricing = res.data.pricing || {};
+      if (pricing.priceInput !== undefined || res.data.priceInput !== undefined) {
+        setGlobalPriceInput(String(pricing.priceInput ?? res.data.priceInput));
+      }
+      if (pricing.priceOutput !== undefined || res.data.priceOutput !== undefined) {
+        setGlobalPriceOutput(String(pricing.priceOutput ?? res.data.priceOutput));
+      }
+      if (pricing.priceCacheHit !== undefined || res.data.priceCacheHit !== undefined) {
+        setGlobalPriceCacheHit(String(pricing.priceCacheHit ?? res.data.priceCacheHit));
+      }
     } catch (err) {
       console.error('获取全局 API 配置失败:', err);
     }
@@ -124,17 +159,28 @@ export const AdminApiView: React.FC = () => {
     setGlobalSaving(true);
     try {
       await api.put('/admin/global-llm', {
-        endpoint: globalEndpoint,
-        api_key: globalApiKey || undefined,
-        model: globalModel,
-        price_input: parseFloat(globalPriceInput) || 0,
-        price_output: parseFloat(globalPriceOutput) || 0,
-        price_cache_hit: parseFloat(globalPriceCacheHit) || 0,
+        api1: {
+          endpoint: globalEndpoint,
+          apiKey: globalApiKey || undefined,
+          model: globalModel,
+        },
+        api2: {
+          endpoint: backupEndpoint,
+          apiKey: backupApiKey || undefined,
+          model: backupModel,
+          enabled: backupEnabled,
+        },
+        pricing: {
+          priceInput: parseFloat(globalPriceInput) || 0,
+          priceOutput: parseFloat(globalPriceOutput) || 0,
+          priceCacheHit: parseFloat(globalPriceCacheHit) || 0,
+        },
       });
       setGlobalSaveSuccess(true);
       setGlobalApiKey('');
+      setBackupApiKey('');
       fetchGlobalLlm();
-      setTimeout(() => setGlobalSaveSuccess(false), 2500);
+      setTimeout(() => setGlobalSaveSuccess(false), 3000);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
       alert('保存失败: ' + (error.response?.data?.error || error.message));
@@ -143,21 +189,41 @@ export const AdminApiView: React.FC = () => {
     }
   };
 
-  const handleTestGlobalLlm = async () => {
-    setGlobalTesting(true);
-    setGlobalTestResult(null);
-    try {
-      const res = await api.post('/admin/global-llm/test', {
-        endpoint: globalEndpoint,
-        api_key: globalApiKey || undefined,
-        model: globalModel,
-      });
-      setGlobalTestResult({ success: true, msg: res.data.message || '连通性测试成功！' });
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: string } }; message?: string };
-      setGlobalTestResult({ success: false, msg: error.response?.data?.error || error.message || '测试失败' });
-    } finally {
-      setGlobalTesting(false);
+  const handleTestGlobalLlm = async (node: 'api1' | 'api2' = 'api1') => {
+    if (node === 'api1') {
+      setGlobalTesting(true);
+      setGlobalTestResult(null);
+      try {
+        const res = await api.post('/admin/global-llm/test', {
+          node: 'api1',
+          endpoint: globalEndpoint,
+          api_key: globalApiKey || undefined,
+          model: globalModel,
+        });
+        setGlobalTestResult({ success: true, msg: res.data.message || '主节点 (API 1) 连通性测试成功！' });
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { error?: string } }; message?: string };
+        setGlobalTestResult({ success: false, msg: error.response?.data?.error || error.message || '测试失败' });
+      } finally {
+        setGlobalTesting(false);
+      }
+    } else {
+      setBackupTesting(true);
+      setBackupTestResult(null);
+      try {
+        const res = await api.post('/admin/global-llm/test', {
+          node: 'api2',
+          endpoint: backupEndpoint,
+          api_key: backupApiKey || undefined,
+          model: backupModel,
+        });
+        setBackupTestResult({ success: true, msg: res.data.message || '备用节点 (API 2) 连通性测试成功！' });
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { error?: string } }; message?: string };
+        setBackupTestResult({ success: false, msg: error.response?.data?.error || error.message || '测试失败' });
+      } finally {
+        setBackupTesting(false);
+      }
     }
   };
 
@@ -475,83 +541,250 @@ export const AdminApiView: React.FC = () => {
         </div>
       )}
 
-      {/* ================= VIEW 2: 全局官方 API 设置 ================= */}
+      {/* ================= VIEW 2: 全局官方 API 设置 (双通道故障自动切换) ================= */}
       {activeTab === 'global_api' && (
         <div className="flex-1 min-h-0 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 sm:p-7 overflow-y-auto shadow-2xs space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
             <div>
               <h3 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Globe className="w-5 h-5 text-blue-500" />
-                <span>全局官方 API 设置</span>
+                <span>全局官方 API 设置 (双通道智能重连与故障转移)</span>
               </h3>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                配置供全平台用户共享调用的官方大模型接口。选用官方接口的用户将统一由本配置提供算力支撑，并按实际 Token 折算扣除该用户账户额度。
+                配置供全平台用户共享调用的官方大模型接口。支持配置主节点与容灾备用节点，API 1 请求遇超时或异常时自动无感切换至 API 2 重试。配置独立持久化保存，重启绝不丢失。
               </p>
             </div>
 
-            {globalHasKey ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                已配置官方密钥
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                未配置官方密钥
-              </span>
-            )}
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {globalHasKey ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  API 1: 已就绪
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  API 1: 待配置
+                </span>
+              )}
+
+              {backupEnabled ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  API 2: 容灾启用
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 dark:bg-neutral-800 text-gray-500 dark:text-neutral-400">
+                  <span className="w-2 h-2 rounded-full bg-gray-400" />
+                  API 2: 未启用
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="space-y-5 text-xs max-w-2xl">
-            {/* Endpoint */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                全局端点 (Base URL)
-              </label>
-              <input
-                type="text"
-                value={globalEndpoint}
-                onChange={(e) => setGlobalEndpoint(e.target.value)}
-                placeholder="https://api.deepseek.com/v1"
-                className="w-full px-3.5 py-2.5 bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-              <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
-                默认推荐官方端点或兼容 OpenAI 格式的标准 API 反代服务
-              </span>
+          <div className="space-y-6 text-xs max-w-3xl">
+            {/* 卡片 1: API 1 (主用通道 / Primary) */}
+            <div className="p-5 rounded-2xl bg-gray-50/70 dark:bg-[#252627] border border-gray-200 dark:border-neutral-700/80 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-gray-200/60 dark:border-neutral-700/60">
+                <div className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-gray-100">
+                  <Server className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>API 1 (主用通道 / Primary)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold">
+                    首选用量节点
+                  </span>
+                </div>
+                {globalHasKey && (
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    已配置密钥
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                {/* Endpoint */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                    主端点 (Base URL)
+                  </label>
+                  <input
+                    type="text"
+                    value={globalEndpoint}
+                    onChange={(e) => setGlobalEndpoint(e.target.value)}
+                    placeholder="https://api.deepseek.com/v1"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
+                    官方端点或兼容 OpenAI 格式的反代地址 (超时阈值: 18秒)
+                  </span>
+                </div>
+
+                {/* API Key */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                    主 API 密钥 (API Key)
+                  </label>
+                  <input
+                    type="password"
+                    value={globalApiKey}
+                    onChange={(e) => setGlobalApiKey(e.target.value)}
+                    placeholder={globalApiKeyMasked ? `已配置: ${globalApiKeyMasked} (留空则保持不变)` : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
+                    独立持久化存储于服务器端，留空则保持当前配置密钥不变
+                  </span>
+                </div>
+
+                {/* Model */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                    主模型型号 (Model)
+                  </label>
+                  <input
+                    type="text"
+                    value={globalModel}
+                    onChange={(e) => setGlobalModel(e.target.value)}
+                    placeholder="deepseek-chat"
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+
+                {/* Test button & result for API 1 */}
+                <div className="pt-1 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleTestGlobalLlm('api1')}
+                    disabled={globalTesting}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer self-start"
+                  >
+                    {globalTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    <span>{globalTesting ? '测试主节点中...' : '测试 API 1 连通性'}</span>
+                  </button>
+
+                  {globalTestResult && (
+                    <div className={`flex-1 p-2.5 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
+                      globalTestResult.success
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                    }`}>
+                      {globalTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                      <span className="truncate">{globalTestResult.msg}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* API Key */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                全局 API 密钥 (API Key)
-              </label>
-              <input
-                type="password"
-                value={globalApiKey}
-                onChange={(e) => setGlobalApiKey(e.target.value)}
-                placeholder={globalApiKeyMasked ? `已配置: ${globalApiKeyMasked} (留空则保持不变)` : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
-                className="w-full px-3.5 py-2.5 bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-              <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
-                安全加密存储于 system_settings 数据库中，留空则保持当前配置不变
-              </span>
-            </div>
+            {/* 卡片 2: API 2 (备用容灾通道 / Backup) */}
+            <div className={`p-5 rounded-2xl border transition space-y-4 ${
+              backupEnabled
+                ? 'bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-900/60'
+                : 'bg-gray-50/40 dark:bg-[#222324] border-gray-200 dark:border-neutral-800'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-gray-200/60 dark:border-neutral-700/60">
+                <div className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-gray-100 flex-wrap">
+                  <ArrowRightLeft className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>API 2 (备用容灾通道 / Backup Failover)</span>
+                  {backupHasKey && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-semibold">
+                      已配置密钥
+                    </span>
+                  )}
+                </div>
 
-            {/* Model */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                模型型号 (Model)
-              </label>
-              <input
-                type="text"
-                value={globalModel}
-                onChange={(e) => setGlobalModel(e.target.value)}
-                placeholder="deepseek-chat"
-                className="w-full px-3.5 py-2.5 bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-              <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
-                支持 deepseek-chat / deepseek-reasoner 或任意兼容 OpenAI 标准的语言模型
-              </span>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={backupEnabled}
+                    onChange={(e) => setBackupEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                    开启自动重连与故障转移
+                  </span>
+                </label>
+              </div>
+
+              <p className="text-[11px] text-gray-500 dark:text-neutral-400 leading-relaxed">
+                启用后，当 API 1 响应超时 (18秒)、或返回 5xx 服务端错误 / 429 限流 / 连接中断时，系统全自动无缝切换至 API 2 备用节点重试，保障微信端服务高可用不中断。
+              </p>
+
+              {backupEnabled && (
+                <div className="space-y-4 pt-1 animate-fadeIn">
+                  {/* Backup Endpoint */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                      备用端点 (Base URL)
+                    </label>
+                    <input
+                      type="text"
+                      value={backupEndpoint}
+                      onChange={(e) => setBackupEndpoint(e.target.value)}
+                      placeholder="https://api.deepseek.com/v1"
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
+                      可配置为另一个 DeepSeek 节点、SiliconFlow 硅基流动、OpenAI 或第三方聚合中转站
+                    </span>
+                  </div>
+
+                  {/* Backup API Key */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                      备用 API 密钥 (API Key)
+                    </label>
+                    <input
+                      type="password"
+                      value={backupApiKey}
+                      onChange={(e) => setBackupApiKey(e.target.value)}
+                      placeholder={backupApiKeyMasked ? `已配置: ${backupApiKeyMasked} (留空则保持不变)` : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <span className="text-[11px] text-gray-400 dark:text-neutral-500 block">
+                      留空则保持当前备用节点密钥不变
+                    </span>
+                  </div>
+
+                  {/* Backup Model */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                      备用模型型号 (Model)
+                    </label>
+                    <input
+                      type="text"
+                      value={backupModel}
+                      onChange={(e) => setBackupModel(e.target.value)}
+                      placeholder="deepseek-chat"
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                  </div>
+
+                  {/* Test button & result for API 2 */}
+                  <div className="pt-1 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleTestGlobalLlm('api2')}
+                      disabled={backupTesting}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer self-start"
+                    >
+                      {backupTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      <span>{backupTesting ? '测试备用节点中...' : '测试 API 2 连通性'}</span>
+                    </button>
+
+                    {backupTestResult && (
+                      <div className={`flex-1 p-2.5 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
+                        backupTestResult.success
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                      }`}>
+                        {backupTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                        <span className="truncate">{backupTestResult.msg}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 模型价格与计费体系配置 */}
@@ -568,7 +801,7 @@ export const AdminApiView: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-[11px] text-gray-600 dark:text-neutral-400 leading-relaxed">
-                  系统检测到模型为 DeepSeek 系列，用户调用官方接口时将全自动依据北京时间精确折算扣减账户额度，无需手动输入单价。
+                  系统检测到主模型为 DeepSeek 系列，用户调用官方接口时将全自动依据北京时间精确折算扣减账户额度，无需手动输入单价。
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                   <div className="p-3 rounded-xl bg-white/80 dark:bg-[#1e1f20]/80 border border-blue-100 dark:border-neutral-800 space-y-1.5">
@@ -731,46 +964,36 @@ export const AdminApiView: React.FC = () => {
               </div>
             )}
 
-            {/* Buttons */}
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleTestGlobalLlm}
-                disabled={globalTesting}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
-              >
-                {globalTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                <span>{globalTesting ? '测试连通性中...' : '测试全局连通性'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSaveGlobalLlm}
-                disabled={globalSaving}
-                className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
-              >
-                {globalSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                <span>{globalSaving ? '保存中...' : '保存全局配置'}</span>
-              </button>
-
-              {globalSaveSuccess && (
-                <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-fadeIn">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>配置已更新生效！</span>
+            {/* 底部保存配置操作区 */}
+            <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-[#252627]/80 border border-gray-200/80 dark:border-neutral-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-gray-800 dark:text-gray-200 block">
+                  持久化配置存储与即时生效
                 </span>
-              )}
-            </div>
-
-            {globalTestResult && (
-              <div className={`p-3.5 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
-                globalTestResult.success
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-              }`}>
-                {globalTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
-                <span>{globalTestResult.msg}</span>
+                <span className="text-[11px] text-gray-500 dark:text-neutral-400 block">
+                  配置将独立持久化写入服务器 <code className="font-mono text-blue-600 dark:text-blue-400">data/global_api_config.json</code> 及数据库，重启服务绝不丢失。
+                </span>
               </div>
-            )}
+
+              <div className="flex items-center gap-3 shrink-0">
+                {globalSaveSuccess && (
+                  <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-fadeIn">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>配置已保存生效！</span>
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSaveGlobalLlm}
+                  disabled={globalSaving}
+                  className="flex items-center gap-1.5 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+                >
+                  {globalSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{globalSaving ? '保存中...' : '保存全局官方配置'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

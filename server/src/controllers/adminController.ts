@@ -11,6 +11,7 @@ import {
 } from '../services/weixinGateway.js';
 import { UserSettings } from '../models/types.js';
 import { getGlobalUsageStats, recordApiUsage } from '../services/llmPricing.js';
+import { getGlobalApiConfig, saveGlobalApiConfig, maskApiKey } from '../services/globalApiConfig.js';
 
 export function listUsers(req: AuthenticatedRequest, res: Response): void {
   const users = db.prepare(`
@@ -297,109 +298,119 @@ export function resetUserSyncBuf(req: AuthenticatedRequest, res: Response): void
 // ================= Global LLM API & Quota Settings =================
 
 /**
- * 获取全局大模型 API 设置
+ * 获取全局大模型 API 设置（包含 API 1 主节点与 API 2 备用节点）
  */
 export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
-  const getSetting = (key: string, def: string = '') => {
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
-    return row?.value || def;
-  };
+  const config = getGlobalApiConfig();
 
-  const endpoint = getSetting('global_llm_endpoint', 'https://api.deepseek.com/v1');
-  const model = getSetting('global_llm_model', 'deepseek-chat');
-  let apiKey = getSetting('global_llm_api_key', '');
-  if (!apiKey && process.env.DEEPSEEK_API_KEY) {
-    apiKey = process.env.DEEPSEEK_API_KEY;
-  }
-
-  const priceInput = parseFloat(getSetting('global_llm_price_input', '2.0')) || 2.0;
-  const priceOutput = parseFloat(getSetting('global_llm_price_output', '8.0')) || 8.0;
-  const priceCacheHit = parseFloat(getSetting('global_llm_price_cache_hit', '0.5')) || 0.5;
-
-  let apiKeyMasked = '';
-  if (apiKey) {
-    apiKeyMasked = apiKey.length > 8
-      ? `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}`
-      : '****';
-  }
+  const api1Masked = maskApiKey(config.api1.apiKey);
+  const api2Masked = maskApiKey(config.api2.apiKey);
 
   res.json({
-    endpoint,
-    model,
-    apiKeyMasked,
-    hasKey: Boolean(apiKey && apiKey.length > 3),
-    priceInput,
-    priceOutput,
-    priceCacheHit,
+    // 结构化节点数据
+    api1: {
+      endpoint: config.api1.endpoint,
+      model: config.api1.model,
+      apiKeyMasked: api1Masked,
+      hasKey: Boolean(config.api1.apiKey && config.api1.apiKey.length > 3),
+    },
+    api2: {
+      endpoint: config.api2.endpoint,
+      model: config.api2.model,
+      apiKeyMasked: api2Masked,
+      hasKey: Boolean(config.api2.apiKey && config.api2.apiKey.length > 3),
+      enabled: Boolean(config.api2.enabled),
+    },
+    pricing: config.pricing,
+    updatedAt: config.updatedAt,
+
+    // 扁平结构兼容旧前端调用
+    endpoint: config.api1.endpoint,
+    model: config.api1.model,
+    apiKeyMasked: api1Masked,
+    hasKey: Boolean(config.api1.apiKey && config.api1.apiKey.length > 3),
+    priceInput: config.pricing.priceInput,
+    priceOutput: config.pricing.priceOutput,
+    priceCacheHit: config.pricing.priceCacheHit,
   });
 }
 
 /**
- * 更新全局大模型 API 设置
+ * 更新全局大模型 API 设置（双写至独立持久化配置文件与数据库，防止重启丢配置）
  */
 export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
-  const { endpoint, api_key, model, price_input, price_output, price_cache_hit } = req.body;
+  const body = req.body;
 
-  const upsert = (key: string, value: string) => {
-    db.prepare(`
-      INSERT INTO system_settings (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).run(key, value);
+  // 兼顾结构化传参与扁平旧传参
+  const api1Update = body.api1 || {
+    endpoint: body.endpoint,
+    model: body.model,
+    apiKey: body.api_key,
   };
 
-  if (endpoint !== undefined) {
-    upsert('global_llm_endpoint', String(endpoint).trim() || 'https://api.deepseek.com/v1');
-  }
-  if (model !== undefined) {
-    upsert('global_llm_model', String(model).trim() || 'deepseek-chat');
-  }
-  if (api_key !== undefined && typeof api_key === 'string' && !api_key.includes('****')) {
-    upsert('global_llm_api_key', api_key.trim());
-  }
-  if (price_input !== undefined) {
-    const num = Math.max(0, parseFloat(String(price_input)) || 0);
-    upsert('global_llm_price_input', num.toString());
-  }
-  if (price_output !== undefined) {
-    const num = Math.max(0, parseFloat(String(price_output)) || 0);
-    upsert('global_llm_price_output', num.toString());
-  }
-  if (price_cache_hit !== undefined) {
-    const num = Math.max(0, parseFloat(String(price_cache_hit)) || 0);
-    upsert('global_llm_price_cache_hit', num.toString());
-  }
+  const api2Update = body.api2 || {
+    endpoint: body.backup_endpoint,
+    model: body.backup_model,
+    apiKey: body.backup_api_key,
+    enabled: body.backup_enabled,
+  };
 
-  addDebugLog('System', 'info', `管理员更新了系统全局 LLM API 配置 (Model: ${model || 'default'})`);
-  res.json({ message: '全局 API 配置及模型单价已成功保存！' });
+  const pricingUpdate = body.pricing || {
+    priceInput: body.price_input,
+    priceOutput: body.price_output,
+    priceCacheHit: body.price_cache_hit,
+  };
+
+  const updated = saveGlobalApiConfig({
+    api1: api1Update,
+    api2: api2Update,
+    pricing: pricingUpdate,
+  });
+
+  addDebugLog(
+    'System',
+    'info',
+    `管理员更新了全局 API 配置 (主节点 Model: ${updated.api1.model}, 备用节点: ${updated.api2.enabled ? '已启用' : '未启用'})`
+  );
+
+  res.json({
+    success: true,
+    message: '全局 API 配置及主备节点设置已成功持久化保存！',
+    config: updated,
+  });
 }
 
 /**
- * 测试全局大模型 API 连通性
+ * 测试全局大模型 API 连通性（支持独立测试 API 1 或 API 2）
  */
 export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { endpoint, api_key, model } = req.body;
+  const { node = 'api1', endpoint, api_key, model } = req.body;
+  const config = getGlobalApiConfig();
+  const targetNode = node === 'api2' ? config.api2 : config.api1;
 
   let finalKey = api_key;
   if (!finalKey || typeof finalKey !== 'string' || finalKey.includes('****')) {
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key') as { value: string } | undefined;
-    finalKey = row?.value || process.env.DEEPSEEK_API_KEY || '';
+    finalKey = targetNode.apiKey || (node === 'api1' ? process.env.DEEPSEEK_API_KEY || '' : '');
   }
 
   if (!finalKey || !finalKey.trim()) {
-    res.status(400).json({ success: false, error: '未输入或未配置全局 API Key' });
+    res.status(400).json({
+      success: false,
+      error: `未输入或未配置 ${node === 'api2' ? '备用节点 (API 2)' : '主节点 (API 1)'} 的 API Key`,
+    });
     return;
   }
 
-  const finalEndpoint = (endpoint && String(endpoint).trim()) || 'https://api.deepseek.com/v1';
-  const finalModel = (model && String(model).trim()) || 'deepseek-chat';
+  const finalEndpoint = String(endpoint || targetNode.endpoint || 'https://api.deepseek.com/v1').trim();
+  const finalModel = String(model || targetNode.model || 'deepseek-chat').trim();
+  const nodeLabel = node === 'api2' ? '备用节点 (API 2)' : '主用节点 (API 1)';
 
   const startTime = Date.now();
   try {
     const client = new OpenAI({
       baseURL: finalEndpoint,
       apiKey: finalKey.trim(),
-      timeout: 12000,
+      timeout: 15000,
     });
 
     const testRes = await client.chat.completions.create({
@@ -417,7 +428,7 @@ export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Resp
 
     res.json({
       success: true,
-      message: `全局 API 验证成功！响应耗时 ${latency}ms，单次测试消耗 ${tokens} Tokens。`,
+      message: `${nodeLabel} 验证成功！响应耗时 ${latency}ms，单次测试消耗 ${tokens} Tokens。`,
       latency,
       tokens,
     });
@@ -425,10 +436,10 @@ export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Resp
     const errorMsg =
       err.response?.data?.error?.message ||
       err.message ||
-      '全局 API 连接失败，请检查 endpoint 或 key 是否正确';
+      `${nodeLabel} 连接失败，请检查端点 URL、API Key 或模型名称是否正确`;
     res.status(400).json({
       success: false,
-      error: errorMsg,
+      error: `[${nodeLabel} 失败] ${errorMsg}`,
     });
   }
 }

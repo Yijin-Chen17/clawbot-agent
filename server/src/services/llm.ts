@@ -2,12 +2,21 @@ import OpenAI from 'openai';
 import { LLMExtractionResult, UserSettings } from '../models/types.js';
 import { recordApiUsage } from './llmPricing.js';
 import { db } from '../config/database.js';
+import { getGlobalApiConfig } from './globalApiConfig.js';
+import { addDebugLog } from './debugLogger.js';
+
+export interface LlmNodeConfig {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+}
 
 export interface EffectiveLlmConfig {
   apiMode: 'official' | 'custom';
   endpoint: string;
   apiKey: string;
   model: string;
+  backupNode?: LlmNodeConfig | null;
   userBalance: number;
   isOfficial: boolean;
 }
@@ -33,24 +42,26 @@ export function getEffectiveLlmConfig(userId: number, userSettings?: UserSetting
     };
   }
 
-  // 官方接口模式：读取系统全局 system_settings
-  const getSetting = (key: string, def: string) => {
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
-    return row?.value || def;
-  };
+  // 官方接口模式：优先读取服务器独立持久化的配置文件，支持主节点 API 1 与备用节点 API 2
+  const globalConfig = getGlobalApiConfig();
+  const api1 = globalConfig.api1;
+  const api2 = globalConfig.api2;
 
-  const endpoint = getSetting('global_llm_endpoint', 'https://api.deepseek.com/v1');
-  let apiKey = getSetting('global_llm_api_key', '');
-  if (!apiKey && process.env.DEEPSEEK_API_KEY) {
-    apiKey = process.env.DEEPSEEK_API_KEY;
+  let backupNode: LlmNodeConfig | null = null;
+  if (api2.enabled && api2.apiKey && api2.apiKey.trim().length > 3) {
+    backupNode = {
+      endpoint: api2.endpoint || 'https://api.deepseek.com/v1',
+      apiKey: api2.apiKey.trim(),
+      model: api2.model || api1.model || 'deepseek-chat',
+    };
   }
-  const model = getSetting('global_llm_model', 'deepseek-chat');
 
   return {
     apiMode: 'official',
-    endpoint,
-    apiKey,
-    model,
+    endpoint: api1.endpoint || 'https://api.deepseek.com/v1',
+    apiKey: api1.apiKey || '',
+    model: api1.model || 'deepseek-chat',
+    backupNode,
     userBalance,
     isOfficial: true,
   };
@@ -159,11 +170,6 @@ export async function parseUserMessageWithLLM(
     }
   }
 
-  const client = new OpenAI({
-    baseURL: config.endpoint,
-    apiKey: config.apiKey,
-  });
-
   const now = new Date();
   const currentLocalTimeStr = now.toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -191,8 +197,20 @@ export async function parseUserMessageWithLLM(
   }
   userContent += `\n[用户输入]: ${message}`;
 
+  // 准备发起调用：支持主节点重连与自动切换至备用节点机制
+  let response: any = null;
+  let activeModel = config.model;
+  let usedBackupNode = false;
+
+  // 1. 发起主节点调用 (API 1)
   try {
-    const response = await client.chat.completions.create({
+    const primaryClient = new OpenAI({
+      baseURL: config.endpoint,
+      apiKey: config.apiKey,
+      timeout: 18000,
+    });
+
+    response = await primaryClient.chat.completions.create({
       model: config.model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -201,14 +219,63 @@ export async function parseUserMessageWithLLM(
       temperature: 0.1,
       response_format: { type: 'json_object' },
     });
+  } catch (primaryErr: any) {
+    const primaryErrMsg = primaryErr.message || '未知错误';
+    console.warn(`[LLM] 主节点 (API 1: ${config.endpoint}) 调用失败: ${primaryErrMsg}`);
 
+    // 2. 若配置了有效备用节点 (API 2)，自动进行无缝故障转移与重连重试
+    if (config.isOfficial && config.backupNode && config.backupNode.apiKey) {
+      const backup = config.backupNode;
+      const backupModel = backup.model || config.model;
+      addDebugLog('LLM', 'warn', `官方主节点 (API 1) 请求失败 [${primaryErrMsg}]，系统正自动无缝切换至备用节点 (API 2) 重试...`);
+      console.log(`[LLM Failover] 正在自动重试备用节点 (API 2: ${backup.endpoint}, Model: ${backupModel})...`);
+
+      try {
+        const backupClient = new OpenAI({
+          baseURL: backup.endpoint,
+          apiKey: backup.apiKey,
+          timeout: 22000,
+        });
+
+        response = await backupClient.chat.completions.create({
+          model: backupModel,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userContent },
+          ],
+          temperature: 0.1,
+          response_format: { type: 'json_object' },
+        });
+
+        activeModel = backupModel;
+        usedBackupNode = true;
+        addDebugLog('LLM', 'info', `备用节点 (API 2) 重连并响应成功！已成功提取用户日程。`);
+      } catch (backupErr: any) {
+        const backupErrMsg = backupErr.message || '未知错误';
+        console.error(`[LLM Failover] 备用节点 (API 2) 亦请求失败: ${backupErrMsg}`);
+        addDebugLog('LLM', 'error', `官方大模型主备节点均失败: 主节点[${primaryErrMsg}], 备用节点[${backupErrMsg}]`);
+        throw new Error(`全局大模型请求失败 (主备节点均不可用)。主节点: ${primaryErrMsg}; 备用节点: ${backupErrMsg}`);
+      }
+    } else {
+      // 未配置备用节点或为私有 Key，直接抛出异常
+      throw primaryErr;
+    }
+  }
+
+  try {
     const content = response.choices[0]?.message?.content?.trim();
     if (!content) {
       throw new Error('LLM 返回内容为空');
     }
 
     if (response.usage && userId) {
-      const usageRec = recordApiUsage(userId, config.model, response.usage, 'weixin_chat', config.isOfficial);
+      const usageRec = recordApiUsage(
+        userId,
+        activeModel,
+        response.usage,
+        usedBackupNode ? 'weixin_chat_backup' : 'weixin_chat',
+        config.isOfficial
+      );
       if (config.isOfficial && usageRec && usageRec.costCny > 0) {
         db.prepare('UPDATE users SET balance = MAX(0, ROUND(balance - ?, 6)) WHERE id = ?').run(usageRec.costCny, userId);
       }

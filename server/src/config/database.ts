@@ -4,6 +4,7 @@ import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getAppConfig } from './appConfig.js';
+import { getGlobalApiConfig } from '../services/globalApiConfig.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -228,6 +229,13 @@ export function initDatabase() {
   initPriceSetting('global_llm_price_input', '2.0');
   initPriceSetting('global_llm_price_output', '8.0');
   initPriceSetting('global_llm_price_cache_hit', '0.5');
+
+  // 初始化独立持久化配置文件并同步数据
+  try {
+    getGlobalApiConfig();
+  } catch (err: any) {
+    console.warn('[DB] Failed to init global API config:', err.message);
+  }
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
