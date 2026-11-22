@@ -8,9 +8,12 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { normalizeScoreTo100 } from '../utils/priorityAlgorithm';
+import { CalendarColorPicker } from './CalendarColorPicker';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  MoreVertical,
   RefreshCw,
   Calendar as CalendarIcon,
   Trash2,
@@ -45,6 +48,7 @@ interface CalendarSubscription {
   id: number;
   name: string;
   url: string;
+  color?: string | null;
   event_count: number;
   sync_status: 'ok' | 'error';
   last_sync_at: string | null;
@@ -300,6 +304,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
   // Left sidebar collapse toggle (Google Calendar main drawer toggle)
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [taskCalendarColor, setTaskCalendarColor] = useState<string | null>(null);
+
+  // Mini calendar collapse toggle
+  const [miniCalendarCollapsed, setMiniCalendarCollapsed] = useState(false);
 
   // Mini calendar month cursor
   const [miniMonthDate, setMiniMonthDate] = useState(() => new Date(weekStart));
@@ -417,6 +425,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
       ]);
       setEvents(eventsRes.data.events || []);
       setSubscriptions(eventsRes.data.subscriptions || []);
+      setTaskCalendarColor(eventsRes.data.taskColor || null);
       setTasks(tasksRes.data.tasks || []);
       if (eventsRes.data.exportUrls) {
         setServerExportUrls(eventsRes.data.exportUrls);
@@ -502,7 +511,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   const subColorMap = useMemo(() => {
     const map = new Map<number, string>();
     subscriptions.forEach((s, idx) => {
-      map.set(s.id, CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length]);
+      map.set(s.id, s.color || CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length]);
     });
     return map;
   }, [subscriptions]);
@@ -638,7 +647,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               start: range.start,
               end: range.end,
               allDay: false,
-              color: blockDone ? '#10B981' : quad.color,
+              color: taskCalendarColor || (blockDone ? '#10B981' : quad.color),
               qClass: quad.key,
               qName: qBadge,
               task: t,
@@ -668,7 +677,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
         due: dueTasks,
       };
     });
-  }, [weekStart, events, tasks, subColorMap]);
+  }, [weekStart, events, tasks, subColorMap, taskCalendarColor]);
 
   // Overdue tasks
   const overdueTasks = useMemo(() => {
@@ -720,6 +729,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     }
     return days;
   }, [miniMonthDate]);
+
+  const updateColor = async (id: number | 'tasks', color: string | null) => {
+    try {
+      await api.put(`/calendar/colors/${id}`, { color });
+      if (id === 'tasks') setTaskCalendarColor(color);
+      else setSubscriptions(current => current.map(sub => sub.id === id ? { ...sub, color } : sub));
+    } catch {
+      alert('保存日历颜色失败，请重试');
+    }
+  };
 
   // Handlers for subscriptions & replanning
   const handleAddSubscription = async (e: React.FormEvent) => {
@@ -940,19 +959,52 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
       {/* 2. 主体区：左侧 Google Calendar 抽屉 + 右侧周视图网格 */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* 左侧抽屉 (Google Calendar Left Sidebar: 迷你月历 + 待办清单) */}
-        {sidebarOpen && (
-          <aside className="w-64 xl:w-72 shrink-0 overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin hidden md:flex flex-col bg-white dark:bg-[#1e1f20]">
-            {/* Google Calendar 经典迷你月历组件 */}
+        <div
+          className={`hidden md:block shrink-0 overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none ${
+            sidebarOpen ? 'w-64 xl:w-72 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          }`}
+          style={{
+            transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
+          aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen}
+        >
+          <aside
+            className={`w-64 xl:w-72 h-full overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin flex flex-col bg-white dark:bg-[#1e1f20] border-r border-gray-200/80 dark:border-neutral-800 transition-transform duration-300 ease-in-out ${
+              sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+            }`}
+            style={{
+              transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+          >
+            {/* Google Calendar 经典迷你月历组件 (支持带动画平滑折叠) */}
             <div className="bg-transparent select-none">
               <div className="flex items-center justify-between mb-2 px-1">
-                <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
-                  {miniMonthDate.getFullYear()}年 {miniMonthDate.getMonth() + 1}月
-                </span>
-                <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMiniCalendarCollapsed((prev) => !prev)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer select-none group"
+                  title={miniCalendarCollapsed ? '展开迷你月历' : '折叠迷你月历'}
+                >
+                  <span>
+                    {miniMonthDate.getFullYear()}年 {miniMonthDate.getMonth() + 1}月
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500 transition-transform duration-300 ease-in-out ${
+                      miniCalendarCollapsed ? '-rotate-90' : 'rotate-0'
+                    }`}
+                  />
+                </button>
+                <div
+                  className={`flex items-center gap-1 transition-opacity duration-200 ${
+                    miniCalendarCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() - 1, 1))}
                     className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                    title="上个月"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
@@ -960,55 +1012,68 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() + 1, 1))}
                     className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                    title="下个月"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
-              {/* 星期缩写行 (周一至周日) */}
-              <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-neutral-500 mb-1">
-                <span>一</span>
-                <span>二</span>
-                <span>三</span>
-                <span>四</span>
-                <span>五</span>
-                <span>六</span>
-                <span>日</span>
-              </div>
+              {/* 星期缩写行 + 日期网格 (带丝滑折叠动画) */}
+              <div
+                className="grid transition-all duration-300 ease-in-out"
+                style={{
+                  gridTemplateRows: miniCalendarCollapsed ? '0fr' : '1fr',
+                  opacity: miniCalendarCollapsed ? 0 : 1,
+                  transition: 'grid-template-rows 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                }}
+              >
+                <div className="overflow-hidden">
+                  {/* 星期缩写行 (周一至周日) */}
+                  <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-neutral-500 mb-1">
+                    <span>一</span>
+                    <span>二</span>
+                    <span>三</span>
+                    <span>四</span>
+                    <span>五</span>
+                    <span>六</span>
+                    <span>日</span>
+                  </div>
 
-              {/* 日期网格 */}
-              <div className="grid grid-cols-7 gap-y-0.5 text-center text-xs">
-                {miniCalendarGrid.map((item, idx) => {
-                  const isToday = item.key === todayKey;
-                  const itemTime = item.date.getTime();
-                  const weekStartTime = weekStart.getTime();
-                  const weekEndTime = addDays(weekStart, 7).getTime();
-                  const isCurrentWeek = itemTime >= weekStartTime && itemTime < weekEndTime;
+                  {/* 日期网格 */}
+                  <div className="grid grid-cols-7 gap-y-0.5 text-center text-xs pb-1">
+                    {miniCalendarGrid.map((item, idx) => {
+                      const isToday = item.key === todayKey;
+                      const itemTime = item.date.getTime();
+                      const weekStartTime = weekStart.getTime();
+                      const weekEndTime = addDays(weekStart, 7).getTime();
+                      const isCurrentWeek = itemTime >= weekStartTime && itemTime < weekEndTime;
 
-                  return (
-                    <button
-                      key={`mini-${idx}-${item.key}`}
-                      type="button"
-                      onClick={() => setWeekStart(startOfWeek(item.date))}
-                      className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center text-[11px] transition cursor-pointer ${
-                        isToday
-                          ? 'bg-blue-600 text-white font-bold'
-                          : isCurrentWeek
-                          ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-semibold'
-                          : item.isCurrentMonth
-                          ? 'text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800'
-                          : 'text-gray-300 dark:text-neutral-600'
-                      }`}
-                    >
-                      {item.date.getDate()}
-                    </button>
-                  );
-                })}
+                      return (
+                        <button
+                          key={`mini-${idx}-${item.key}`}
+                          type="button"
+                          onClick={() => setWeekStart(startOfWeek(item.date))}
+                          className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center text-[11px] transition cursor-pointer ${
+                            isToday
+                              ? 'bg-blue-600 text-white font-bold'
+                              : isCurrentWeek
+                              ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-semibold'
+                              : item.isCurrentMonth
+                              ? 'text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                              : 'text-gray-300 dark:text-neutral-600'
+                          }`}
+                        >
+                          {item.date.getDate()}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* 我的日历列表 (Google Calendar 经典抽屉列表) */}
+            {/* 我的日历列表 (Google Calendar 经典抽屉列表，支持多色调色盘选择修改) */}
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
                 <span>我的日历</span>
@@ -1018,28 +1083,69 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
               <div className="space-y-1 text-xs">
                 {/* Clawbot 主待办 */}
-                <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60">
-                  <span className="w-3 h-3 rounded-sm bg-blue-600 shrink-0" />
-                  <span className="text-gray-700 dark:text-neutral-300 truncate">Clawbot 待办日程</span>
+                <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group transition-colors">
+                  <div className="flex items-center gap-2.5 truncate min-w-0">
+                    <CalendarColorPicker
+                      color={taskCalendarColor || '#3b82f6'}
+                      name="Clawbot 待办日程"
+                      onChange={(c) => void updateColor('tasks', c)}
+                      onReset={() => void updateColor('tasks', null)}
+                    />
+                    <span className="text-gray-700 dark:text-neutral-300 truncate font-medium select-none">
+                      Clawbot 待办日程
+                    </span>
+                  </div>
+                  <CalendarColorPicker
+                    color={taskCalendarColor || '#3b82f6'}
+                    name="Clawbot 待办日程"
+                    onChange={(c) => void updateColor('tasks', c)}
+                    onReset={() => void updateColor('tasks', null)}
+                  >
+                    <button
+                      type="button"
+                      className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                      title="修改颜色"
+                    >
+                      <MoreVertical className="w-3.5 h-3.5" />
+                    </button>
+                  </CalendarColorPicker>
                 </div>
                 {/* 订阅外部日历 */}
                 {subscriptions.map((sub, idx) => {
-                  const color = CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
+                  const color = sub.color || CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
                   return (
                     <div
                       key={sub.id}
-                      className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group"
+                      className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 group transition-colors"
                     >
                       <div className="flex items-center gap-2.5 truncate min-w-0">
-                        <span
-                          className="w-3 h-3 rounded-sm shrink-0"
-                          style={{ backgroundColor: color }}
+                        <CalendarColorPicker
+                          color={color}
+                          name={sub.name}
+                          onChange={(c) => void updateColor(sub.id, c)}
+                          onReset={() => void updateColor(sub.id, null)}
                         />
-                        <span className="text-gray-700 dark:text-neutral-300 truncate">{sub.name}</span>
+                        <span className="text-gray-700 dark:text-neutral-300 truncate select-none">{sub.name}</span>
                       </div>
-                      <span className="text-[10px] text-gray-400 font-mono shrink-0">
-                        {sub.event_count}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0 ml-1">
+                        <span className="text-[10px] text-gray-400 font-mono group-hover:hidden">
+                          {sub.event_count}
+                        </span>
+                        <CalendarColorPicker
+                          color={color}
+                          name={sub.name}
+                          onChange={(c) => void updateColor(sub.id, c)}
+                          onReset={() => void updateColor(sub.id, null)}
+                        >
+                          <button
+                            type="button"
+                            className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 hidden group-hover:inline-flex transition cursor-pointer"
+                            title={`修改【${sub.name}】颜色`}
+                          >
+                            <MoreVertical className="w-3.5 h-3.5" />
+                          </button>
+                        </CalendarColorPicker>
+                      </div>
                     </div>
                   );
                 })}
@@ -1097,7 +1203,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </div>
             </div>
           </aside>
-        )}
+        </div>
 
         {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
         <div
@@ -1399,16 +1505,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               ) : (
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
                   {subscriptions.map((s, idx) => {
-                    const color = CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
+                    const color = s.color || CALENDAR_PALETTE[idx % CALENDAR_PALETTE.length];
                     return (
                       <div
                         key={s.id}
                         className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 text-xs"
                       >
                         <div className="flex items-center gap-2.5 truncate flex-1 min-w-0">
-                          <span
-                            className="w-3 h-3 rounded-full shrink-0"
-                            style={{ backgroundColor: color }}
+                          <CalendarColorPicker
+                            color={color}
+                            name={s.name}
+                            onChange={(c) => void updateColor(s.id, c)}
+                            onReset={() => void updateColor(s.id, null)}
                           />
                           <div className="truncate">
                             <span className="font-semibold text-gray-900 dark:text-gray-100">

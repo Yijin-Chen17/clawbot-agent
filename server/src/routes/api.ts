@@ -39,6 +39,7 @@ import {
   createSubscription,
   deleteSubscription,
   syncSubscriptionNow,
+  updateCalendarColor,
   getCalendarEvents,
   exportDedicatedIcal,
   syncAndReplanAll,
@@ -96,6 +97,7 @@ router.post('/tasks/:id/complete-part', requireAuth, completePartTask);
 
 // Calendar Management
 router.get('/calendar/subscriptions', requireAuth, listSubscriptions);
+router.put('/calendar/colors/:id', requireAuth, updateCalendarColor);
 router.post('/calendar/subscriptions', requireAuth, createSubscription);
 router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);

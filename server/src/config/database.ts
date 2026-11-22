@@ -151,6 +151,9 @@ export function initDatabase() {
     );
   `);
 
+  const subscriptionColumns = (db.prepare('PRAGMA table_info(calendar_subscriptions)').all() as { name: string }[]).map(c => c.name);
+  if (!subscriptionColumns.includes('color')) db.exec('ALTER TABLE calendar_subscriptions ADD COLUMN color TEXT DEFAULT NULL');
+
   // Migrate user_settings columns if missing
   const columns = (db.prepare('PRAGMA table_info(user_settings)').all() as any[]).map(c => c.name);
   const addCol = (name: string, type: string, def: string) => {
@@ -158,6 +161,7 @@ export function initDatabase() {
       db.exec(`ALTER TABLE user_settings ADD COLUMN ${name} ${type} DEFAULT ${def};`);
     }
   };
+  addCol('calendar_color', 'TEXT', 'NULL');
   addCol('api_mode', 'TEXT', "'official'");
   addCol('weixin_connected', 'INTEGER', '0');
   addCol('weixin_bot_token', 'TEXT', "''");
