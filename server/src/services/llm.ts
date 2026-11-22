@@ -159,7 +159,7 @@ export async function parseUserMessageWithLLM(
 
   if (config.isOfficial) {
     if (config.userBalance <= 0) {
-      throw new Error('账户额度已用尽 (¥0.00)，无法调用官方智能接口。请在设置中兑换充值码或联系管理员，亦可切换为自定义 APIKey。');
+      throw new Error('账户额度已用尽 (¥0.00)。请在设置中兑换充值码或联系管理员，亦可切换为自定义 APIKey。');
     }
     if (!config.apiKey) {
       throw new Error('系统尚未配置官方全局大模型接口，请联系系统管理员设置全局 API Key。');

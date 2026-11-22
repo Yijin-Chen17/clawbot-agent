@@ -2050,43 +2050,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <button
                       type="button"
                       onClick={() => setApiMode('official')}
-                      className={`p-3.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
                         apiMode === 'official'
                           ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 shadow-sm ring-1 ring-blue-500'
                           : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full mb-1">
-                        <span className="font-semibold text-xs flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-blue-500" />
-                          {t('llm.mode_official')}
-                        </span>
-                        {apiMode === 'official' && <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
-                      </div>
-                      <span className="text-[11px] opacity-75 leading-relaxed">
-                        {t('llm.mode_official_desc')}
+                      <span className="font-semibold text-xs flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-blue-500" />
+                        {t('llm.mode_official')}
                       </span>
+                      {apiMode === 'official' && <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setApiMode('custom')}
-                      className={`p-3.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
                         apiMode === 'custom'
                           ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-500 text-purple-900 dark:text-purple-200 shadow-sm ring-1 ring-purple-500'
                           : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full mb-1">
-                        <span className="font-semibold text-xs flex items-center gap-1.5">
-                          <KeyRound className="w-4 h-4 text-purple-500" />
-                          {t('llm.mode_custom')}
-                        </span>
-                        {apiMode === 'custom' && <CheckCircle2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
-                      </div>
-                      <span className="text-[11px] opacity-75 leading-relaxed">
-                        {t('llm.mode_custom_desc')}
+                      <span className="font-semibold text-xs flex items-center gap-1.5">
+                        <KeyRound className="w-4 h-4 text-purple-500" />
+                        {t('llm.mode_custom')}
                       </span>
+                      {apiMode === 'custom' && <CheckCircle2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
                     </button>
                   </div>
                 </div>
@@ -2176,11 +2166,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
                           <span>{redeeming ? '兑换中...' : t('llm.official_redeem_btn')}</span>
                         </button>
-                      </div>
-
-                      <div className="text-[11px] text-gray-400 dark:text-neutral-500 flex items-center gap-1">
-                        <span>💡</span>
-                        <span>{t('llm.official_redeem_tip')}</span>
                       </div>
 
                       {redeemResult && (

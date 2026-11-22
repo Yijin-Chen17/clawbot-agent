@@ -238,7 +238,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'llm.mode_custom_desc': '使用您自己的大模型 APIKey，请求直连大模型服务商',
     'llm.custom_risk_warning': '安全提示：由于微信机器人需在服务器后台异步自动解析消息，您的私有 API Key 将保存在本站数据库中，存在一定网络与存储风险，请自行评估；强烈建议为您填写的 API Key 设立消费限额。',
     'llm.official_balance': '当前账户额度',
-    'llm.official_balance_zero_tip': '您的账户余额已用尽，无法调用官方智能接口。请联系管理员获取兑换码充值，或切换为自定义 APIKey。',
+    'llm.official_balance_zero_tip': '您的账户余额已用尽。请联系管理员获取兑换码充值，或切换为自定义 APIKey。',
     'llm.official_redeem_title': '兑换码充值',
     'llm.official_redeem_placeholder': '请输入兑换码，例如 CLAW-XXXX-XXXX-XXXX',
     'llm.official_redeem_btn': '立即兑换充值',
