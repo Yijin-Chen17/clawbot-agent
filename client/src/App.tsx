@@ -107,7 +107,7 @@ const DashboardContent: React.FC = () => {
 
       {/* 右侧主工作区 (无外层卡片与外边距，纯净贴边满高) */}
       <main className="flex-1 h-full min-w-0 overflow-hidden flex flex-col bg-white dark:bg-[#1e1f20]">
-        {(activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos') && (
+        <div className={`w-full h-full flex flex-col overflow-hidden ${activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos' ? '' : 'hidden'}`}>
           <EisenhowerWorkspace
             currentView={activeTab === 'list' ? 'list' : 'matrix'}
             onSwitchView={(v) => setActiveTab(v)}
@@ -124,14 +124,13 @@ const DashboardContent: React.FC = () => {
             isBackupOpen={isBackupOpen}
             setIsBackupOpen={setIsBackupOpen}
           />
-        )}
-        {activeTab === 'calendar' && (
-          <div className="w-full h-full flex flex-col overflow-hidden">
-            <CalendarView
-              onOpenMobileMenu={() => setMobileSidebarOpen(true)}
-            />
-          </div>
-        )}
+        </div>
+        <div className={`w-full h-full flex flex-col overflow-hidden ${activeTab === 'calendar' ? '' : 'hidden'}`}>
+          <CalendarView
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
+            isActive={activeTab === 'calendar'}
+          />
+        </div>
         {activeTab === 'settings' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
             <SettingsView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />

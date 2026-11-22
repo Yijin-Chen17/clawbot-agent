@@ -293,9 +293,10 @@ function getTaskQuadrant(importance: number, urgency: number, scoreScale?: numbe
 interface CalendarViewProps {
   onOpenMobileMenu?: () => void;
   onNewTask?: () => void;
+  isActive?: boolean;
 }
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
+export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, isActive = true }) => {
   const { user } = useAuth();
   const { isDark, t, language, themeMode, setThemeMode } = useTheme();
 
@@ -426,8 +427,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const rangeStart = addDays(weekStart, -7).toISOString();
       const rangeEnd = addDays(weekStart, 14).toISOString();
@@ -445,7 +446,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     } catch (err) {
       console.error('Failed to load calendar data:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -453,14 +454,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     fetchData();
   }, [weekStart]);
 
-  // Auto-scroll to morning hours (08:00) on mount / week change
+  // When tab becomes active, silently re-fetch to keep synced with tasks modified in other tabs
+  const hasLoadedOnceRef = useRef(false);
   useEffect(() => {
-    if (scrollRef.current) {
+    if (isActive) {
+      if (hasLoadedOnceRef.current) {
+        fetchData(true);
+      } else {
+        hasLoadedOnceRef.current = true;
+      }
+    }
+  }, [isActive]);
+
+  // Auto-scroll to morning hours (08:00) on mount / week change / activation
+  useEffect(() => {
+    if (isActive && scrollRef.current) {
       const now = new Date();
       const targetHour = Math.max(7, now.getHours() - 1);
       scrollRef.current.scrollTop = targetHour * HOUR_HEIGHT;
     }
-  }, [weekStart]);
+  }, [isActive, weekStart]);
 
   // Edge resistance for wheel and touch input, with a spring back to the scroll boundary.
   useEffect(() => {
@@ -918,18 +931,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
         {/* 右侧：重排、日历管理、导出与刷新 */}
         <div className="flex items-center gap-2">
-          {loading && (
-            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium hidden sm:flex items-center gap-1.5">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              <span>{t('common.loading')}</span>
-            </span>
-          )}
-
           <button
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
             title={t('calendar.replan')}
-            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span>{replanLoading ? '正在重排' : '重排全部'}</span>
@@ -938,7 +944,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           <button
             onClick={() => setShowExportModal(true)}
             title={t('calendar.export_btn')}
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
           >
             <Share2 className="w-4 h-4 text-gray-600 dark:text-neutral-300" />
             <span className="hidden sm:inline">{t('calendar.export_btn')}</span>
@@ -946,7 +952,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
           <button
             onClick={() => setShowCalendarsModal(true)}
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
             title={t('calendar.manage_btn')}
           >
             <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -960,7 +966,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
           <button
             onClick={() => fetchData()}
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
             title={t('calendar.refresh_btn')}
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -970,7 +976,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           <button
             type="button"
             onClick={cycleTheme}
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
             title={
               themeMode === 'light'
                 ? '当前：亮色模式 (点击切换为暗色)'
