@@ -343,8 +343,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   const [editError, setEditError] = useState('');
 
   const openCalendarItem = (item: TimedSegment) => {
-    if (item.kind === 'task') setEditingTask(item.task);
-    else setSelectedItem(item);
+    setSelectedItem(item);
   };
 
   const editInitialTask = (task: TaskItem): EditableTask => {
@@ -1125,7 +1124,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   <button
                     key={`overdue-${t.id}`}
                     type="button"
-                    onClick={() => setEditingTask(t)}
+                    onClick={() => setSelectedDueTask(t)}
                     className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
                   >
                     <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
@@ -1146,7 +1145,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                       <button
                         key={`due-${t.id}`}
                         type="button"
-                        onClick={() => setEditingTask(t)}
+                        onClick={() => setSelectedDueTask(t)}
                         className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer flex items-center justify-between text-xs"
                       >
                         <span className="truncate text-gray-700 dark:text-neutral-300">{t.title}</span>
@@ -1700,7 +1699,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                 >
                   删除事项
                 </button>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
+                    className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                  >
+                    编辑任务
+                  </button>
                   <button
                     type="button"
                     onClick={async () => {
@@ -1786,6 +1792,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                 className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
               >
                 删除事项
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEditingTask(selectedDueTask); setSelectedDueTask(null); }}
+                className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                编辑任务
               </button>
               <button
                 type="button"
