@@ -1,3 +1,4 @@
+import { formatLocalDate, replanUserTasks } from './scheduler.js';
 import cron from 'node-cron';
 import { db } from '../config/database.js';
 import { Task, UserSettings, CalendarSubscription } from '../models/types.js';
@@ -10,6 +11,14 @@ export function startReminderScheduler() {
   // Run every 30 seconds
   cron.schedule('*/30 * * * * *', async () => {
     try {
+      const today = formatLocalDate();
+      const users = db.prepare(`
+        SELECT DISTINCT user_id FROM tasks
+        WHERE time_mode = 'daily_fixed' AND is_fixed = 1
+          AND status IN ('scheduled', 'in_progress')
+          AND julianday(scheduled_start) < julianday(?)
+      `).all(new Date(today + 'T00:00:00').toISOString()) as { user_id: number }[];
+      for (const { user_id } of users) replanUserTasks(user_id);
       await checkStartReminders();
       await checkEndReminders();
       await checkCalendarSync();

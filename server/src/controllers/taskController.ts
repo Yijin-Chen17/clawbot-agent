@@ -1,3 +1,4 @@
+import { deadlineMs, recurringDebt } from '../services/calendarOptimizer.js';
 import { Response } from 'express';
 import { planTaskWithLLM } from '../services/llm.js';
 import { db } from '../config/database.js';
@@ -54,7 +55,9 @@ export function listTasks(req: AuthenticatedRequest, res: Response): void {
   query += " ORDER BY CASE status WHEN 'in_progress' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'pending_slot' THEN 3 ELSE 4 END, scheduled_start ASC, created_at DESC";
 
   const tasks = db.prepare(query).all(...params) as Task[];
-  res.json({ tasks });
+  const today = new Date();
+  res.json({ tasks: tasks.map(task => task.time_mode === 'daily_fixed'
+    ? { ...task, recurring_debt: recurringDebt(task, today) } : task) });
 }
 
 export async function createTask(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -71,6 +74,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     importance_manual_override,
     score_scale,
     deadline,
+    deadline_kind,
     scheduled_start,
     scheduled_end,
     is_fixed = 0,
@@ -101,9 +105,14 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
       return;
     }
     // 显式耗时在 LLM 不可用时仍可创建，保持任务整体性。
-    sessions = [duration_minutes];
+    sessions = [];
   }
-  const sessionPlan = JSON.stringify(sessions);
+  const sessionPlan = sessions.length ? JSON.stringify(sessions) : null;
+  if (deadline_kind === 'hard' && !Number.isFinite(deadlineMs(deadline))) {
+    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
+    return;
+  }
+
   const parsedSignals = parseJsonArray<ImpactSignal>(impact_signals);
   const manualOverrideNum =
     importance_manual_override !== undefined &&
@@ -167,6 +176,11 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
   let scheduleBlocks: string | null = null;
   let proposal: any = null;
 
+  if (is_fixed && finalEnd && deadline_kind === 'hard' && deadlineMs(finalEnd) > deadlineMs(deadline)) {
+    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
+    return;
+  }
+
   if (is_fixed && finalStart && finalEnd) {
     status = 'scheduled';
     scheduleMsg = '固定任务已创建并锁定时间段！';
@@ -179,6 +193,9 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
       urgency: resolvedUrgency,
       importance: resolvedImportance,
       deadline: deadline || null,
+      deadline_kind: deadline_kind === 'hard' ? 'hard' : 'soft',
+      urgency_pace: resolvedPace,
+      score_scale: 100,
     });
 
     if (plan.proposal) {
@@ -201,9 +218,9 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
       user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
       importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
       score_scale, completed_dates,
-      deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
+      deadline, deadline_kind, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
@@ -217,6 +234,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     resolvedPace,
     manualOverrideNum,
     deadline || null,
+    deadline_kind === 'hard' ? 'hard' : 'soft',
     finalStart,
     finalEnd,
     is_fixed ? 1 : 0,
@@ -253,6 +271,7 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     importance_manual_override,
     score_scale,
     deadline,
+    deadline_kind,
     scheduled_start,
     scheduled_end,
     is_fixed,
@@ -315,8 +334,21 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
   }
 
   const nextDeadline = deadline !== undefined ? deadline : existing.deadline;
+  const nextDeadlineKind = deadline_kind ?? (nextDeadline ? existing.deadline_kind : 'soft');
+  if (nextDeadlineKind === 'hard' && !Number.isFinite(deadlineMs(nextDeadline))) {
+    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
+    return;
+  }
   const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
   const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
+
+  if (nextIsFixed && nextScheduledEnd && nextDeadlineKind === 'hard' && deadlineMs(nextScheduledEnd) > deadlineMs(nextDeadline)) {
+    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
+    return;
+  }
+  const nextBlocks = nextIsFixed && nextScheduledStart && nextScheduledEnd && (scheduled_start !== undefined || scheduled_end !== undefined)
+    ? JSON.stringify([{ start: nextScheduledStart, end: nextScheduledEnd, duration: nextDuration }])
+    : existing.schedule_blocks;
 
   const nextTimeMode: TimeMode =
     time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
@@ -370,8 +402,10 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
       importance_manual_override = ?,
       score_scale = 100,
       deadline = ?,
+      deadline_kind = ?,
       scheduled_start = ?,
       scheduled_end = ?,
+      schedule_blocks = ?,
       is_fixed = COALESCE(?, is_fixed),
       is_concurrent = COALESCE(?, is_concurrent),
       status = COALESCE(?, status),
@@ -389,8 +423,10 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     nextPace,
     nextManualOverride,
     nextDeadline,
+    nextDeadlineKind === 'hard' ? 'hard' : 'soft',
     nextScheduledStart,
     nextScheduledEnd,
+    nextBlocks,
     nextIsFixed,
     is_concurrent !== undefined ? (is_concurrent ? 1 : 0) : existing.is_concurrent,
     status,
@@ -400,11 +436,11 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
   );
 
   if (nextDuration !== existing.duration_minutes || (title && title !== existing.title)) {
-    let sessions = [nextDuration];
+    let sessions: number[] = [];
     try {
       sessions = (await planTaskWithLLM(userId, title || existing.title, nextDuration, notes || existing.notes || undefined)).sessions;
     } catch {}
-    db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(sessions), id, userId);
+    db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND user_id = ?').run(sessions.length ? JSON.stringify(sessions) : null, id, userId);
   }
   replanUserTasks(userId);
 
@@ -444,12 +480,17 @@ export async function rescheduleTask(req: AuthenticatedRequest, res: Response): 
     return;
   }
 
+  if (task.time_mode === 'daily_fixed' && task.is_fixed) {
+    res.status(400).json({ error: '请编辑任务以调整每日固定时间' });
+    return;
+  }
+
   let sessionPlan = task.session_plan;
   if (!sessionPlan) {
     try {
       sessionPlan = JSON.stringify((await planTaskWithLLM(userId, task.title, task.duration_minutes, task.notes || undefined)).sessions);
     } catch {
-      sessionPlan = JSON.stringify([task.duration_minutes]);
+      sessionPlan = null;
     }
   }
   const plan = scheduleTask(userId, {
@@ -460,6 +501,9 @@ export async function rescheduleTask(req: AuthenticatedRequest, res: Response): 
     urgency: task.urgency,
     importance: task.importance,
     deadline: task.deadline,
+    deadline_kind: task.deadline_kind,
+    urgency_pace: task.urgency_pace,
+    score_scale: task.score_scale,
   });
 
   if (!plan.success || !plan.scheduled_start || !plan.scheduled_end) {
@@ -644,6 +688,10 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
     }
     const currentEnd = new Date(task.scheduled_end);
     const newEnd = new Date(currentEnd.getTime() + Number(extend_minutes) * 60 * 1000);
+    if (task.deadline_kind === 'hard' && newEnd.getTime() > deadlineMs(task.deadline)) {
+      res.status(400).json({ error: '延长后会超过硬截止时间' });
+      return;
+    }
     const newDuration = task.duration_minutes + Number(extend_minutes);
 
     db.prepare(`

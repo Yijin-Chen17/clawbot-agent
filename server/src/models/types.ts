@@ -104,6 +104,7 @@ export interface Task {
   importance_manual_override?: number | null;
   completed_dates?: string | null; // JSON array of YYYY-MM-DD
   score_scale?: number | null;
+  deadline_kind?: 'hard' | 'soft' | null;
   deadline: string | null; // ISO
   scheduled_start: string | null; // ISO
   scheduled_end: string | null;   // ISO

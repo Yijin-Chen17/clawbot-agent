@@ -28,6 +28,8 @@ export interface TaskItem {
   quadrant: QuadrantId;       // 自动计算派生
   isCompleted: boolean;       // 是否彻底完成（每日固定任务表示今日已完成）
   completedDates?: string[];  // 已完成当天目标的日期列表 (YYYY-MM-DD)
+  deadlineAt?: string | null;
+  deadlineKind?: 'hard' | 'soft';
   dueDate?: string | null;    // 截止日期 (YYYY-MM-DD 或 ISO)
   tags: string[];             // 自定义标签
   estimatedMinutes?: number;  // 预计耗时 (分钟)

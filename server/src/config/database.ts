@@ -239,6 +239,7 @@ export function initDatabase() {
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
+  if (!taskCols.includes('deadline_kind')) db.exec("ALTER TABLE tasks ADD COLUMN deadline_kind TEXT DEFAULT 'soft';");
   if (!taskCols.includes('session_plan')) db.exec('ALTER TABLE tasks ADD COLUMN session_plan TEXT DEFAULT NULL;');
   if (!taskCols.includes('schedule_blocks')) {
     db.exec('ALTER TABLE tasks ADD COLUMN schedule_blocks TEXT DEFAULT NULL;');

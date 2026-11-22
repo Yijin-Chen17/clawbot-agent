@@ -294,12 +294,15 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         currentTime,
       });
 
+      const urgency = timeMode === 'daily_fixed' && !isCompletedToday
+        ? Math.min(100, algo.urgency + Math.round(15 * (t.recurring_debt || 0))) : algo.urgency;
+
       return {
         id: String(t.id),
         title: t.title,
         description: t.notes || '',
         importance,
-        urgency: algo.urgency,
+        urgency,
         importanceTier,
         impactSignals,
         timeMode,
@@ -308,12 +311,14 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         scoreScale: 100,
         useAutoUrgency: true,
         isImportant: importance >= PRIORITY_THRESHOLD,
-        isUrgent: algo.urgency >= PRIORITY_THRESHOLD,
-        quadrant: calculateQuadrant(importance, algo.urgency),
+        isUrgent: urgency >= PRIORITY_THRESHOLD,
+        quadrant: calculateQuadrant(importance, urgency),
         isCompleted: isCompletedToday,
         completedDates: isCompletedToday
           ? Array.from(new Set([...completedDates, todayStr]))
           : completedDates,
+        deadlineAt: effectiveDueDate,
+        deadlineKind: t.deadline_kind === 'hard' ? 'hard' : 'soft',
         dueDate: effectiveDueDate ? effectiveDueDate.slice(0, 10) : null,
         tags: Array.isArray(t.tags)
           ? t.tags
@@ -527,7 +532,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importance_manual_override:
           data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,
         score_scale: 100,
-        deadline: data.dueDate ? new Date(data.dueDate).toISOString() : null,
+        deadline_kind: data.deadlineKind,
+        deadline: data.dueDate ? (data.dueDate.includes('T') ? new Date(data.dueDate).toISOString() : data.dueDate) : null,
         scheduled_start: data.scheduledStart || null,
         scheduled_end: data.scheduledEnd || null,
         is_fixed: data.isFixed ? 1 : 0,

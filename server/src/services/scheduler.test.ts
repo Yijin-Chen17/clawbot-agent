@@ -1,3 +1,4 @@
+import { deadlinePressure, recurringDebt } from './calendarOptimizer.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Task, UserSettings } from '../models/types.js';
@@ -301,4 +302,64 @@ test('empty or invalid configured Work Slots never broaden to default hours', ()
     assert.equal(windows.workStartHour, windows.workEndHour);
     assert.deepEqual(windows.workWindows, []);
   }
+});
+
+test('soft and hard deadlines share pressure and slope while there is ample capacity', () => {
+  const epsilon = 1e-6;
+  for (const load of [0, 0.1, 0.4, 0.6]) {
+    assert.equal(deadlinePressure(load, true), deadlinePressure(load, false));
+    assert.ok(Math.abs(
+      (deadlinePressure(load + epsilon, true) - deadlinePressure(load + epsilon, false)) / epsilon
+    ) < 1e-5);
+  }
+  assert.ok(deadlinePressure(0.95, true) > deadlinePressure(0.95, false));
+  assert.ok(Number.isFinite(deadlinePressure(1, true)));
+});
+
+test('a missed daily occurrence raises debt and checking in reduces it the next day', () => {
+  const created = new Date(2026, 10, 20);
+  const today = new Date(2026, 10, 22);
+  const task = makeTask({ created_at: created.toISOString(), completed_dates: '["2026-11-20"]' });
+  assert.equal(recurringDebt(task, created), 0);
+  assert.equal(recurringDebt(task, today), 1);
+  assert.equal(recurringDebt({ ...task, completed_dates: '["2026-11-20","2026-11-22"]' }, new Date(2026, 10, 23)), 0.8);
+});
+
+test('long tasks of similar importance alternate without cutting their phases', () => {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  const sessions = JSON.stringify(Array<number>(25).fill(120));
+  const tasks = [makeTask({ duration_minutes: 3000, session_plan: sessions }),
+    makeTask({ id: 2, importance: 79, duration_minutes: 3000, session_plan: sessions })];
+  const allocationDebt = new Map<number, number>();
+  const order: number[] = [];
+  for (let day = 0; day < 10; day++) {
+    const result = runSingleDaySchedule(tasks, [], {
+      targetDate: date, workStartHour: 8, workEndHour: 12,
+      taskRestMinutes: 0, maxDailyTaskMinutes: 210, allocationDebt,
+    });
+    for (const block of result.scheduledBlocks) {
+      assert.equal(block.durationMinutes, 120);
+      order.push(block.taskId);
+    }
+    for (const pending of result.unscheduledTaskIds) tasks.find(task => task.id === pending.taskId)!.duration_minutes = pending.remainingMinutes;
+    date.setDate(date.getDate() + 1);
+  }
+  assert.deepEqual(order, Array.from({ length: 20 }, (_, i) => i % 2 + 1));
+});
+
+test('hard deadlines protect shared capacity and an impossible phase cannot consume it', () => {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  const deadline = new Date(date);
+  deadline.setHours(11, 0, 0, 0);
+  const hard = { deadline: deadline.toISOString(), deadline_kind: 'hard' as const };
+  const result = runSingleDaySchedule([
+    makeTask({ ...hard, importance: 55, session_plan: '[180]', duration_minutes: 180 }),
+    makeTask({ ...hard, id: 2, session_plan: '[190]', duration_minutes: 190 }),
+    makeTask({ id: 3, importance: 100, duration_minutes: 60 }),
+  ], [], { targetDate: date, workStartHour: 8, workEndHour: 12, taskRestMinutes: 0 });
+  assert.deepEqual(result.scheduledBlocks.map(b => b.taskId), [1, 3]);
+  assert.equal(result.scheduledBlocks[0].end.getTime(), deadline.getTime());
+  assert.match(result.unscheduledTaskIds.find(t => t.taskId === 2)!.reason, /不可逾期/);
 });

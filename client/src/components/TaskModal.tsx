@@ -42,6 +42,7 @@ export interface TaskModalSavePayload {
   useAutoUrgency?: boolean;
   dueDate?: string | null;
   tags?: string[];
+  deadlineKind?: 'hard' | 'soft';
   estimatedMinutes?: number;
   isFixed?: boolean;
   isConcurrent?: boolean;
@@ -90,6 +91,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [manualImportance, setManualImportance] = useState<number>(60);
 
+  const [hardDeadline, setHardDeadline] = useState(false);
   const [timeMode, setTimeMode] = useState<TimeMode>('deadline');
   const [dueDate, setDueDate] = useState(() => formatLocalDate(new Date()));
   const [dueTime, setDueTime] = useState<string>(''); // 可选具体截止时刻
@@ -124,20 +126,18 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         hasOverride ? clampScore100(initialTask.importanceManualOverride!) : clampScore100(initialTask.importance)
       );
 
+      setHardDeadline(initialTask.deadlineKind === 'hard');
       setTimeMode(initialTask.timeMode || (initialTask.dueDate ? 'deadline' : 'flexible'));
       setUrgencyPace(initialTask.urgencyPace || 'soon');
 
-      if (initialTask.dueDate) {
-        if (initialTask.dueDate.includes('T')) {
-          setDueDate(initialTask.dueDate.slice(0, 10));
-          const timePart = initialTask.dueDate.slice(11, 16);
-          setDueTime(timePart && timePart !== '23:59' ? timePart : '');
-        } else {
-          setDueDate(initialTask.dueDate);
-          setDueTime('');
-        }
+      const deadline = initialTask.deadlineAt || initialTask.dueDate;
+      if (deadline?.includes('T')) {
+        const date = new Date(deadline);
+        const time = date.toTimeString().slice(0, 5);
+        setDueDate(formatLocalDate(date));
+        setDueTime(time === '23:59' ? '' : time);
       } else {
-        setDueDate(todayStr);
+        setDueDate(deadline || todayStr);
         setDueTime('');
       }
 
@@ -170,6 +170,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setOverrideEnabled(false);
       setManualImportance(clampScore100(defaultImportance));
 
+      setHardDeadline(false);
       setTimeMode('deadline');
       setUrgencyPace('soon');
       setDueTime('');
@@ -302,6 +303,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       importanceManualOverride: overrideEnabled ? clampScore100(manualImportance) : null,
       useAutoUrgency: true,
       dueDate: effectiveDueDateStr,
+      deadlineKind: timeMode === 'deadline' && hardDeadline ? 'hard' : 'soft',
       tags,
       estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : undefined,
       isFixed,
@@ -521,6 +523,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 type="button"
                 onClick={() => {
                   setTimeMode('daily_fixed');
+                  setIsFixed(true);
                 }}
                 className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-medium transition cursor-pointer ${
                   timeMode === 'daily_fixed'
@@ -620,6 +623,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   </div>
                 </div>
               </div>
+            )}
+
+            {timeMode === 'deadline' && (
+              <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-neutral-200">
+                <input type="checkbox" checked={hardDeadline} onChange={e => setHardDeadline(e.target.checked)} />
+                不可逾期
+              </label>
             )}
 
             {/* 模式 B：每日固定/重复任务 */}
