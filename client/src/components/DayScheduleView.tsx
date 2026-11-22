@@ -324,7 +324,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-400">
-          智能排程：黄金深度区优先 Do First / Schedule · 碎片/午后填补 Delegate · 60m 节律切分
+          按空闲时间与优先级安排
         </div>
       </div>
 
@@ -582,7 +582,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                   <CalendarCheck2 className="h-10 w-10 mb-2 stroke-[1.5] text-slate-300 dark:text-slate-600" />
                   <p className="text-xs font-semibold">当天工作时段无会议日程与待办排程</p>
                   <p className="text-[11px] mt-1 text-slate-400 max-w-sm">
-                    在侧边栏新建四象限事项，或点击上方绑定日历订阅链接，算法将自动为你编排全天行程！
+                    新建任务或绑定日历开始规划。
                   </p>
                 </div>
               )}

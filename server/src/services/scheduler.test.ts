@@ -5,6 +5,7 @@ import {
   formatLocalDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
+  splitIntoFocusSessions,
   taskToBusyEvents,
 } from './scheduler.js';
 
@@ -245,3 +246,30 @@ test('runSingleDaySchedule strictly clamps blocks within workWindows without fra
   }
 });
 
+
+
+test('focus sessions balance the task duration instead of defaulting to one hour', () => {
+  assert.deepEqual(splitIntoFocusSessions(150), [75, 75]);
+  assert.deepEqual(splitIntoFocusSessions(70), [70]);
+  assert.equal(splitIntoFocusSessions(181).reduce((a, b) => a + b, 0), 181);
+  assert.ok(splitIntoFocusSessions(181).every(minutes => minutes <= 90));
+});
+
+test('all-day events and fractional busy boundaries are never scheduled over', () => {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  day.setHours(0, 0, 0, 0);
+  const nextDay = new Date(day);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const allDay = runSingleDaySchedule([makeTask()], [
+    { id: 'all', title: '忙碌', start: day, end: nextDay, isAllDay: true },
+  ], { targetDate: day });
+  assert.equal(allDay.scheduledBlocks.length, 0);
+
+  const busyStart = new Date(day); busyStart.setHours(9, 59, 40, 0);
+  const busyEnd = new Date(day); busyEnd.setHours(22, 0, 0, 0);
+  const result = runSingleDaySchedule([makeTask({ duration_minutes: 60 })], [
+    { id: 'busy', title: '会议', start: busyStart, end: busyEnd, isAllDay: false },
+  ], { targetDate: day, workStartHour: 9, workEndHour: 22, bufferMinutes: 0 });
+  assert.ok(result.scheduledBlocks.every(block => block.end <= busyStart || block.start >= busyEnd));
+});

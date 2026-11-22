@@ -302,7 +302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 底部固定区域：仅显示【左：头像+昵称 右：设置符号】 */}
-      <div className="p-2.5 border-t border-gray-200/80 dark:border-neutral-800 shrink-0">
+      <div className="p-2.5 shrink-0">
         <button
           type="button"
           onClick={() => handleSelectView('settings')}
@@ -353,7 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* 桌面端常驻左侧边栏 (无右侧分界线，无缝融合) */}
-      <aside className="hidden md:flex w-64 shrink-0 h-full bg-[#f8fafd] dark:bg-[#18191a] overflow-hidden select-none">
+      <aside className="hidden md:flex w-64 shrink-0 h-full bg-white dark:bg-[#1e1f20] overflow-hidden select-none">
         {sidebarContent}
       </aside>
 
@@ -364,7 +364,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="relative w-64 max-w-[80vw] h-full bg-[#f8fafd] dark:bg-[#18191a] shadow-2xl z-10 overflow-hidden select-none">
+          <aside className="relative w-64 max-w-[80vw] h-full bg-white dark:bg-[#1e1f20] shadow-2xl z-10 overflow-hidden select-none">
             {sidebarContent}
           </aside>
         </div>

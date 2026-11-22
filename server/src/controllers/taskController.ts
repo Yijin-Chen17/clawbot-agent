@@ -414,13 +414,6 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  // 解除该任务的原有时间占用，以便为它寻找新时隙
-  db.prepare(`
-    UPDATE tasks
-    SET scheduled_start = NULL, scheduled_end = NULL, schedule_blocks = NULL, is_fixed = 0, status = 'pending_slot'
-    WHERE id = ?
-  `).run(id);
-
   const plan = scheduleTask(userId, {
     id: task.id,
     title: task.title,
@@ -429,6 +422,11 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     importance: task.importance,
     deadline: task.deadline,
   });
+
+  if (!plan.success || !plan.scheduled_start || !plan.scheduled_end) {
+    res.status(400).json({ error: plan.message, proposal: plan.proposal });
+    return;
+  }
 
   if (plan.success && plan.scheduled_start && plan.scheduled_end) {
     db.prepare(`

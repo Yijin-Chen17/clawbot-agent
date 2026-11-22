@@ -1400,9 +1400,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </button>
             </div>
 
-            <p className="text-xs text-gray-500 dark:text-neutral-400 leading-relaxed">
-              将 Clawbot 自动排程待办无缝同步至 Apple Calendar、Google Calendar、Outlook 或其他支持 iCalendar 协议的日历应用中。
-            </p>
 
             {/* Webcal 一键订阅 */}
             <div className="p-3 bg-blue-50/60 dark:bg-blue-950/30 rounded-xl border border-blue-200/80 dark:border-blue-900/60 space-y-1 text-xs">
@@ -1565,6 +1562,22 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
                   删除事项
                 </button>
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
+                        setSelectedItem(null);
+                        await fetchData();
+                      } catch (error) {
+                        const err = error as { response?: { data?: { error?: string } } };
+                        alert(err.response?.data?.error || '重新排程失败');
+                      }
+                    }}
+                    className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                  >
+                    重新排程
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleCompletePart(selectedItem.task.id)}

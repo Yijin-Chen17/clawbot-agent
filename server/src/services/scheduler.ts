@@ -54,7 +54,7 @@ export interface ScheduleOptions {
   workWindows?: WorkWindow[];      // 细分可用工作时段（缺省则使用 [workStartHour, workEndHour]）
   bufferMinutes?: number;          // 固定课程/会议后过渡缓冲，默认 10 分钟
   taskRestMinutes?: number;        // 专注周期/任务间歇休息，默认 10 分钟
-  maxContinuousMinutes?: number;   // 单次最长连续专注时长上限，默认 60 分钟 (Ultradian Rhythm)
+  maxContinuousMinutes?: number;   // 单次最长连续专注时长上限，默认 90 分钟
   maxDailyTaskMinutes?: number;    // 每日自主待办最大负荷上限，默认 330 分钟 (5.5h)
   autoFilterQ4?: boolean;          // 是否过滤 Q4 不自动排程，默认 true
   lunchStartHour?: number;         // 默认 12.0
@@ -318,42 +318,27 @@ export function taskToBusyEvents(
 }
 
 /**
- * 将长耗时任务按生理专注极限（默认 60 分钟）切分为专注小节 (Focus Sessions)
+ * 将长耗时任务按最长专注时长均衡切分任务
  */
 export function splitIntoFocusSessions(
   totalMinutes: number,
-  maxSessionMinutes: number = 60,
-  minTailMinutes: number = 20
+  maxSessionMinutes: number = 90,
+  _minTailMinutes: number = 20
 ): number[] {
-  if (totalMinutes <= maxSessionMinutes) {
-    return [totalMinutes];
+  if (totalMinutes <= 0 || maxSessionMinutes <= 0) return [];
+  const count = Math.ceil(totalMinutes / maxSessionMinutes);
+  if (count === 1) return [totalMinutes];
+  // 均衡分配，避免最后出现过短的一节；保留分钟精度。
+  const base = Math.floor(totalMinutes / count / 5) * 5;
+  const sessions = Array<number>(count).fill(base);
+  let remainder = totalMinutes - base * count;
+  for (let i = 0; remainder > 0; i = (i + 1) % count) {
+    const increment = Math.min(5, remainder, maxSessionMinutes - sessions[i]);
+    sessions[i] += increment;
+    remainder -= increment;
   }
-
-  const sessions: number[] = [];
-  let remaining = totalMinutes;
-
-  while (remaining > maxSessionMinutes) {
-    const tail = remaining - maxSessionMinutes;
-    if (tail > 0 && tail < minTailMinutes) {
-      const firstHalf = Math.ceil(remaining / 2 / 5) * 5;
-      const secondHalf = remaining - firstHalf;
-      sessions.push(firstHalf);
-      if (secondHalf > 0) {
-        sessions.push(secondHalf);
-      }
-      remaining = 0;
-      break;
-    } else {
-      sessions.push(maxSessionMinutes);
-      remaining -= maxSessionMinutes;
-    }
-  }
-
-  if (remaining > 0) {
-    sessions.push(remaining);
-  }
-
   return sessions;
+
 }
 
 /**
@@ -542,7 +527,7 @@ export function runSingleDaySchedule(
     workWindows,
     bufferMinutes = 10,
     taskRestMinutes = 10,
-    maxContinuousMinutes = 60,
+    maxContinuousMinutes = 90,
     maxDailyTaskMinutes = 330,
     autoFilterQ4 = true,
     lunchStartHour = 12.0,
@@ -561,9 +546,8 @@ export function runSingleDaySchedule(
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(Math.floor(workEndHour), Math.round((workEndHour % 1) * 60), 0, 0);
 
-  // 当天的固定日历日程 (避开全天日程)
+  // 当天的固定日历日程，包括全天忙碌事件
   const dayFixedEvents = fixedEvents
-    .filter(e => !e.isAllDay)
     .map(e => {
       const clippedStart = new Date(Math.max(e.start.getTime(), dayStart.getTime()));
       const clippedEnd = new Date(Math.min(e.end.getTime(), dayEnd.getTime()));
@@ -675,7 +659,7 @@ export function runSingleDaySchedule(
 
   for (const busy of mergedBusy) {
     if (busy.start.getTime() > currentCursor.getTime()) {
-      const durationMin = Math.round((busy.start.getTime() - currentCursor.getTime()) / 60000);
+      const durationMin = Math.floor((busy.start.getTime() - currentCursor.getTime()) / 60000);
       if (durationMin >= 15) {
         rawFreeSlots.push({
           start: new Date(currentCursor),
@@ -690,7 +674,7 @@ export function runSingleDaySchedule(
   }
 
   if (currentCursor.getTime() < dayEnd.getTime()) {
-    const durationMin = Math.round((dayEnd.getTime() - currentCursor.getTime()) / 60000);
+    const durationMin = Math.floor((dayEnd.getTime() - currentCursor.getTime()) / 60000);
     if (durationMin >= 15) {
       rawFreeSlots.push({
         start: new Date(currentCursor),
@@ -736,8 +720,8 @@ export function runSingleDaySchedule(
   const workingFreeSlots: TimeSlot[] = [];
   for (const slot of constrainedFreeSlots) {
     if (slot.start.getTime() < afternoonPivot.getTime() && slot.end.getTime() > afternoonPivot.getTime()) {
-      const beforeMin = Math.round((afternoonPivot.getTime() - slot.start.getTime()) / 60000);
-      const afterMin = Math.round((slot.end.getTime() - afternoonPivot.getTime()) / 60000);
+      const beforeMin = Math.floor((afternoonPivot.getTime() - slot.start.getTime()) / 60000);
+      const afterMin = Math.floor((slot.end.getTime() - afternoonPivot.getTime()) / 60000);
       if (beforeMin >= 30 && afterMin >= 90) {
         workingFreeSlots.push({
           start: new Date(slot.start),
@@ -1306,7 +1290,7 @@ export function replanUserTasks(userId: number): {
       workWindows,
       bufferMinutes,
       taskRestMinutes: 10,
-      maxContinuousMinutes: 60,
+      maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
       autoFilterQ4: true,
       lunchStartHour: 12.0,
@@ -1487,7 +1471,7 @@ function simulateTaskInHorizon(
       workWindows,
       bufferMinutes,
       taskRestMinutes: 10,
-      maxContinuousMinutes: 60,
+      maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
       autoFilterQ4: false,
       advanceDeadlineDays,
