@@ -748,60 +748,67 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20]">
       {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
-      {/* 顶部极简操作工具栏 (主流 AI Agent 风格无缝顶栏) */}
-      <header className="h-13 px-3 sm:px-6 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+      {/* 顶部极简操作工具栏 (统一按照日历日程高度与规格) */}
+      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧: 移动端侧栏汉堡菜单 + 标题与分类 */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {onOpenMobileMenu && (
             <button
               type="button"
               onClick={onOpenMobileMenu}
-              className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
               title="打开侧边导航"
             >
               <Menu className="w-5 h-5" />
             </button>
           )}
 
-          <div className="flex items-center gap-2 truncate">
-            <span className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">
+          <div className="flex items-center gap-2 truncate ml-1 sm:ml-2">
+            <h2 className="text-lg sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight truncate">
               {viewMode === 'matrix' ? t('nav.matrix') : t('nav.list')}
-            </span>
+            </h2>
             <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono hidden sm:inline">
               · {filterCategories.find((c) => c.key === currentCategory)?.label || t('nav.all_tasks')} ({filteredTasks.length})
             </span>
           </div>
         </div>
 
-        {/* 右侧: 搜索框 + 刷新 + 明暗/系统主题切换 */}
+        {/* 右侧: 搜索框 + 刷新 + 明暗/系统主题切换 (严格对齐日历日程按钮与文字规格) */}
         <div className="flex items-center gap-2">
-          {/* 搜索框 */}
-          <div className="relative w-28 sm:w-44">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
+          {loading && (
+            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium hidden sm:flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>{t('common.loading')}</span>
+            </span>
+          )}
+
+          {/* 搜索框 (圆角胶囊风格，高度、内边距与字体大小严格对齐日历) */}
+          <div className="relative w-36 sm:w-52">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('workspace.search_placeholder')}
-              className="w-full pl-7.5 pr-2.5 py-1 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+              className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 hover:bg-gray-50 dark:hover:bg-neutral-800 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition placeholder:text-gray-400 dark:placeholder:text-neutral-500"
             />
           </div>
 
-          {/* 刷新按钮 */}
+          {/* 刷新按钮 (与日历日程按钮规格一致: p-2 rounded-full, w-4 h-4 图标) */}
           <button
             type="button"
             onClick={() => fetchTasks()}
-            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
             title={t('workspace.refresh_tasks')}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
-          {/* 主题模式切换 (亮色 / 暗色 / 系统) */}
+          {/* 主题模式切换 (与日历日程按钮规格一致: p-2 rounded-full, w-4 h-4 图标) */}
           <button
             type="button"
             onClick={cycleTheme}
-            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
             title={
               themeMode === 'light'
                 ? '当前：亮色模式 (点击切换为暗色)'
@@ -810,9 +817,9 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                 : '当前：跟随系统 (点击切换为亮色)'
             }
           >
-            {themeMode === 'light' && <Sun className="w-3.5 h-3.5 text-amber-500" />}
-            {themeMode === 'dark' && <Moon className="w-3.5 h-3.5 text-blue-400" />}
-            {themeMode === 'system' && <Monitor className="w-3.5 h-3.5" />}
+            {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
+            {themeMode === 'dark' && <Moon className="w-4 h-4 text-blue-400" />}
+            {themeMode === 'system' && <Monitor className="w-4 h-4" />}
           </button>
         </div>
       </header>
