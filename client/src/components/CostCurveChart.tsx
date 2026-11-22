@@ -135,7 +135,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
       {/* 顶栏：图表标题与范围快速切换胶囊 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
+          <TrendingUp className="w-4 h-4 text-blue-600 dark:text-blue-400" />
           <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100">
             {t('llm.curve_title')}
           </h4>
@@ -151,7 +151,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '1d'
-                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
+                ? 'bg-blue-600 text-white font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -165,7 +165,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '7d'
-                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
+                ? 'bg-blue-600 text-white font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -179,7 +179,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
             }}
             className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               range === '30d'
-                ? 'bg-white dark:bg-[#28292a] text-gray-900 dark:text-gray-100 font-bold shadow-2xs'
+                ? 'bg-blue-600 text-white font-bold shadow-2xs'
                 : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
             }`}
           >
@@ -191,29 +191,29 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
       {/* 选定周期概览摘要 */}
       <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-gray-50/70 dark:bg-neutral-800/40 border border-gray-100 dark:border-neutral-800/80">
         <div>
-          <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <DollarSign className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
+            <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
             <span>{t('llm.period_total')}</span>
           </span>
-          <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
+          <div className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
             ¥{stats.totalCost.toFixed(4)}
           </div>
         </div>
         <div>
-          <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <Zap className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+          <span className="text-[11px] text-blue-700 dark:text-blue-400 font-medium flex items-center gap-1">
+            <Zap className="w-3.5 h-3.5 text-blue-500" />
             <span>{t('llm.total_tokens')}</span>
           </span>
-          <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
+          <div className="text-base font-bold font-mono text-blue-600 dark:text-blue-400 mt-0.5">
             {stats.totalTokens.toLocaleString()}
           </div>
         </div>
         <div>
-          <span className="text-[11px] text-gray-500 dark:text-neutral-400 flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+          <span className="text-[11px] text-indigo-700 dark:text-indigo-400 font-medium flex items-center gap-1">
+            <Calendar className="w-3.5 h-3.5 text-indigo-500" />
             <span>{t('llm.total_requests')}</span>
           </span>
-          <div className="text-base font-bold font-mono text-gray-900 dark:text-gray-100 mt-0.5">
+          <div className="text-base font-bold font-mono text-indigo-600 dark:text-indigo-400 mt-0.5">
             {stats.totalRequests.toLocaleString()}
           </div>
         </div>
