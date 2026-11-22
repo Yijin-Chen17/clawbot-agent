@@ -128,7 +128,6 @@ const DashboardContent: React.FC = () => {
           <div className="w-full h-full flex flex-col overflow-hidden">
             <CalendarView
               onOpenMobileMenu={() => setMobileSidebarOpen(true)}
-              onNewTask={() => setIsCreateModalOpen(true)}
             />
           </div>
         )}

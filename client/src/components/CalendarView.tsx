@@ -16,7 +16,6 @@ import {
   ExternalLink,
   Share2,
   Menu,
-  Plus,
   PanelLeftClose,
   PanelLeft,
   Image as ImageIcon,
@@ -305,7 +304,7 @@ interface CalendarViewProps {
   onNewTask?: () => void;
 }
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, onNewTask }) => {
+export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) => {
   const { user } = useAuth();
   const { isDark, t, language } = useTheme();
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -851,25 +850,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, on
 
       {/* 2. 主体区：左侧 Google Calendar 抽屉 + 右侧周视图网格 */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* 左侧抽屉 (Google Calendar Left Sidebar: 新建按钮 + 迷你月历 + 待办清单) */}
+        {/* 左侧抽屉 (Google Calendar Left Sidebar: 迷你月历 + 待办清单) */}
         {sidebarOpen && (
           <aside className="w-64 xl:w-72 shrink-0 overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin hidden md:flex flex-col bg-white dark:bg-[#1e1f20]">
-            {/* Google 风格超大 "+ 新建待办" 药丸按钮 */}
-            {onNewTask && (
-              <button
-                type="button"
-                onClick={onNewTask}
-                className="w-full flex items-center gap-3 px-5 py-3 rounded-2xl bg-white dark:bg-[#282a2d] hover:bg-gray-50 dark:hover:bg-[#303337] border border-gray-200 dark:border-neutral-700 shadow-md hover:shadow-lg transition-all cursor-pointer group"
-              >
-                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-xs group-hover:scale-105 transition-transform">
-                  <Plus className="w-5 h-5 stroke-[2.5]" />
-                </div>
-                <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                  {t('workspace.add_task', '新建事项')}
-                </span>
-              </button>
-            )}
-
             {/* Google Calendar 经典迷你月历组件 */}
             <div className="bg-transparent select-none">
               <div className="flex items-center justify-between mb-2 px-1">
