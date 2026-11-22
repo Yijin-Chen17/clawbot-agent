@@ -1,3 +1,4 @@
+import { copyText } from '../utils/clipboard';
 import { TaskModal, type TaskModalSavePayload } from './TaskModal';
 import type { TaskItem as EditableTask } from '../types/task';
 import { inferTierFromScore, type ImpactSignal, type TimeMode, type UrgencyPace } from '../utils/priorityAlgorithm';
@@ -282,32 +283,6 @@ function getTaskQuadrant(importance: number, urgency: number, scoreScale?: numbe
   return { key: 'q4', name: 'Eliminate', color: '#9CA3AF' };
 }
 
-function safeCopyToClipboard(text: string): boolean {
-  if (!text) return false;
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {}
-
-  try {
-    const textArea = document.createElement('textarea');
-    textArea.value = text;
-    textArea.style.position = 'fixed';
-    textArea.style.left = '-9999px';
-    textArea.style.top = '-9999px';
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    const successful = document.execCommand('copy');
-    textArea.remove();
-    return successful;
-  } catch (err) {
-    console.error('Fallback copy failed: ', err);
-    return false;
-  }
-}
 
 interface CalendarViewProps {
   onOpenMobileMenu?: () => void;
@@ -421,8 +396,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     setMiniMonthDate(new Date(weekStart));
   }, [weekStart]);
 
-  const handleCopyLink = (linkToCopy: string, type: string) => {
-    const ok = safeCopyToClipboard(linkToCopy);
+  const handleCopyLink = async (linkToCopy: string, type: string) => {
+    const ok = await copyText(linkToCopy);
     if (ok) {
       setCopiedType(type);
       setTimeout(() => setCopiedType(null), 2000);

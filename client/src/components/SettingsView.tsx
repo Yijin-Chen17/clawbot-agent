@@ -1,3 +1,4 @@
+import { copyText } from '../utils/clipboard';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -285,6 +286,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   // iCal export urls
   const [icalExportUrl, setIcalExportUrl] = useState('');
   const [copiedIcal, setCopiedIcal] = useState(false);
+  const [copyIcalError, setCopyIcalError] = useState('');
+  const icalInputRef = useRef<HTMLInputElement>(null);
 
   const userId = user?.id ? String(user.id) : 'default';
 
@@ -778,10 +781,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const copyIcal = () => {
-    navigator.clipboard.writeText(icalExportUrl);
-    setCopiedIcal(true);
-    setTimeout(() => setCopiedIcal(false), 2000);
+  const copyIcal = async () => {
+    setCopyIcalError('');
+    setCopiedIcal(false);
+    if (!icalExportUrl) {
+      setCopyIcalError('订阅链接尚未加载，请刷新页面后重试。');
+      return;
+    }
+    if (await copyText(icalExportUrl)) {
+      setCopiedIcal(true);
+      setTimeout(() => setCopiedIcal(false), 2000);
+    } else {
+      icalInputRef.current?.focus();
+      icalInputRef.current?.select();
+      setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
+    }
   };
 
   if (loading) {
@@ -2372,6 +2386,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <input
                     type="text"
                     readOnly
+                    ref={icalInputRef}
                     value={icalExportUrl}
                     className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all"
                   />
@@ -2384,6 +2399,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
+                {copyIcalError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{copyIcalError}</p>}
               </div>
 
               {/* 2. Add external sub */}
