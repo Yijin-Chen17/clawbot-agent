@@ -17,12 +17,10 @@ import {
   Check,
   Clock,
   Download,
-  ExternalLink,
   Share2,
   Menu,
   PanelLeftClose,
   PanelLeft,
-  Image as ImageIcon,
 } from 'lucide-react';
 
 // Google Calendar standard 24-hour grid constants
@@ -404,14 +402,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
 
   const [serverExportUrls, setServerExportUrls] = useState<{
     http: string;
-    webcal: string;
     download: string;
     token: string;
   } | null>(null);
 
   const effectiveToken = serverExportUrls?.token || user?.token_secret || user?.calendar_token || '';
   const icalExportUrl = serverExportUrls?.http || (effectiveToken ? `${window.location.origin}/api/calendar/subscribe/${effectiveToken}.ics` : '');
-  const webcalUrl = serverExportUrls?.webcal || (effectiveToken ? `webcal://${window.location.host}/api/calendar/subscribe/${effectiveToken}.ics` : '');
   const downloadUrl = serverExportUrls?.download || (effectiveToken ? `${window.location.origin}/api/calendar/export/${effectiveToken}.ics` : '');
 
   // Live timer for red current time line
@@ -851,28 +847,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
     : ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-  const [downloadingImage, setDownloadingImage] = useState(false);
-
-  // 导出日历高清大图 (0-24点高清卡片)
-  const handleDownloadCalendarImage = async () => {
-    setDownloadingImage(true);
-    try {
-      const res = await api.get('/calendar/preview-card', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'image/png' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `clawbot-calendar-${localDateKey(weekStart)}.png`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      alert(err.response?.data?.error || '导出日历图片失败，请重试');
-    } finally {
-      setDownloadingImage(false);
-    }
-  };
-
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
       {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
@@ -936,7 +910,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           </h2>
         </div>
 
-        {/* 右侧：同步重排、导出图片、日历管理、导出与刷新 */}
+        {/* 右侧：重排、日历管理、导出与刷新 */}
         <div className="flex items-center gap-2">
           {loading && (
             <span className="text-xs text-blue-600 dark:text-blue-400 font-medium hidden sm:flex items-center gap-1.5">
@@ -953,17 +927,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span>{replanLoading ? '正在重排' : '重排全部'}</span>
-          </button>
-
-          {/* 导出高清大图按钮 */}
-          <button
-            onClick={handleDownloadCalendarImage}
-            disabled={downloadingImage}
-            title="导出日历图片 (0-24点高清卡片)"
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
-          >
-            {downloadingImage ? <RefreshCw className="w-4 h-4 animate-spin text-blue-600" /> : <ImageIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
-            <span className="hidden sm:inline">导出图片</span>
           </button>
 
           <button
@@ -1527,37 +1490,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             </div>
 
 
-            {/* Webcal 一键订阅 */}
-            <div className="p-3 bg-blue-50/60 dark:bg-blue-950/30 rounded-xl border border-blue-200/80 dark:border-blue-900/60 space-y-1 text-xs">
-              <div className="font-semibold text-blue-900 dark:text-blue-200">
-                方法 1：一键同步 (Apple Calendar / Outlook)
-              </div>
-              <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80 mb-2">
-                点击下方按钮可在支持的应用中直接调起系统日历添加订阅：
-              </p>
-              <div className="flex gap-2">
-                <a
-                  href={webcalUrl}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>调起日历订阅 (Webcal)</span>
-                </a>
-                <button
-                  type="button"
-                  onClick={() => handleCopyLink(webcalUrl, 'webcal')}
-                  className="px-3 py-1.5 border border-blue-300 dark:border-blue-800 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1"
-                >
-                  {copiedType === 'webcal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'webcal' ? '已复制' : '复制 Webcal 链接'}</span>
-                </button>
-              </div>
-            </div>
-
             {/* HTTPS 日历订阅链接 */}
             <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 space-y-1.5 text-xs">
               <div className="font-semibold text-gray-800 dark:text-neutral-200">
-                方法 2：Google Calendar URL 订阅
+                日历订阅链接
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -1581,7 +1517,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 flex items-center justify-between text-xs">
               <div>
                 <div className="font-semibold text-gray-800 dark:text-neutral-200">
-                  方法 3：下载静态 .ics 文件
+                  下载静态 .ics 文件
                 </div>
                 <div className="text-[11px] text-gray-400">单次导入快照，不自动跟随后续更新</div>
               </div>
@@ -1595,26 +1531,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               </a>
             </div>
 
-            {/* 导出高清 PNG 图片 */}
-            <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 flex items-center justify-between text-xs">
-              <div>
-                <div className="font-semibold text-emerald-900 dark:text-emerald-200">
-                  导出日历图片 (PNG)
-                </div>
-                <div className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
-                  0-24点高清完整日程视图，包含已完成事项
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleDownloadCalendarImage}
-                disabled={downloadingImage}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
-              >
-                {downloadingImage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
-                <span>{downloadingImage ? '正在生成...' : '下载图片'}</span>
-              </button>
-            </div>
+
           </div>
         </div>
       )}

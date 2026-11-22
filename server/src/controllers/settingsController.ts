@@ -48,7 +48,6 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
     urls: {
       webhookUrl,
       icalSubscriptionUrl,
-      webcalUrl: icalSubscriptionUrl.replace(/^https?:/, 'webcal:'),
     },
   });
 }

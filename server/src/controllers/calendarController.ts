@@ -201,7 +201,6 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
     subscriptions,
     exportUrls: {
       http: `${protocol}://${host}/api/calendar/subscribe/${token}.ics`,
-      webcal: `webcal://${host}/api/calendar/subscribe/${token}.ics`,
       download: `${protocol}://${host}/api/calendar/export/${token}.ics`,
       token,
     },
