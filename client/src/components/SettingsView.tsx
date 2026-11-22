@@ -1102,9 +1102,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       />
                       <Lock className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
                     </div>
-                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      {t('account.username_tip')}
-                    </span>
                   </div>
 
                   {/* 对外展示昵称 */}
@@ -1130,9 +1127,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         {savingProfile ? t('common.saving') : t('account.save_nickname')}
                       </button>
                     </div>
-                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      {t('account.nickname_tip')}
-                    </span>
                   </div>
 
                   {/* 注册绑定邮箱 */}
@@ -1251,9 +1245,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <h4 className="text-xs font-bold text-gray-900 dark:text-gray-100">
                     {t('account.logout_title')}
                   </h4>
-                  <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
-                    {t('account.logout_desc')}
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -1847,16 +1838,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     onChange={(e) => setTaskBuffer(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                   />
-                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
-                    {t('scheduler.buffer_desc')}
-                  </p>
                 </div>
               </div>
 
               {/* 4. Advance Deadline Setting (DDL - N 天) */}
               <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-neutral-800">
                 <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
-                  提前完成缓冲天数 (尽可能在截止时间前完成)
+                  提前完成缓冲天数
                 </label>
                 <div className="max-w-xs">
                   <select
@@ -1869,9 +1857,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <option value={2}>2 天 (截止日前 2 天完成)</option>
                     <option value={3}>3 天 (截止日前 3 天完成，极端从容)</option>
                   </select>
-                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
-                    排程引擎将以「截止时间 - 缓冲天数」作为调度目标，优先将待办任务提前规划，预留容错与复盘缓冲。
-                  </p>
                 </div>
               </div>
             </div>
@@ -1963,16 +1948,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* 3. Notification Mechanism Strategy */}
-              <div className="space-y-2 pt-1 text-xs">
-                <div className="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span>{t('notification.strategy_title')}</span>
-                </div>
-                <p className="text-gray-600 dark:text-neutral-400 leading-relaxed max-w-2xl">
-                  {t('notification.strategy_desc')}
-                </p>
-              </div>
             </div>
           )}
 
