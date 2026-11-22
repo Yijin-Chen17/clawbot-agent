@@ -118,6 +118,7 @@ export function initDatabase() {
       input_cost_cny REAL NOT NULL DEFAULT 0,
       output_cost_cny REAL NOT NULL DEFAULT 0,
       request_type TEXT DEFAULT 'weixin_chat',
+      is_official INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -168,6 +169,26 @@ export function initDatabase() {
   addCol('advance_deadline_days', 'INTEGER', '1');
   addCol('weixin_activated', 'INTEGER', '0');
   addCol('weixin_last_active_at', 'DATETIME', 'NULL');
+
+  // 若存量用户已配置私有 API Key，但尚未主动充值官方余额，默认保持其 custom 模式
+  try {
+    db.exec(`
+      UPDATE user_settings 
+      SET api_mode = 'custom' 
+      WHERE (llm_api_key IS NOT NULL AND TRIM(llm_api_key) != '')
+        AND (api_mode IS NULL OR api_mode = 'official')
+        AND user_id NOT IN (SELECT id FROM users WHERE balance > 0)
+        AND user_id NOT IN (SELECT used_by_user_id FROM redemption_codes WHERE used_by_user_id IS NOT NULL);
+    `);
+  } catch (err: any) {
+    // 容错处理
+  }
+
+  // Migrate api_usage_logs columns if missing (is_official)
+  const usageCols = (db.prepare('PRAGMA table_info(api_usage_logs)').all() as any[]).map(c => c.name);
+  if (!usageCols.includes('is_official')) {
+    db.exec("ALTER TABLE api_usage_logs ADD COLUMN is_official INTEGER DEFAULT 0;");
+  }
 
   // Migrate users table columns if missing (nickname, avatar_url, email)
   const userCols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map(c => c.name);

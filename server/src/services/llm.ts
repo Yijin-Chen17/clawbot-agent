@@ -208,7 +208,7 @@ export async function parseUserMessageWithLLM(
     }
 
     if (response.usage && userId) {
-      const usageRec = recordApiUsage(userId, config.model, response.usage, 'weixin_chat');
+      const usageRec = recordApiUsage(userId, config.model, response.usage, 'weixin_chat', config.isOfficial);
       if (config.isOfficial && usageRec && usageRec.costCny > 0) {
         db.prepare('UPDATE users SET balance = MAX(0, ROUND(balance - ?, 6)) WHERE id = ?').run(usageRec.costCny, userId);
       }

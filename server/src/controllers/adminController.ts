@@ -10,7 +10,7 @@ import {
   weixinTransitManager,
 } from '../services/weixinGateway.js';
 import { UserSettings } from '../models/types.js';
-import { getGlobalUsageStats } from '../services/llmPricing.js';
+import { getGlobalUsageStats, recordApiUsage } from '../services/llmPricing.js';
 
 export function listUsers(req: AuthenticatedRequest, res: Response): void {
   const users = db.prepare(`
@@ -392,6 +392,10 @@ export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Resp
     const latency = Date.now() - startTime;
     const tokens = testRes.usage?.total_tokens || 0;
 
+    if (testRes.usage && req.user?.id) {
+      recordApiUsage(req.user.id, finalModel, testRes.usage, 'global_key_test', true);
+    }
+
     res.json({
       success: true,
       message: `全局 API 验证成功！响应耗时 ${latency}ms，单次测试消耗 ${tokens} Tokens。`,
@@ -558,7 +562,8 @@ export function deleteRedemptionCode(req: AuthenticatedRequest, res: Response): 
  * 获取全平台 Token 与资费使用统计
  */
 export function getAdminUsageStats(req: AuthenticatedRequest, res: Response): void {
-  const stats = getGlobalUsageStats();
+  const scope = (req.query.scope as string) === 'all' ? 'all' : 'official';
+  const stats = getGlobalUsageStats('deepseek-chat', scope);
   res.json({
     success: true,
     ...stats,

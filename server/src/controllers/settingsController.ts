@@ -167,7 +167,7 @@ export async function testLlmApiKey(req: AuthenticatedRequest, res: Response): P
 
     let usageNote = '';
     if (testRes.usage) {
-      const rec = recordApiUsage(userId, llm_model || 'deepseek-chat', testRes.usage, 'key_test');
+      const rec = recordApiUsage(userId, llm_model || 'deepseek-chat', testRes.usage, 'key_test', false);
       if (rec) {
         usageNote = ` (消耗 ${rec.totalTokens} Tokens，折合 ¥${rec.costCny.toFixed(6)})`;
       }

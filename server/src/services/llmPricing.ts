@@ -106,6 +106,7 @@ export interface ApiUsageRecord {
   inputCostCny: number;
   outputCostCny: number;
   requestType: string;
+  isOfficial?: boolean;
   createdAt?: string;
 }
 
@@ -116,7 +117,8 @@ export function recordApiUsage(
   userId: number,
   model: string,
   usage: any,
-  requestType: string = 'weixin_chat'
+  requestType: string = 'weixin_chat',
+  isOfficial: boolean = false
 ): ApiUsageRecord | null {
   if (!usage || !userId) return null;
 
@@ -148,8 +150,8 @@ export function recordApiUsage(
       INSERT INTO api_usage_logs (
         user_id, model, prompt_tokens, completion_tokens, total_tokens,
         cache_hit_tokens, cache_miss_tokens, is_peak, cost_cny,
-        input_cost_cny, output_cost_cny, request_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_cost_cny, output_cost_cny, request_type, is_official
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -164,7 +166,8 @@ export function recordApiUsage(
       costCny,
       inputCostCny,
       outputCostCny,
-      requestType
+      requestType,
+      isOfficial ? 1 : 0
     );
 
     return {
@@ -180,6 +183,7 @@ export function recordApiUsage(
       inputCostCny,
       outputCostCny,
       requestType,
+      isOfficial,
     };
   } catch (err: any) {
     console.error('[API Usage] Failed to record usage log:', err.message);
@@ -209,6 +213,7 @@ export interface UserUsageStats {
     savedCostCny: number;
     cacheHitRate: number;
   };
+  scope?: 'official' | 'all';
   currentStatus: DeepSeekPricingPeriod;
   dailyHistory: {
     '1d': DailyHistoryPoint[];
@@ -217,6 +222,8 @@ export interface UserUsageStats {
   };
   recentLogs?: Array<{
     id: number;
+    user_id?: number;
+    username?: string;
     model: string;
     prompt_tokens: number;
     completion_tokens: number;
@@ -228,6 +235,7 @@ export interface UserUsageStats {
     input_cost_cny: number;
     output_cost_cny: number;
     request_type: string;
+    is_official?: number;
     created_at: string;
   }>;
 }
@@ -451,12 +459,15 @@ export function clearUserUsageLogs(userId: number): boolean {
 
 /**
  * 统计全平台前 1 天 / 7 天 / 30 天每日资费消耗曲线数据
+ * @param scope 'official' (仅统计官方全局接口) 或 'all' (包含用户私有 Key)
  */
-export function getGlobalDailyHistory(): {
+export function getGlobalDailyHistory(scope: 'official' | 'all' = 'official'): {
   '1d': DailyHistoryPoint[];
   '7d': DailyHistoryPoint[];
   '30d': DailyHistoryPoint[];
 } {
+  const filter = scope === 'official' ? 'is_official = 1 AND ' : '';
+
   const todayRows = db.prepare(`
     SELECT 
       strftime('%H:00', created_at, '+8 hours') as hour,
@@ -464,7 +475,7 @@ export function getGlobalDailyHistory(): {
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_cny), 0) as cost_cny
     FROM api_usage_logs
-    WHERE date(created_at, '+8 hours') = date('now', '+8 hours')
+    WHERE ${filter}date(created_at, '+8 hours') = date('now', '+8 hours')
     GROUP BY hour
   `).all() as any[];
 
@@ -497,7 +508,7 @@ export function getGlobalDailyHistory(): {
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_cny), 0) as cost_cny
     FROM api_usage_logs
-    WHERE date(created_at, '+8 hours') >= date('now', '+8 hours', '-6 days')
+    WHERE ${filter}date(created_at, '+8 hours') >= date('now', '+8 hours', '-6 days')
     GROUP BY day
   `).all() as any[];
 
@@ -534,7 +545,7 @@ export function getGlobalDailyHistory(): {
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_cny), 0) as cost_cny
     FROM api_usage_logs
-    WHERE date(created_at, '+8 hours') >= date('now', '+8 hours', '-29 days')
+    WHERE ${filter}date(created_at, '+8 hours') >= date('now', '+8 hours', '-29 days')
     GROUP BY day
   `).all() as any[];
 
@@ -571,9 +582,14 @@ export function getGlobalDailyHistory(): {
 
 /**
  * 查询全平台用量统计汇总与前 1天/7天/30天 价格曲线数据
+ * @param scope 'official' (默认，仅统计官方全局接口) 或 'all' (全平台所有调用，包含用户私有Key)
  */
-export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): UserUsageStats {
+export function getGlobalUsageStats(
+  currentModel: string = 'deepseek-chat',
+  scope: 'official' | 'all' = 'official'
+): UserUsageStats {
   const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
+  const whereClause = scope === 'official' ? 'WHERE is_official = 1' : '';
 
   try {
     const agg = db.prepare(`
@@ -588,6 +604,7 @@ export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): Use
         COALESCE(SUM(input_cost_cny), 0) as input_cost_cny,
         COALESCE(SUM(output_cost_cny), 0) as output_cost_cny
       FROM api_usage_logs
+      ${whereClause}
     `).get() as any;
 
     const totalRequests = agg?.total_requests || 0;
@@ -604,7 +621,21 @@ export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): Use
     const savedCostCny = Math.max(0, baselineCost - totalCostCny);
     const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
 
-    const dailyHistory = getGlobalDailyHistory();
+    const dailyHistory = getGlobalDailyHistory(scope);
+
+    // 查询最近 15 条全局用量调用日志
+    const recentLogs = db.prepare(`
+      SELECT 
+        l.id, l.user_id, u.username, l.model, l.prompt_tokens, l.completion_tokens,
+        l.total_tokens, l.cache_hit_tokens, l.cache_miss_tokens, l.is_peak,
+        l.cost_cny, l.input_cost_cny, l.output_cost_cny, l.request_type,
+        l.is_official, l.created_at
+      FROM api_usage_logs l
+      LEFT JOIN users u ON l.user_id = u.id
+      ${scope === 'official' ? 'WHERE l.is_official = 1' : ''}
+      ORDER BY l.id DESC
+      LIMIT 15
+    `).all() as any[];
 
     return {
       summary: {
@@ -620,8 +651,10 @@ export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): Use
         savedCostCny,
         cacheHitRate,
       },
+      scope,
       currentStatus,
       dailyHistory,
+      recentLogs,
     };
   } catch (err: any) {
     console.error('[API Usage] Failed to query global stats:', err.message);
@@ -639,12 +672,14 @@ export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): Use
         savedCostCny: 0,
         cacheHitRate: 0,
       },
+      scope,
       currentStatus,
       dailyHistory: {
         '1d': [],
         '7d': [],
         '30d': [],
       },
+      recentLogs: [],
     };
   }
 }

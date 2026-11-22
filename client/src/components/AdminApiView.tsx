@@ -15,6 +15,9 @@ import {
   Trash2,
   CheckCircle2,
   UserCheck,
+  ShieldCheck,
+  Layers,
+  Info,
 } from 'lucide-react';
 
 interface RedemptionCodeItem {
@@ -225,7 +228,9 @@ export const AdminApiView: React.FC = () => {
 
   // ================= 4. 全平台用量监控 =================
   const [adminUsageLoading, setAdminUsageLoading] = useState(false);
+  const [usageScope, setUsageScope] = useState<'official' | 'all'>('official');
   const [adminUsageData, setAdminUsageData] = useState<{
+    scope?: 'official' | 'all';
     summary: {
       totalRequests: number;
       totalTokens: number;
@@ -244,12 +249,30 @@ export const AdminApiView: React.FC = () => {
       '7d': Array<{ label: string; date: string; cost_cny: number; tokens: number; requests: number }>;
       '30d': Array<{ label: string; date: string; cost_cny: number; tokens: number; requests: number }>;
     };
+    recentLogs?: Array<{
+      id: number;
+      user_id?: number;
+      username?: string;
+      model: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      cache_hit_tokens: number;
+      cache_miss_tokens: number;
+      is_peak: number;
+      cost_cny: number;
+      input_cost_cny: number;
+      output_cost_cny: number;
+      request_type: string;
+      is_official?: number;
+      created_at: string;
+    }>;
   } | null>(null);
 
-  const fetchAdminUsage = async () => {
+  const fetchAdminUsage = async (scope: 'official' | 'all' = usageScope) => {
     setAdminUsageLoading(true);
     try {
-      const res = await api.get('/admin/usage-stats');
+      const res = await api.get(`/admin/usage-stats?scope=${scope}`);
       setAdminUsageData(res.data);
     } catch (err) {
       console.error('获取全平台用量失败:', err);
@@ -258,9 +281,14 @@ export const AdminApiView: React.FC = () => {
     }
   };
 
+  const handleScopeChange = (newScope: 'official' | 'all') => {
+    setUsageScope(newScope);
+    fetchAdminUsage(newScope);
+  };
+
   useEffect(() => {
     if (activeTab === 'usage') {
-      fetchAdminUsage();
+      fetchAdminUsage(usageScope);
     }
   }, [activeTab]);
 
@@ -730,7 +758,7 @@ export const AdminApiView: React.FC = () => {
       {/* ================= VIEW 4: 全平台用量监控 ================= */}
       {activeTab === 'usage' && (
         <div className="flex-1 min-h-0 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 sm:p-7 overflow-y-auto shadow-2xs space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
             <div>
               <h3 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-blue-500" />
@@ -741,41 +769,101 @@ export const AdminApiView: React.FC = () => {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={fetchAdminUsage}
-              className="px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-100 transition flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${adminUsageLoading ? 'animate-spin' : ''}`} />
-              <span>刷新统计</span>
-            </button>
+            <div className="flex items-center flex-wrap gap-2">
+              {/* 统计范围切换按钮组 */}
+              <div className="inline-flex p-1 bg-gray-100 dark:bg-neutral-800/80 rounded-2xl border border-gray-200/60 dark:border-neutral-700/60 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleScopeChange('official')}
+                  className={`px-3 py-1.5 rounded-xl font-medium transition flex items-center gap-1.5 cursor-pointer ${
+                    usageScope === 'official'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>官方全局 API 消耗</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScopeChange('all')}
+                  className={`px-3 py-1.5 rounded-xl font-medium transition flex items-center gap-1.5 cursor-pointer ${
+                    usageScope === 'all'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>全平台总计 (含个人Key)</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => fetchAdminUsage(usageScope)}
+                className="px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-100 transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${adminUsageLoading ? 'animate-spin' : ''}`} />
+                <span>刷新</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 统计范围说明横幅 */}
+          <div
+            className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 ${
+              usageScope === 'official'
+                ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900/50 text-blue-800 dark:text-blue-300'
+                : 'bg-purple-50/70 dark:bg-purple-950/30 border-purple-200 dark:border-purple-900/50 text-purple-800 dark:text-purple-300'
+            }`}
+          >
+            <Info className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              {usageScope === 'official' ? (
+                <span>
+                  <strong>当前统计范围：官方全局 API</strong> ——
+                  仅统计由系统官方统筹承载并扣除平台全局额度的真实调用，已严格隔离排除用户自带的个人私有 API Key 用量。
+                </span>
+              ) : (
+                <span>
+                  <strong>当前统计范围：全平台总计 (含个人私有 Key)</strong> ——
+                  统计平台产生的所有 LLM 请求（包括用户配置的个人私有 Key 与官方全局接口），供管理员全面监控平台的调用频次与吞吐。
+                </span>
+              )}
+            </div>
           </div>
 
           {adminUsageData?.summary && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-4 rounded-2xl bg-[#f8fafd] dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/60">
-                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">全平台总调用次数</div>
+                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">
+                  {usageScope === 'official' ? '官方接口调用次数' : '全平台总调用次数'}
+                </div>
                 <div className="text-2xl font-black font-mono text-gray-900 dark:text-gray-100 mt-1">
                   {adminUsageData.summary.totalRequests.toLocaleString()}
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#f8fafd] dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/60">
-                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">全平台总消耗 Tokens</div>
+                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">
+                  {usageScope === 'official' ? '官方总消耗 Tokens' : '全平台总消耗 Tokens'}
+                </div>
                 <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400 mt-1">
                   {adminUsageData.summary.totalTokens.toLocaleString()}
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#f8fafd] dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/60">
-                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">全平台总消耗折算 (¥)</div>
+                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">
+                  {usageScope === 'official' ? '官方总消耗折算 (¥)' : '全平台总消耗折算 (¥)'}
+                </div>
                 <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1">
                   ¥{adminUsageData.summary.totalCostCny.toFixed(4)}
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#f8fafd] dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/60">
-                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">全平台缓存命中率</div>
+                <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">缓存命中率</div>
                 <div className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400 mt-1">
                   {adminUsageData.summary.cacheHitRate.toFixed(1)}%
                 </div>
@@ -785,12 +873,87 @@ export const AdminApiView: React.FC = () => {
 
           {/* 走势图表 */}
           <div className="pt-2">
-            <div className="font-semibold text-xs text-gray-800 dark:text-gray-200 mb-3">全平台每日资费消耗价格曲线</div>
+            <div className="font-semibold text-xs text-gray-800 dark:text-gray-200 mb-3">
+              {usageScope === 'official'
+                ? '官方全局 API 每日资费消耗价格曲线'
+                : '全平台每日资费消耗价格曲线 (含个人私有 Key)'}
+            </div>
             <CostCurveChart
               data={adminUsageData?.dailyHistory}
               loading={adminUsageLoading}
             />
           </div>
+
+          {/* 最近调用明细记录 */}
+          {adminUsageData?.recentLogs && adminUsageData.recentLogs.length > 0 && (
+            <div className="pt-4 border-t border-gray-100 dark:border-neutral-800">
+              <div className="font-semibold text-xs text-gray-800 dark:text-gray-200 mb-3 flex items-center justify-between">
+                <span>最近调用明细记录</span>
+                <span className="text-[11px] font-normal text-gray-400">仅展示最近 15 条</span>
+              </div>
+              <div className="overflow-x-auto border border-gray-200 dark:border-neutral-800 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-gray-50 dark:bg-neutral-800/60 text-gray-500 dark:text-neutral-400 font-medium border-b border-gray-200 dark:border-neutral-800">
+                    <tr>
+                      <th className="py-2.5 px-3">时间</th>
+                      <th className="py-2.5 px-3">用户</th>
+                      <th className="py-2.5 px-3">接口类型</th>
+                      <th className="py-2.5 px-3">模型</th>
+                      <th className="py-2.5 px-3">场景</th>
+                      <th className="py-2.5 px-3">Tokens (总/命中)</th>
+                      <th className="py-2.5 px-3">折算金额</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/60 text-gray-700 dark:text-gray-300">
+                    {adminUsageData.recentLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-neutral-800/40">
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-gray-500">
+                          {log.created_at}
+                        </td>
+                        <td className="py-2.5 px-3 font-medium">
+                          {log.username || `UID: ${log.user_id}`}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {log.is_official === 1 ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300">
+                              官方全局
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+                              个人私有 Key
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-gray-500">
+                          {log.model}
+                        </td>
+                        <td className="py-2.5 px-3 text-[11px]">
+                          {log.request_type === 'weixin_chat'
+                            ? '微信交互'
+                            : log.request_type === 'key_test'
+                            ? '私有Key测试'
+                            : log.request_type === 'global_key_test'
+                            ? '全局Key测试'
+                            : log.request_type}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">
+                          <span>{log.total_tokens.toLocaleString()}</span>
+                          {log.cache_hit_tokens > 0 && (
+                            <span className="text-emerald-500 ml-1">
+                              (命中 {log.cache_hit_tokens})
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                          ¥{log.cost_cny.toFixed(6)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
