@@ -410,25 +410,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
   // Edge resistance for wheel and touch input, with a spring back to the scroll boundary.
   useEffect(() => {
     const container = scrollRef.current;
-    const content = container?.firstElementChild as HTMLElement | null;
-    if (!container || !content) return;
+    if (!container) return;
+    const columns = Array.from(container.querySelectorAll<HTMLElement>('[data-calendar-timeline]'));
+    if (!columns.length) return;
     let offset = 0;
     let touchY: number | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const reset = () => {
       offset = 0;
-      content.style.transition = 'transform 420ms cubic-bezier(.22, 1.4, .36, 1)';
-      content.style.transform = '';
+      columns.forEach(column => {
+        column.style.transition = 'transform 460ms cubic-bezier(.2, 1.65, .3, 1)';
+        column.style.transform = 'translateY(0px)';
+      });
     };
     const pull = (delta: number) => {
       const atTop = container.scrollTop <= 0 && delta < 0;
       const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 1 && delta > 0;
       if (!atTop && !atBottom) return false;
       if (timer) clearTimeout(timer);
-      offset = Math.max(-80, Math.min(80, offset - delta * 0.25 * (1 - Math.abs(offset) / 100)));
-      content.style.transition = 'none';
-      content.style.transform = `translateY(${offset}px)`;
-      timer = setTimeout(reset, 120);
+      offset = Math.max(-36, Math.min(36, offset - delta * 0.22 * (1 - Math.abs(offset) / 45)));
+      columns.forEach(column => {
+        column.style.transition = 'none';
+        column.style.transform = `translateY(${offset}px)`;
+      });
+      if (touchY === null) timer = setTimeout(reset, 100);
       return true;
     };
     const wheel = (event: WheelEvent) => {
@@ -446,17 +451,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
     container.addEventListener('wheel', wheel, { passive: false });
     container.addEventListener('touchstart', start, { passive: true });
     container.addEventListener('touchmove', move, { passive: false });
-    container.addEventListener('touchend', end);
-    container.addEventListener('touchcancel', end);
+    window.addEventListener('touchend', end);
+    window.addEventListener('touchcancel', end);
     return () => {
       if (timer) clearTimeout(timer);
       container.removeEventListener('wheel', wheel);
       container.removeEventListener('touchstart', start);
       container.removeEventListener('touchmove', move);
-      container.removeEventListener('touchend', end);
-      container.removeEventListener('touchcancel', end);
-      content.style.transform = '';
-      content.style.transition = '';
+      window.removeEventListener('touchend', end);
+      window.removeEventListener('touchcancel', end);
+      columns.forEach(column => { column.style.transform = ''; column.style.transition = ''; });
     };
   }, []);
 
@@ -1169,6 +1173,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
             {/* ================= Row 3: 24-Hour Time Grid (00:00 to 23:59) ================= */}
             {/* 时间轴刻度栏 */}
             <div
+              data-calendar-timeline
               className="relative select-none bg-white dark:bg-[#1e1f20]"
               style={{ height: GRID_HEIGHT }}
             >
@@ -1190,6 +1195,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu }) 
               return (
                 <div
                   key={`col-${d.key}`}
+                  data-calendar-timeline
                   className="relative border-l border-gray-200/80 dark:border-neutral-800 bg-white dark:bg-[#1e1f20]"
                   style={{ height: GRID_HEIGHT }}
                 >
