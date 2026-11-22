@@ -15,8 +15,24 @@ import {
   getWorkersStatus,
   restartUserWorker,
   resetUserSyncBuf,
+  getGlobalLlmSettings,
+  updateGlobalLlmSettings,
+  testGlobalLlmSettings,
+  rechargeUserBalance,
+  generateRedemptionCodes,
+  listRedemptionCodes,
+  deleteRedemptionCode,
+  getAdminUsageStats,
 } from '../controllers/adminController.js';
-import { getSettings, updateSettings, regenerateWebhookToken, testLlmApiKey, getLlmUsage, clearLlmUsage } from '../controllers/settingsController.js';
+import {
+  getSettings,
+  updateSettings,
+  regenerateWebhookToken,
+  testLlmApiKey,
+  getLlmUsage,
+  clearLlmUsage,
+  redeemCode,
+} from '../controllers/settingsController.js';
 import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask, completePartTask, applyProposal } from '../controllers/taskController.js';
 import {
   listSubscriptions,
@@ -60,6 +76,7 @@ router.post('/settings/test-llm', requireAuth, testLlmApiKey);
 router.get('/settings/llm-usage', requireAuth, getLlmUsage);
 router.delete('/settings/llm-usage', requireAuth, clearLlmUsage);
 router.post('/settings/regenerate-token', requireAuth, regenerateWebhookToken);
+router.post('/settings/redeem-code', requireAuth, redeemCode);
 
 // WeChat Clawbot iLink Gateway & QR Code Scan
 router.get('/weixin/qrcode', requireAuth, getQRCode);
@@ -104,3 +121,13 @@ router.post('/admin/debug/test-send-wechat', requireAdmin, debugTestSendWeChat);
 router.get('/admin/debug/workers', requireAdmin, getWorkersStatus);
 router.post('/admin/debug/workers/:userId/restart', requireAdmin, restartUserWorker);
 router.post('/admin/debug/workers/:userId/reset-sync', requireAdmin, resetUserSyncBuf);
+
+// Admin Global LLM & Balance & Redemption Routes
+router.get('/admin/global-llm', requireAdmin, getGlobalLlmSettings);
+router.put('/admin/global-llm', requireAdmin, updateGlobalLlmSettings);
+router.post('/admin/global-llm/test', requireAdmin, testGlobalLlmSettings);
+router.post('/admin/users/:id/recharge', requireAdmin, rechargeUserBalance);
+router.post('/admin/redemption-codes/generate', requireAdmin, generateRedemptionCodes);
+router.get('/admin/redemption-codes', requireAdmin, listRedemptionCodes);
+router.delete('/admin/redemption-codes/:id', requireAdmin, deleteRedemptionCode);
+router.get('/admin/usage-stats', requireAdmin, getAdminUsageStats);

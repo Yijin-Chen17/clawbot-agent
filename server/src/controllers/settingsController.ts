@@ -10,6 +10,12 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
   const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
 
+  const userRow = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as any;
+  const userBalance = Number(userRow?.balance || 0);
+
+  const globalKeyRow = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key') as any;
+  const hasGlobalLlm = Boolean((globalKeyRow?.value && globalKeyRow.value.trim().length > 3) || process.env.DEEPSEEK_API_KEY);
+
   const host = req.get('host') || 'localhost:5178';
   const protocol = req.protocol;
 
@@ -18,6 +24,8 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
 
   res.json({
     settings: settings || null,
+    user_balance: userBalance,
+    has_global_llm: hasGlobalLlm,
     urls: {
       webhookUrl,
       icalSubscriptionUrl,
@@ -29,6 +37,7 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
 export function updateSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
   const {
+    api_mode,
     llm_endpoint,
     llm_api_key,
     llm_model,
@@ -72,14 +81,15 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
 
   db.prepare(`
     INSERT INTO user_settings (
-      user_id, llm_endpoint, llm_api_key, llm_model,
+      user_id, api_mode, llm_endpoint, llm_api_key, llm_model,
       clawbot_outbound_url, clawbot_outbound_key, clawbot_to_wxid,
       work_slots, task_buffer_minutes, reminder_before_start_minutes,
       reminder_before_end_minutes, calendar_sync_interval_minutes,
       advance_deadline_days, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET
+      api_mode = COALESCE(excluded.api_mode, user_settings.api_mode),
       llm_endpoint = COALESCE(excluded.llm_endpoint, user_settings.llm_endpoint),
       llm_api_key = COALESCE(excluded.llm_api_key, user_settings.llm_api_key),
       llm_model = COALESCE(excluded.llm_model, user_settings.llm_model),
@@ -95,6 +105,7 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       updated_at = CURRENT_TIMESTAMP
   `).run(
     userId,
+    api_mode ?? 'official',
     llm_endpoint ?? 'https://api.deepseek.com/v1',
     llm_api_key ?? '',
     llm_model ?? 'deepseek-chat',
@@ -196,4 +207,64 @@ export function clearLlmUsage(req: AuthenticatedRequest, res: Response): void {
     success: true,
     message: 'API 用量记录已清空',
   });
+}
+
+/**
+ * 用户使用兑换码为账户余额充值
+ */
+export function redeemCode(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const { code } = req.body;
+
+  if (!code || typeof code !== 'string') {
+    res.status(400).json({ error: '请输入有效的兑换码' });
+    return;
+  }
+
+  const cleanCode = code.trim().toUpperCase();
+  if (cleanCode.length < 5) {
+    res.status(400).json({ error: '兑换码格式不正确' });
+    return;
+  }
+
+  const codeRow = db.prepare('SELECT * FROM redemption_codes WHERE code = ?').get(cleanCode) as any;
+  if (!codeRow) {
+    res.status(400).json({ error: '兑换码不存在，请核对后重试' });
+    return;
+  }
+
+  if (codeRow.status !== 'active') {
+    res.status(400).json({ error: '该兑换码已被使用或已作废' });
+    return;
+  }
+
+  let newBalance = 0;
+  const runTransaction = db.transaction(() => {
+    db.prepare(`
+      UPDATE redemption_codes
+      SET status = 'used', used_by_user_id = ?, used_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(userId, codeRow.id);
+
+    db.prepare(`
+      UPDATE users
+      SET balance = ROUND(COALESCE(balance, 0) + ?, 4), updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(codeRow.amount, userId);
+
+    const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as any;
+    newBalance = Number(user?.balance || 0);
+  });
+
+  try {
+    runTransaction();
+    res.json({
+      success: true,
+      amount: codeRow.amount,
+      newBalance,
+      message: `兑换成功！已为您充值 ¥${codeRow.amount.toFixed(2)} 元，当前账户余额为 ¥${newBalance.toFixed(2)} 元。`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: '兑换处理失败，请稍后重试' });
+  }
 }

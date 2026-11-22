@@ -1,4 +1,6 @@
 import { Response } from 'express';
+import crypto from 'crypto';
+import OpenAI from 'openai';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { getRecentLogs, clearLogs, addDebugLog } from '../services/debugLogger.js';
@@ -8,6 +10,7 @@ import {
   weixinTransitManager,
 } from '../services/weixinGateway.js';
 import { UserSettings } from '../models/types.js';
+import { getGlobalUsageStats } from '../services/llmPricing.js';
 
 export function listUsers(req: AuthenticatedRequest, res: Response): void {
   const users = db.prepare(`
@@ -17,6 +20,7 @@ export function listUsers(req: AuthenticatedRequest, res: Response): void {
       u.email,
       u.role,
       u.status,
+      COALESCE(u.balance, 0) as balance,
       u.created_at,
       u.updated_at,
       (SELECT count(*) FROM tasks WHERE user_id = u.id) as task_count,
@@ -288,4 +292,262 @@ export function resetUserSyncBuf(req: AuthenticatedRequest, res: Response): void
   const { userId } = req.params;
   weixinTransitManager.resetSyncBuf(Number(userId));
   res.json({ message: `已重置用户 #${userId} 的 sync_buf 并重启 Worker` });
+}
+
+// ================= Global LLM API & Quota Settings =================
+
+/**
+ * 获取全局大模型 API 设置
+ */
+export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
+  const getSetting = (key: string, def: string = '') => {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value || def;
+  };
+
+  const endpoint = getSetting('global_llm_endpoint', 'https://api.deepseek.com/v1');
+  const model = getSetting('global_llm_model', 'deepseek-chat');
+  let apiKey = getSetting('global_llm_api_key', '');
+  if (!apiKey && process.env.DEEPSEEK_API_KEY) {
+    apiKey = process.env.DEEPSEEK_API_KEY;
+  }
+
+  let apiKeyMasked = '';
+  if (apiKey) {
+    apiKeyMasked = apiKey.length > 8
+      ? `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}`
+      : '****';
+  }
+
+  res.json({
+    endpoint,
+    model,
+    apiKeyMasked,
+    hasKey: Boolean(apiKey && apiKey.length > 3),
+  });
+}
+
+/**
+ * 更新全局大模型 API 设置
+ */
+export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
+  const { endpoint, api_key, model } = req.body;
+
+  const upsert = (key: string, value: string) => {
+    db.prepare(`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(key, value);
+  };
+
+  if (endpoint !== undefined) {
+    upsert('global_llm_endpoint', String(endpoint).trim() || 'https://api.deepseek.com/v1');
+  }
+  if (model !== undefined) {
+    upsert('global_llm_model', String(model).trim() || 'deepseek-chat');
+  }
+  if (api_key !== undefined && typeof api_key === 'string' && !api_key.includes('****')) {
+    upsert('global_llm_api_key', api_key.trim());
+  }
+
+  addDebugLog('System', 'info', `管理员更新了系统全局 LLM API 配置 (Model: ${model || 'default'})`);
+  res.json({ message: '全局 API 配置已成功保存！' });
+}
+
+/**
+ * 测试全局大模型 API 连通性
+ */
+export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const { endpoint, api_key, model } = req.body;
+
+  let finalKey = api_key;
+  if (!finalKey || typeof finalKey !== 'string' || finalKey.includes('****')) {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key') as { value: string } | undefined;
+    finalKey = row?.value || process.env.DEEPSEEK_API_KEY || '';
+  }
+
+  if (!finalKey || !finalKey.trim()) {
+    res.status(400).json({ success: false, error: '未输入或未配置全局 API Key' });
+    return;
+  }
+
+  const finalEndpoint = (endpoint && String(endpoint).trim()) || 'https://api.deepseek.com/v1';
+  const finalModel = (model && String(model).trim()) || 'deepseek-chat';
+
+  const startTime = Date.now();
+  try {
+    const client = new OpenAI({
+      baseURL: finalEndpoint,
+      apiKey: finalKey.trim(),
+      timeout: 12000,
+    });
+
+    const testRes = await client.chat.completions.create({
+      model: finalModel,
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 5,
+    });
+
+    const latency = Date.now() - startTime;
+    const tokens = testRes.usage?.total_tokens || 0;
+
+    res.json({
+      success: true,
+      message: `全局 API 验证成功！响应耗时 ${latency}ms，单次测试消耗 ${tokens} Tokens。`,
+      latency,
+      tokens,
+    });
+  } catch (err: any) {
+    const errorMsg =
+      err.response?.data?.error?.message ||
+      err.message ||
+      '全局 API 连接失败，请检查 endpoint 或 key 是否正确';
+    res.status(400).json({
+      success: false,
+      error: errorMsg,
+    });
+  }
+}
+
+/**
+ * 直接充值指定用户账户额度
+ */
+export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): void {
+  const { id } = req.params;
+  const { amount } = req.body;
+
+  const numAmount = Number(amount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    res.status(400).json({ error: '充值金额必须为大于 0 的有效数值' });
+    return;
+  }
+
+  const target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE id = ?').get(id) as any;
+  if (!target) {
+    res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+
+  const newBalance = Number((target.balance + numAmount).toFixed(4));
+  db.prepare(`
+    UPDATE users
+    SET balance = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(newBalance, id);
+
+  addDebugLog('Auth', 'info', `管理员为用户「${target.username}」(ID: ${id}) 充值 ¥${numAmount.toFixed(2)}，当前余额: ¥${newBalance.toFixed(2)}`);
+  res.json({
+    success: true,
+    newBalance,
+    message: `已成功为用户「${target.username}」充值 ¥${numAmount.toFixed(2)} 元！当前余额：¥${newBalance.toFixed(2)} 元`,
+  });
+}
+
+/**
+ * 批量生成兑换码
+ */
+export function generateRedemptionCodes(req: AuthenticatedRequest, res: Response): void {
+  const { amount, count } = req.body;
+
+  const numAmount = Number(amount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    res.status(400).json({ error: '兑换码面额必须为大于 0 的有效数值' });
+    return;
+  }
+
+  const numCount = Math.min(50, Math.max(1, Number(count) || 1));
+  const createdBy = req.user!.id;
+  const generatedCodes: string[] = [];
+
+  const insertStmt = db.prepare(`
+    INSERT INTO redemption_codes (code, amount, status, created_by)
+    VALUES (?, ?, 'active', ?)
+  `);
+
+  const runTransaction = db.transaction(() => {
+    for (let i = 0; i < numCount; i++) {
+      // 生成格式如 CLAW-8F3A-BC12-9D4E 的随机唯一兑换码
+      const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+      const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+      const part3 = crypto.randomBytes(2).toString('hex').toUpperCase();
+      const code = `CLAW-${part1}-${part2}-${part3}`;
+
+      insertStmt.run(code, numAmount, createdBy);
+      generatedCodes.push(code);
+    }
+  });
+
+  runTransaction();
+
+  addDebugLog('System', 'info', `管理员生成了 ${numCount} 个面额为 ¥${numAmount.toFixed(2)} 的兑换码`);
+  res.json({
+    success: true,
+    count: numCount,
+    amount: numAmount,
+    codes: generatedCodes,
+    message: `成功生成 ${numCount} 个面额为 ¥${numAmount.toFixed(2)} 的兑换码！`,
+  });
+}
+
+/**
+ * 查询兑换码列表与汇总数据
+ */
+export function listRedemptionCodes(req: AuthenticatedRequest, res: Response): void {
+  const codes = db.prepare(`
+    SELECT 
+      rc.id,
+      rc.code,
+      rc.amount,
+      rc.status,
+      rc.created_by,
+      rc.used_by_user_id,
+      u.username as used_by_username,
+      rc.used_at,
+      rc.created_at
+    FROM redemption_codes rc
+    LEFT JOIN users u ON rc.used_by_user_id = u.id
+    ORDER BY rc.created_at DESC
+  `).all();
+
+  const summary = db.prepare(`
+    SELECT
+      COUNT(*) as total_count,
+      COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) as active_count,
+      COALESCE(SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END), 0) as used_count,
+      COALESCE(SUM(CASE WHEN status = 'active' THEN amount ELSE 0 END), 0) as total_active_amount,
+      COALESCE(SUM(CASE WHEN status = 'used' THEN amount ELSE 0 END), 0) as total_used_amount
+    FROM redemption_codes
+  `).get() as any;
+
+  res.json({
+    codes,
+    summary: {
+      totalCount: summary?.total_count || 0,
+      activeCount: summary?.active_count || 0,
+      usedCount: summary?.used_count || 0,
+      totalActiveAmount: Number((summary?.total_active_amount || 0).toFixed(2)),
+      totalUsedAmount: Number((summary?.total_used_amount || 0).toFixed(2)),
+    },
+  });
+}
+
+/**
+ * 删除或废弃兑换码
+ */
+export function deleteRedemptionCode(req: AuthenticatedRequest, res: Response): void {
+  const { id } = req.params;
+  db.prepare('DELETE FROM redemption_codes WHERE id = ?').run(id);
+  res.json({ success: true, message: '兑换码已删除' });
+}
+
+/**
+ * 获取全平台 Token 与资费使用统计
+ */
+export function getAdminUsageStats(req: AuthenticatedRequest, res: Response): void {
+  const stats = getGlobalUsageStats();
+  res.json({
+    success: true,
+    ...stats,
+  });
 }

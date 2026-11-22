@@ -448,3 +448,203 @@ export function clearUserUsageLogs(userId: number): boolean {
     return false;
   }
 }
+
+/**
+ * 统计全平台前 1 天 / 7 天 / 30 天每日资费消耗曲线数据
+ */
+export function getGlobalDailyHistory(): {
+  '1d': DailyHistoryPoint[];
+  '7d': DailyHistoryPoint[];
+  '30d': DailyHistoryPoint[];
+} {
+  const todayRows = db.prepare(`
+    SELECT 
+      strftime('%H:00', created_at, '+8 hours') as hour,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE date(created_at, '+8 hours') = date('now', '+8 hours')
+    GROUP BY hour
+  `).all() as any[];
+
+  const todayMap = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  todayRows.forEach((r) => {
+    todayMap.set(r.hour, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history1d: DailyHistoryPoint[] = [];
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0') + ':00';
+    const found = todayMap.get(hh);
+    history1d.push({
+      label: hh,
+      date: hh,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  const rows7d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE date(created_at, '+8 hours') >= date('now', '+8 hours', '-6 days')
+    GROUP BY day
+  `).all() as any[];
+
+  const map7d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows7d.forEach((r) => {
+    map7d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history7d: DailyHistoryPoint[] = [];
+  const now = new Date();
+  const bjNow = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map7d.get(dateStr);
+    history7d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  const rows30d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE date(created_at, '+8 hours') >= date('now', '+8 hours', '-29 days')
+    GROUP BY day
+  `).all() as any[];
+
+  const map30d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows30d.forEach((r) => {
+    map30d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history30d: DailyHistoryPoint[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map30d.get(dateStr);
+    history30d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  return {
+    '1d': history1d,
+    '7d': history7d,
+    '30d': history30d,
+  };
+}
+
+/**
+ * 查询全平台用量统计汇总与前 1天/7天/30天 价格曲线数据
+ */
+export function getGlobalUsageStats(currentModel: string = 'deepseek-chat'): UserUsageStats {
+  const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
+
+  try {
+    const agg = db.prepare(`
+      SELECT 
+        COUNT(*) as total_requests,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(cache_hit_tokens), 0) as cache_hit_tokens,
+        COALESCE(SUM(cache_miss_tokens), 0) as cache_miss_tokens,
+        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+        COALESCE(SUM(cost_cny), 0) as total_cost_cny,
+        COALESCE(SUM(input_cost_cny), 0) as input_cost_cny,
+        COALESCE(SUM(output_cost_cny), 0) as output_cost_cny
+      FROM api_usage_logs
+    `).get() as any;
+
+    const totalRequests = agg?.total_requests || 0;
+    const totalTokens = agg?.total_tokens || 0;
+    const promptTokens = agg?.prompt_tokens || 0;
+    const cacheHitTokens = agg?.cache_hit_tokens || 0;
+    const cacheMissTokens = agg?.cache_miss_tokens || 0;
+    const completionTokens = agg?.completion_tokens || 0;
+    const totalCostCny = agg?.total_cost_cny || 0;
+    const inputCostCny = agg?.input_cost_cny || 0;
+    const outputCostCny = agg?.output_cost_cny || 0;
+
+    const baselineCost = (promptTokens / 1_000_000) * 2.0 + (completionTokens / 1_000_000) * 8.0;
+    const savedCostCny = Math.max(0, baselineCost - totalCostCny);
+    const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
+
+    const dailyHistory = getGlobalDailyHistory();
+
+    return {
+      summary: {
+        totalRequests,
+        totalTokens,
+        promptTokens,
+        cacheHitTokens,
+        cacheMissTokens,
+        completionTokens,
+        totalCostCny,
+        inputCostCny,
+        outputCostCny,
+        savedCostCny,
+        cacheHitRate,
+      },
+      currentStatus,
+      dailyHistory,
+    };
+  } catch (err: any) {
+    console.error('[API Usage] Failed to query global stats:', err.message);
+    return {
+      summary: {
+        totalRequests: 0,
+        totalTokens: 0,
+        promptTokens: 0,
+        cacheHitTokens: 0,
+        cacheMissTokens: 0,
+        completionTokens: 0,
+        totalCostCny: 0,
+        inputCostCny: 0,
+        outputCostCny: 0,
+        savedCostCny: 0,
+        cacheHitRate: 0,
+      },
+      currentStatus,
+      dailyHistory: {
+        '1d': [],
+        '7d': [],
+        '30d': [],
+      },
+    };
+  }
+}

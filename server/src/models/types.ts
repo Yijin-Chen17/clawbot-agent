@@ -7,6 +7,7 @@ export interface User {
   password_hash?: string;
   role: 'user' | 'admin';
   status: 'pending' | 'approved' | 'rejected' | 'banned';
+  balance?: number;
   token_secret: string;
   created_at: string;
   updated_at: string;
@@ -19,6 +20,7 @@ export interface WorkSlot {
 
 export interface UserSettings {
   user_id: number;
+  api_mode?: 'official' | 'custom';
   llm_endpoint: string;
   llm_api_key: string;
   llm_model: string;
@@ -42,6 +44,24 @@ export interface UserSettings {
   weixin_context_token?: string;
   weixin_activated?: number;
   weixin_last_active_at?: string | null;
+  updated_at: string;
+}
+
+export interface RedemptionCode {
+  id: number;
+  code: string;
+  amount: number;
+  status: 'active' | 'used' | 'disabled';
+  created_by?: number;
+  used_by_user_id?: number | null;
+  used_by_username?: string | null;
+  used_at?: string | null;
+  created_at: string;
+}
+
+export interface SystemSetting {
+  key: string;
+  value: string;
   updated_at: string;
 }
 

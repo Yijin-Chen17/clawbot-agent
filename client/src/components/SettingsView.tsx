@@ -38,6 +38,8 @@ import {
   Languages,
   Keyboard,
   KeyRound,
+  ShieldAlert,
+  Gift,
 } from 'lucide-react';
 
 interface WorkSlot {
@@ -252,6 +254,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // LLM fields
+  const [apiMode, setApiMode] = useState<'official' | 'custom'>('official');
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [hasGlobalLlm, setHasGlobalLlm] = useState<boolean>(true);
+  const [redeemCodeInput, setRedeemCodeInput] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemResult, setRedeemResult] = useState<{ success: boolean; msg: string } | null>(null);
+
   const [llmEndpoint, setLlmEndpoint] = useState('https://api.deepseek.com/v1');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModel, setLlmModel] = useState('deepseek-chat');
@@ -311,6 +320,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       localStorage.removeItem(`clawbot_llm_valid_${userId}`);
     } finally {
       setLlmTesting(false);
+    }
+  };
+
+  const handleRedeemCode = async () => {
+    if (!redeemCodeInput.trim()) {
+      alert('请输入有效的兑换码');
+      return;
+    }
+    setRedeeming(true);
+    setRedeemResult(null);
+    try {
+      const res = await api.post('/settings/redeem-code', { code: redeemCodeInput.trim() });
+      setRedeemResult({ success: true, msg: res.data.message || '兑换充值成功！' });
+      if (res.data.newBalance !== undefined) {
+        setUserBalance(res.data.newBalance);
+      }
+      setRedeemCodeInput('');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } }; message?: string };
+      const msg = error.response?.data?.error || error.message || '兑换失败，请核对兑换码';
+      setRedeemResult({ success: false, msg });
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -488,8 +520,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     try {
       setLoading(true);
       const res = await api.get('/settings');
-      const { settings, urls } = res.data;
+      const { settings, urls, user_balance, has_global_llm } = res.data;
+      if (user_balance !== undefined) {
+        setUserBalance(Number(user_balance) || 0);
+      }
+      if (has_global_llm !== undefined) {
+        setHasGlobalLlm(Boolean(has_global_llm));
+      }
       if (settings) {
+        setApiMode(settings.api_mode || 'official');
         setLlmEndpoint(settings.llm_endpoint || 'https://api.deepseek.com/v1');
         setLlmApiKey(settings.llm_api_key || '');
         setLlmModel(settings.llm_model || 'deepseek-chat');
@@ -648,6 +687,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       try {
         setSaving(true);
         await api.put('/settings', {
+          api_mode: apiMode,
           llm_endpoint: llmEndpoint,
           llm_api_key: llmApiKey,
           llm_model: llmModel,
@@ -669,6 +709,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     return () => clearTimeout(timer);
   }, [
+    apiMode,
     llmEndpoint,
     llmApiKey,
     llmModel,
@@ -740,7 +781,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   }
 
   const isWeixinDone = Boolean(wxConnected);
-  const isLlmDone = Boolean(llmApiKeyValid);
+  const isLlmDone = apiMode === 'official' ? (userBalance > 0 && hasGlobalLlm) : Boolean(llmApiKeyValid);
 
   const navMenuItems = [
     {
@@ -1985,81 +2026,221 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               )}
 
               <div className="space-y-5 text-xs max-w-xl">
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
+                {/* 模式选择 */}
+                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.endpoint')}
+                    {t('llm.mode_select')}
                   </label>
-                  <input
-                    type="text"
-                    value={llmEndpoint}
-                    onChange={(e) => setLlmEndpoint(e.target.value)}
-                    placeholder="https://api.deepseek.com/v1"
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: DeepSeek Official Endpoint</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setApiMode('official')}
+                      className={`p-3.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                        apiMode === 'official'
+                          ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 shadow-sm ring-1 ring-blue-500'
+                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <span className="font-semibold text-xs flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-blue-500" />
+                          {t('llm.mode_official')}
+                        </span>
+                        {apiMode === 'official' && <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                      </div>
+                      <span className="text-[11px] opacity-75 leading-relaxed">
+                        {t('llm.mode_official_desc')}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setApiMode('custom')}
+                      className={`p-3.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                        apiMode === 'custom'
+                          ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-500 text-purple-900 dark:text-purple-200 shadow-sm ring-1 ring-purple-500'
+                          : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <span className="font-semibold text-xs flex items-center gap-1.5">
+                          <KeyRound className="w-4 h-4 text-purple-500" />
+                          {t('llm.mode_custom')}
+                        </span>
+                        {apiMode === 'custom' && <CheckCircle2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
+                      </div>
+                      <span className="text-[11px] opacity-75 leading-relaxed">
+                        {t('llm.mode_custom_desc')}
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.api_key')}
-                  </label>
-                  <input
-                    type="password"
-                    value={llmApiKey}
-                    onChange={(e) => {
-                      setLlmApiKey(e.target.value);
-                      if (llmApiKeyValid) {
-                        setLlmApiKeyValid(false);
-                        localStorage.removeItem(`clawbot_llm_valid_${userId}`);
-                      }
-                    }}
-                    placeholder={t('llm.api_key_placeholder')}
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Stored securely in SQLite database and isolated per account</span>
-                </div>
+                {apiMode === 'official' ? (
+                  /* 官方接口：余额与兑换码 */
+                  <div className="p-4 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/30 dark:from-blue-950/20 dark:via-[#1e1f20] dark:to-indigo-950/20 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-100 dark:border-neutral-800">
+                      <div>
+                        <div className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium">{t('llm.official_balance')} (官方智能调用)</div>
+                        <div className="text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 flex items-baseline gap-1 mt-0.5">
+                          <span className="text-base font-normal">¥</span>
+                          <span>{userBalance.toFixed(4)}</span>
+                          <span className="text-xs font-normal text-gray-400 dark:text-neutral-500 ml-1">元</span>
+                        </div>
+                      </div>
 
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.model')}
-                  </label>
-                  <input
-                    type="text"
-                    value={llmModel}
-                    onChange={(e) => setLlmModel(e.target.value)}
-                    placeholder="deepseek-chat"
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
-                </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={fetchSettings}
+                          className="px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-white dark:bg-[#1a1b1e] border border-blue-200 dark:border-blue-800 rounded-lg hover:bg-blue-50 transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>刷新余额</span>
+                        </button>
+                      </div>
+                    </div>
 
-                <div className="flex items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleTestLlmKey}
-                    disabled={llmTesting || !llmApiKey.trim()}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
-                  >
-                    {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
-                  </button>
+                    {userBalance <= 0 && (
+                      <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
+                        <div>
+                          <div className="font-semibold">{t('llm.official_balance_zero_tip')}</div>
+                        </div>
+                      </div>
+                    )}
 
-                  {isLlmDone && (
-                    <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{t('llm.valid_badge')}</span>
-                    </span>
-                  )}
-                </div>
+                    {/* 兑换码兑换输入 */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                        <Gift className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{t('llm.official_redeem_title')}</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={redeemCodeInput}
+                          onChange={(e) => setRedeemCodeInput(e.target.value.toUpperCase())}
+                          placeholder={t('llm.official_redeem_placeholder')}
+                          className="flex-1 px-3 py-2 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleRedeemCode}
+                          disabled={redeeming || !redeemCodeInput.trim()}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                        >
+                          {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
+                          <span>{redeeming ? '兑换中...' : t('llm.official_redeem_btn')}</span>
+                        </button>
+                      </div>
 
-                {llmTestResult && (
-                  <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
-                    llmTestResult.success
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-                  }`}>
-                    {llmTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
-                    <span>{llmTestResult.msg}</span>
+                      <div className="text-[11px] text-gray-400 dark:text-neutral-500 flex items-center gap-1">
+                        <span>💡</span>
+                        <span>{t('llm.official_redeem_tip')}</span>
+                      </div>
+
+                      {redeemResult && (
+                        <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 animate-fadeIn ${
+                          redeemResult.success
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                            : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                        }`}>
+                          {redeemResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                          <span>{redeemResult.msg}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* 自定义 API 配置 */
+                  <div className="space-y-4">
+                    {/* 安全风险提示横幅 */}
+                    <div className="p-3.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/90 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5 leading-relaxed">
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <div className="font-semibold mb-0.5">安全风险提示</div>
+                        <div className="text-[11px] opacity-90">{t('llm.custom_risk_warning')}</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.endpoint')}
+                      </label>
+                      <input
+                        type="text"
+                        value={llmEndpoint}
+                        onChange={(e) => setLlmEndpoint(e.target.value)}
+                        placeholder="https://api.deepseek.com/v1"
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: https://api.deepseek.com/v1</span>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.api_key')}
+                      </label>
+                      <input
+                        type="password"
+                        value={llmApiKey}
+                        onChange={(e) => {
+                          setLlmApiKey(e.target.value);
+                          if (llmApiKeyValid) {
+                            setLlmApiKeyValid(false);
+                            localStorage.removeItem(`clawbot_llm_valid_${userId}`);
+                          }
+                        }}
+                        placeholder={t('llm.api_key_placeholder')}
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">存储于独立隔离配置库中，供微信后台解析调用</span>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.model')}
+                      </label>
+                      <input
+                        type="text"
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        placeholder="deepseek-chat"
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTestLlmKey}
+                        disabled={llmTesting || !llmApiKey.trim()}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
+                      </button>
+
+                      {isLlmDone && (
+                        <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>{t('llm.valid_badge')}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {llmTestResult && (
+                      <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
+                        llmTestResult.success
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                      }`}>
+                        {llmTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                        <span>{llmTestResult.msg}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -130,6 +130,23 @@ export function initDatabase() {
       used INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS redemption_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_by INTEGER REFERENCES users(id),
+      used_by_user_id INTEGER REFERENCES users(id),
+      used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migrate user_settings columns if missing
@@ -139,6 +156,7 @@ export function initDatabase() {
       db.exec(`ALTER TABLE user_settings ADD COLUMN ${name} ${type} DEFAULT ${def};`);
     }
   };
+  addCol('api_mode', 'TEXT', "'official'");
   addCol('weixin_connected', 'INTEGER', '0');
   addCol('weixin_bot_token', 'TEXT', "''");
   addCol('weixin_bot_id', 'TEXT', "''");
@@ -162,7 +180,24 @@ export function initDatabase() {
   if (!userCols.includes('email')) {
     db.exec("ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL;");
   }
+  if (!userCols.includes('balance')) {
+    db.exec("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0;");
+  }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL AND email != '';");
+
+  // Initialize default system settings for global LLM if not present
+  const existingGlobalEndpoint = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_endpoint');
+  if (!existingGlobalEndpoint) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_endpoint', 'https://api.deepseek.com/v1');
+  }
+  const existingGlobalModel = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_model');
+  if (!existingGlobalModel) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_model', 'deepseek-chat');
+  }
+  const existingGlobalKey = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key');
+  if (!existingGlobalKey && process.env.DEEPSEEK_API_KEY) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_api_key', process.env.DEEPSEEK_API_KEY);
+  }
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);

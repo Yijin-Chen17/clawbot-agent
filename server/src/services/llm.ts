@@ -1,6 +1,60 @@
 import OpenAI from 'openai';
 import { LLMExtractionResult, UserSettings } from '../models/types.js';
 import { recordApiUsage } from './llmPricing.js';
+import { db } from '../config/database.js';
+
+export interface EffectiveLlmConfig {
+  apiMode: 'official' | 'custom';
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  userBalance: number;
+  isOfficial: boolean;
+}
+
+/**
+ * 依据用户配置与全局设定，计算出当前用户实际生效的 LLM 调用端点、密钥与模型
+ */
+export function getEffectiveLlmConfig(userId: number, userSettings?: UserSettings): EffectiveLlmConfig {
+  const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as { balance?: number } | undefined;
+  const userBalance = Number(user?.balance || 0);
+
+  const settings = userSettings || (db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined);
+  const apiMode = settings?.api_mode === 'custom' ? 'custom' : 'official';
+
+  if (apiMode === 'custom') {
+    return {
+      apiMode: 'custom',
+      endpoint: settings?.llm_endpoint || 'https://api.deepseek.com/v1',
+      apiKey: settings?.llm_api_key || '',
+      model: settings?.llm_model || 'deepseek-chat',
+      userBalance,
+      isOfficial: false,
+    };
+  }
+
+  // 官方接口模式：读取系统全局 system_settings
+  const getSetting = (key: string, def: string) => {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value || def;
+  };
+
+  const endpoint = getSetting('global_llm_endpoint', 'https://api.deepseek.com/v1');
+  let apiKey = getSetting('global_llm_api_key', '');
+  if (!apiKey && process.env.DEEPSEEK_API_KEY) {
+    apiKey = process.env.DEEPSEEK_API_KEY;
+  }
+  const model = getSetting('global_llm_model', 'deepseek-chat');
+
+  return {
+    apiMode: 'official',
+    endpoint,
+    apiKey,
+    model,
+    userBalance,
+    isOfficial: true,
+  };
+}
 
 /**
  * 静态系统提示词 (常量，100% 静态不变以保障 DeepSeek / OpenAI / Anthropic 前缀缓存 100% 命中)
@@ -89,17 +143,25 @@ export async function parseUserMessageWithLLM(
   settings: UserSettings,
   pendingContext?: any
 ): Promise<LLMExtractionResult> {
-  const endpoint = settings.llm_endpoint || 'https://api.deepseek.com/v1';
-  const apiKey = settings.llm_api_key || process.env.DEEPSEEK_API_KEY || '';
-  const model = settings.llm_model || 'deepseek-chat';
+  const userId = settings.user_id;
+  const config = getEffectiveLlmConfig(userId, settings);
 
-  if (!apiKey) {
-    throw new Error('未配置 LLM API Key，请先在管理后台设置中填入 DeepSeek API Key');
+  if (config.isOfficial) {
+    if (config.userBalance <= 0) {
+      throw new Error('账户额度已用尽 (¥0.00)，无法调用官方智能接口。请在设置中兑换充值码或联系管理员，亦可切换为自定义 APIKey。');
+    }
+    if (!config.apiKey) {
+      throw new Error('系统尚未配置官方全局大模型接口，请联系系统管理员设置全局 API Key。');
+    }
+  } else {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new Error('未配置私有 LLM API Key，请先在「设置」中填入您的 API Key 或切换为官方接口。');
+    }
   }
 
   const client = new OpenAI({
-    baseURL: endpoint,
-    apiKey: apiKey,
+    baseURL: config.endpoint,
+    apiKey: config.apiKey,
   });
 
   const now = new Date();
@@ -131,7 +193,7 @@ export async function parseUserMessageWithLLM(
 
   try {
     const response = await client.chat.completions.create({
-      model: model,
+      model: config.model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
@@ -145,8 +207,11 @@ export async function parseUserMessageWithLLM(
       throw new Error('LLM 返回内容为空');
     }
 
-    if (response.usage && settings.user_id) {
-      recordApiUsage(settings.user_id, model, response.usage, 'weixin_chat');
+    if (response.usage && userId) {
+      const usageRec = recordApiUsage(userId, config.model, response.usage, 'weixin_chat');
+      if (config.isOfficial && usageRec && usageRec.costCny > 0) {
+        db.prepare('UPDATE users SET balance = MAX(0, ROUND(balance - ?, 6)) WHERE id = ?').run(usageRec.costCny, userId);
+      }
     }
 
     const parsed = JSON.parse(content) as LLMExtractionResult;

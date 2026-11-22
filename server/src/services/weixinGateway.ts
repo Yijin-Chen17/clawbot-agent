@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
-import { parseUserMessageWithLLM } from './llm.js';
+import { parseUserMessageWithLLM, getEffectiveLlmConfig } from './llm.js';
 import { scheduleTask, replanUserTasks, completeTaskPart, computeTodayBusyMinutes } from './scheduler.js';
 import {
   calculateDynamicImportance,
@@ -705,15 +705,38 @@ export async function processWeChatMessage(
 
   try {
     let parsed: any;
-    // Check if user has configured LLM API Key
-    if (!settings.llm_api_key || !settings.llm_api_key.trim()) {
-      addDebugLog('LLM', 'warn', `用户 #${userId} 未配置 DeepSeek API Key，无法进行语义解析`);
-      return {
-        replyText:
-          `⚠️【系统提醒】您尚未在管理后台配置大模型 API Key。\n` +
-          `请登录管理面板（http://${settings.weixin_base_url ? '管理地址' : '5178'}）在「设置」中填入您的 DeepSeek API Key 即可开启智能规划。`,
-        diagnostics: { error: '未配置 LLM API Key' },
-      };
+    // Check if user has configured LLM API Key or can use official mode
+    const llmConfig = getEffectiveLlmConfig(userId, settings);
+    if (llmConfig.isOfficial) {
+      if (llmConfig.userBalance <= 0) {
+        addDebugLog('LLM', 'warn', `用户 #${userId} 官方接口账户额度已用尽 (¥0.00)，拦截智能解析`);
+        return {
+          replyText:
+            `⚠️【账户额度已用尽】\n` +
+            `您的 Clawbot 官方接口额度为 ¥0.00，无法继续调用智能模型。\n` +
+            `请登录管理后台在「设置」中输入兑换码充值或联系管理员，亦可切换为「自定义 APIKey」模式。`,
+          diagnostics: { error: '官方接口额度已用尽' },
+        };
+      }
+      if (!llmConfig.apiKey) {
+        addDebugLog('LLM', 'warn', `管理员尚未配置官方全局 API Key`);
+        return {
+          replyText:
+            `⚠️【系统提醒】管理员尚未配置官方全局大模型接口。\n` +
+            `请联系管理员在后台设置中填入全局 API Key，或在「设置」中切换为「自定义 APIKey」模式。`,
+          diagnostics: { error: '未配置全局 LLM API Key' },
+        };
+      }
+    } else {
+      if (!llmConfig.apiKey || !llmConfig.apiKey.trim()) {
+        addDebugLog('LLM', 'warn', `用户 #${userId} 未配置自定义 API Key`);
+        return {
+          replyText:
+            `⚠️【系统提醒】您选择了自定义 APIKey 模式，但尚未配置有效密钥。\n` +
+            `请登录管理后台在「设置」中填入您的 API Key，或切换为「Clawbot Task 官方接口」即可立即使用。`,
+          diagnostics: { error: '未配置自定义 LLM API Key' },
+        };
+      }
     }
 
     parsed = await parseUserMessageWithLLM(content, settings, pendingSwapData || pendingTask);
@@ -1425,7 +1448,10 @@ class WeixinTransitManager {
         hasBotToken: Boolean(s.weixin_bot_token && s.weixin_bot_token.length > 5),
         hasSyncBuf: Boolean(s.weixin_sync_buf),
         hasContextToken: Boolean(s.weixin_context_token || contextTokenMap.has(s.user_id)),
-        hasLlmKey: Boolean(s.llm_api_key && s.llm_api_key.length > 3),
+        hasLlmKey: (() => {
+          const cfg = getEffectiveLlmConfig(s.user_id, s);
+          return Boolean(cfg.apiKey && cfg.apiKey.length > 3 && (!cfg.isOfficial || cfg.userBalance > 0));
+        })(),
         workerRunning: Boolean(worker?.running),
         startedAt: worker?.startedAt ? new Date(worker.startedAt).toISOString() : null,
         lastPollAt: worker?.lastPollAt ? new Date(worker.lastPollAt).toISOString() : null,
