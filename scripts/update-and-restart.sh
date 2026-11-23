@@ -48,15 +48,28 @@ fi
 cd "${APP_DIR}"
 git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
 
-# 6. 从 GitHub main 拉取最新代码
+# 6. 从 GitHub main 拉取最新代码（带重试与超时控制，避免卡死）
 echo ""
 echo "📥 [1/4] 正在拉取 GitHub origin/main 最新代码..."
-git fetch origin main
-git checkout main
-git pull origin main
+FETCH_OK=0
+for i in 1 2 3; do
+    if git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 fetch origin main; then
+        FETCH_OK=1
+        break
+    else
+        echo "⚠️ 访问 GitHub 超时或失败，第 $i/3 次重试..."
+        sleep 2
+    fi
+done
 
-LATEST_COMMIT="$(git log -1 --format='%h - %s (%cr) <%an>')"
-echo "✅ 已同步至最新提交: ${LATEST_COMMIT}"
+if [ "$FETCH_OK" -eq 1 ]; then
+    git checkout main
+    git merge --ff-only origin/main || git pull origin main --ff-only
+    LATEST_COMMIT="$(git log -1 --format='%h - %s (%cr) <%an>')"
+    echo "✅ 已同步至最新提交: ${LATEST_COMMIT}"
+else
+    echo "⚠️ 无法连接至 GitHub，将使用本地最新代码继续执行构建与启动流程。"
+fi
 
 # 7. 安装依赖
 echo ""
