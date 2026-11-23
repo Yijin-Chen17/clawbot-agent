@@ -60,6 +60,18 @@ interface EisenhowerWorkspaceProps {
   setIsBackupOpen?: (open: boolean) => void;
 }
 
+function serializeDeadlineIso(rawDueDate?: string | null): string | null {
+  if (!rawDueDate) return null;
+  const trimmed = rawDueDate.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-').map(Number);
+    return new Date(y, m - 1, d, 23, 59, 59).toISOString();
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   currentView: propsCurrentView = 'matrix',
   onSwitchView: _onSwitchView,
@@ -323,9 +335,11 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         completedDates: isCompletedToday
           ? Array.from(new Set([...completedDates, todayStr]))
           : completedDates,
-        deadlineAt: effectiveDueDate,
-        deadlineKind: t.deadline_kind === 'hard' ? 'hard' : 'soft',
-        dueDate: effectiveDueDate ? effectiveDueDate.slice(0, 10) : null,
+        dueDate: effectiveDueDate
+          ? /^\d{4}-\d{2}-\d{2}$/.test(effectiveDueDate)
+            ? effectiveDueDate
+            : formatLocalDate(new Date(effectiveDueDate))
+          : null,
         tags: Array.isArray(t.tags)
           ? t.tags
           : t.tags
@@ -541,8 +555,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importance_manual_override:
           data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,
         score_scale: 100,
-        deadline_kind: data.deadlineKind,
-        deadline: data.dueDate ? (data.dueDate.includes('T') ? new Date(data.dueDate).toISOString() : data.dueDate) : null,
+        deadline: serializeDeadlineIso(data.dueDate),
         scheduled_start: data.scheduledStart || null,
         scheduled_end: data.scheduledEnd || null,
         is_fixed: data.isFixed ? 1 : 0,
@@ -723,7 +736,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           importance: t.importance,
           urgency: t.urgency,
           score_scale: 100,
-          deadline: t.dueDate ? new Date(t.dueDate).toISOString() : null,
+          deadline: serializeDeadlineIso(t.dueDate),
           notes: t.description || '',
           auto_schedule: true,
         });
