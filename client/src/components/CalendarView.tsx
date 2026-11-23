@@ -904,10 +904,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     : ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#131314] text-gray-900 dark:text-gray-100 select-none">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
       {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
       {/* 1. Google Calendar 经典顶部工具栏 */}
-      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#131314] transition-colors">
+      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧：菜单切换 + 今天按钮 + 翻周箭头 + 月份年份 */}
         <div className="flex items-center gap-2 sm:gap-3">
           {onOpenMobileMenu && (
@@ -1043,7 +1043,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           inert={!sidebarOpen}
         >
           <aside
-            className={`w-64 xl:w-72 h-full overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin flex flex-col bg-white dark:bg-[#131314] border-r border-gray-200/80 dark:border-[#444746] transition-transform duration-300 ease-in-out ${
+            className={`w-64 xl:w-72 h-full overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin flex flex-col bg-white dark:bg-[#1e1f20] border-r border-gray-200/80 dark:border-[#444746] transition-transform duration-300 ease-in-out ${
               sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
             style={{
@@ -1128,7 +1128,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           aria-current={isToday ? 'date' : undefined}
                           className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center text-[11px] transition cursor-pointer ${
                             isToday
-                              ? `bg-blue-700 dark:bg-blue-700 text-white font-bold ${isSelected ? 'ring-2 ring-blue-300 dark:ring-blue-300 ring-offset-2 dark:ring-offset-[#131314]' : ''}`
+                              ? `bg-blue-700 dark:bg-blue-700 text-white font-bold ${isSelected ? 'ring-2 ring-blue-300 dark:ring-blue-300 ring-offset-2 dark:ring-offset-[#1e1f20]' : ''}`
                               : isSelected
                               ? 'bg-blue-100 dark:bg-[#304468] text-blue-700 dark:text-[#a8c7fa] font-semibold'
                               : item.isCurrentMonth
@@ -1248,19 +1248,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         </div>
 
         {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
+        <div className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
         <div
           ref={scrollRef}
-          className="flex-1 bg-white dark:bg-[#131314] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
+          className="h-full bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
         >
           <div
-            className="grid min-w-[780px] bg-white dark:bg-[#131314]"
+            className="grid min-w-[780px] pb-8 bg-white dark:bg-[#1e1f20]"
             style={{
               gridTemplateColumns: '56px repeat(7, minmax(0, 1fr))',
             }}
           >
             {/* ================= Row 1: Sticky Day Headers ================= */}
             {/* 时区单元格 (左上角) */}
-            <div className="sticky top-0 z-30 h-18 bg-white dark:bg-[#131314] border-b border-gray-200/80 dark:border-[#444746] flex items-end justify-end pr-2 pb-1 text-[11px] font-mono text-gray-400 dark:text-[#8e918f] select-none">
+            <div className="sticky top-0 z-30 h-18 bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-[#444746] flex items-end justify-end pr-2 pb-1 text-[11px] font-mono text-gray-400 dark:text-[#8e918f] select-none">
               GMT+8
             </div>
 
@@ -1271,7 +1272,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               return (
                 <div
                   key={`head-${d.key}`}
-                  className="sticky top-0 z-30 h-18 flex flex-col items-center justify-center border-l border-b border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#131314] select-none py-1"
+                  className="sticky top-0 z-30 h-18 flex flex-col items-center justify-center border-l border-b border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#1e1f20] select-none py-1"
                 >
                   {/* 星期简写 (SUN / 周日) */}
                   <span
@@ -1301,14 +1302,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             })}
 
             {/* ================= Row 2: Sticky All-Day Row ================= */}
-            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#131314] border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-[#8e918f] font-medium">
+            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-[#8e918f] font-medium">
               {t('calendar.all_day', '全天')}
             </div>
 
             {dayData.map((d) => (
               <div
                 key={`allday-${d.key}`}
-                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#131314] border-l border-b border-gray-200/80 dark:border-[#444746] p-1 flex flex-col gap-1"
+                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-l border-b border-gray-200/80 dark:border-[#444746] p-1 flex flex-col gap-1"
               >
                 {d.allDay.map((item) => (
                   <button
@@ -1327,7 +1328,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {/* 时间轴刻度栏 */}
             <div
               data-calendar-timeline
-              className="relative select-none bg-white dark:bg-[#131314]"
+              className="relative select-none bg-white dark:bg-[#1e1f20]"
               style={{ height: GRID_HEIGHT }}
             >
               {Array.from({ length: CALENDAR_HOURS }, (_, hour) => (
@@ -1349,7 +1350,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 <div
                   key={`col-${d.key}`}
                   data-calendar-timeline
-                  className="relative border-l border-gray-200/80 dark:border-[#2b2d2f] bg-white dark:bg-[#131314]"
+                  className="relative border-l border-gray-200/80 dark:border-[#2b2d2f] bg-white dark:bg-[#1e1f20]"
                   style={{ height: GRID_HEIGHT }}
                 >
                   {/* 水平整点网格细线 */}
@@ -1406,7 +1407,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           width: `calc(${widthPct}% - 2px)`,
                           borderLeftColor: seg.color,
                           backgroundColor: isDark
-                            ? `color-mix(in srgb, ${seg.color} 35%, #131314)`
+                            ? `color-mix(in srgb, ${seg.color} 35%, #1e1f20)`
                             : `color-mix(in srgb, ${seg.color} 18%, #ffffff)`,
                         }}
                       >
@@ -1462,15 +1463,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             })}
           </div>
         </div>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-8 bg-gradient-to-t from-white/95 to-transparent dark:from-[#1e1f20]/95 dark:to-transparent backdrop-blur-[3px]"
+          style={{ maskImage: 'linear-gradient(to top, black, transparent)', WebkitMaskImage: 'linear-gradient(to top, black, transparent)' }}
+        />
+        </div>
       </div>
-
-      <div aria-hidden="true" className="h-4 shrink-0 bg-white dark:bg-[#131314]" />
 
       {/* ===================== 对话框与模态框 ===================== */}
       {/* 1. 日历订阅与同步管理模态框 */}
       {showCalendarsModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <CalendarIcon className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
@@ -1602,7 +1607,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 2. 导出订阅链接模态框 */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Share2 className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
@@ -1627,7 +1632,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   type="text"
                   readOnly
                   value={icalExportUrl}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-[#131314] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all"
+                  className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all"
                 />
                 <button
                   type="button"
@@ -1678,7 +1683,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 3. 日程或待办详情模态框 */}
       {selectedItem && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
               <div className="space-y-1">
                 <span
@@ -1793,7 +1798,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 4. 截止待办详情模态框 */}
       {selectedDueTask && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
