@@ -3,7 +3,7 @@ import { TaskModal, type TaskModalSavePayload } from './TaskModal';
 import type { TaskItem as EditableTask } from '../types/task';
 import { inferTierFromScore, type ImpactSignal, type TimeMode, type UrgencyPace } from '../utils/priorityAlgorithm';
 import { PlanningProgress, type PlanningState } from './PlanningProgress';
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -309,6 +309,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setThemeMode('light');
     }
   };
+  const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
+  const [overflowDayKey, setOverflowDayKey] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const selectDate = (date: Date) => {
@@ -433,11 +435,42 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
+  const activeMonthYear = selectedDate.getFullYear();
+  const activeMonthIndex = selectedDate.getMonth();
+
+  const monthGrid = useMemo(() => {
+    const firstDayOfMonth = new Date(activeMonthYear, activeMonthIndex, 1);
+    const dayOfWeek = firstDayOfMonth.getDay();
+    const startOffset = (dayOfWeek + 6) % 7; // Monday = 0, Sunday = 6
+    const daysInMonth = new Date(activeMonthYear, activeMonthIndex + 1, 0).getDate();
+    const gridStart = new Date(activeMonthYear, activeMonthIndex, 1 - startOffset);
+    gridStart.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: 42 }, (_, idx) => {
+      const date = addDays(gridStart, idx);
+      const isCurrentMonth =
+        date.getFullYear() === activeMonthYear &&
+        date.getMonth() === activeMonthIndex &&
+        date.getDate() <= daysInMonth;
+      return {
+        date,
+        isCurrentMonth,
+        key: localDateKey(date),
+      };
+    });
+  }, [activeMonthYear, activeMonthIndex]);
+
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const rangeStart = addDays(weekStart, -7).toISOString();
-      const rangeEnd = addDays(weekStart, 14).toISOString();
+      const rangeStart =
+        viewMode === 'month'
+          ? monthGrid[0].date.toISOString()
+          : addDays(weekStart, -7).toISOString();
+      const rangeEnd =
+        viewMode === 'month'
+          ? addDays(monthGrid[41].date, 1).toISOString()
+          : addDays(weekStart, 14).toISOString();
       const [eventsRes, tasksRes] = await Promise.all([
         api.get('/calendar/events', { params: { start: rangeStart, end: rangeEnd } }),
         api.get('/tasks'),
@@ -458,7 +491,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   useEffect(() => {
     fetchData();
-  }, [weekStart]);
+  }, [weekStart, viewMode, activeMonthYear, activeMonthIndex]);
 
   // When tab becomes active, silently re-fetch to keep synced with tasks modified in other tabs
   const hasLoadedOnceRef = useRef(false);
@@ -582,165 +615,180 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const todayKey = localDateKey(new Date());
   const weekStartKey = localDateKey(weekStart);
 
-  // 7 Days Data (Sunday through Saturday)
-  const dayData = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) => {
-      const date = addDays(weekStart, index);
-      const key = localDateKey(date);
+  const buildDayEntry = useCallback((date: Date) => {
+    const key = localDateKey(date);
 
-      // Window: 00:00:00 of this date to 00:00:00 of next date (standard 24h day)
-      const windowStart = new Date(date);
-      windowStart.setHours(0, 0, 0, 0);
+    // Window: 00:00:00 of this date to 00:00:00 of next date (standard 24h day)
+    const windowStart = new Date(date);
+    windowStart.setHours(0, 0, 0, 0);
 
-      const windowEnd = new Date(addDays(date, 1));
-      windowEnd.setHours(0, 0, 0, 0);
+    const windowEnd = new Date(addDays(date, 1));
+    windowEnd.setHours(0, 0, 0, 0);
 
-      const windowStartIso = windowStart.toISOString();
-      const windowEndIso = windowEnd.toISOString();
+    const windowStartIso = windowStart.toISOString();
+    const windowEndIso = windowEnd.toISOString();
 
-      const allDayItems: TimedSegment[] = [];
-      const timedItems: TimedSegment[] = [];
+    const allDayItems: TimedSegment[] = [];
+    const timedItems: TimedSegment[] = [];
 
-      // 1. External Events
-      events
-        .filter((ev) => ev.extendedProps?.type === 'external')
-        .forEach((ev) => {
-          const color =
-            (ev.subscriptionId && subColorMap.get(ev.subscriptionId)) || '#039BE5';
-          if (ev.allDay) {
-            const startMs = new Date(ev.start).getTime();
-            const endMs = new Date(ev.end).getTime();
-            const startsOn = dateKeyFromIso(ev.start);
-            // RFC 5545 全天事件的 DTEND 为次日 00:00（左闭右开），减去 1ms 得到实际最后一天
-            const endsOn = endMs > startMs ? localDateKey(new Date(endMs - 1)) : startsOn;
-            if (key >= startsOn && key <= endsOn) {
-              allDayItems.push({
-                kind: 'event',
-                id: ev.id,
-                title: ev.title,
-                start: ev.start,
-                end: ev.end,
-                allDay: true,
-                color,
-                event: ev,
-              });
-            }
-            return;
-          }
-
-          const range = segmentRange(ev.start, ev.end, windowStartIso, windowEndIso);
-          if (range) {
-            timedItems.push({
+    // 1. External Events
+    events
+      .filter((ev) => ev.extendedProps?.type === 'external')
+      .forEach((ev) => {
+        const color =
+          (ev.subscriptionId && subColorMap.get(ev.subscriptionId)) || '#039BE5';
+        if (ev.allDay) {
+          const startMs = new Date(ev.start).getTime();
+          const endMs = new Date(ev.end).getTime();
+          const startsOn = dateKeyFromIso(ev.start);
+          // RFC 5545 全天事件的 DTEND 为次日 00:00（左闭右开），减去 1ms 得到实际最后一天
+          const endsOn = endMs > startMs ? localDateKey(new Date(endMs - 1)) : startsOn;
+          if (key >= startsOn && key <= endsOn) {
+            allDayItems.push({
               kind: 'event',
               id: ev.id,
               title: ev.title,
-              start: range.start,
-              end: range.end,
-              allDay: false,
+              start: ev.start,
+              end: ev.end,
+              allDay: true,
               color,
               event: ev,
             });
           }
-        });
-
-      // 2. Scheduled and Completed Tasks (优先展示真实 schedule_blocks；无排程记录的已完成任务按完成时间倒推)
-      const parseCompletedDates = (raw?: string | null): string[] => {
-        if (!raw) return [];
-        try {
-          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      };
-
-      tasks.forEach((t) => {
-        const completedDates = parseCompletedDates(t.completed_dates);
-        const isCompletedForDay =
-          t.status === 'completed' || (t.time_mode === 'daily_fixed' && completedDates.includes(key));
-
-        let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
-
-        if (t.schedule_blocks) {
-          try {
-            const parsedBlocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
-            if (Array.isArray(parsedBlocks)) {
-              blocks = parsedBlocks;
-            }
-          } catch {}
-        }
-        if (blocks.length === 0 && t.scheduled_start && t.scheduled_end) {
-          blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
-        }
-        if (blocks.length === 0 && t.status === 'completed') {
-          const compEnd = parseDbIso(t.updated_at) || (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now()));
-          const durMs = (t.original_duration_minutes || t.duration_minutes || 30) * 60000;
-          const compStart = new Date(compEnd.getTime() - durMs);
-          blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
+          return;
         }
 
-        blocks.forEach((block, bIdx) => {
-          const range = segmentRange(
-            block.start,
-            block.end,
-            windowStartIso,
-            windowEndIso
-          );
-          if (range) {
-            const blockDone = isCompletedForDay || Boolean(block.completed);
-            const quad = getTaskQuadrant(t.importance, t.urgency, t.score_scale);
-            const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-            let titlePrefix = blockDone ? '✓ ' : '';
-            if (!blockDone) {
-              if (t.is_fixed) titlePrefix += '📌 ';
-              if (t.is_concurrent) titlePrefix += '⚡ ';
-            }
-
-            let qBadge = blockDone ? '已完成' : quad.name;
-            if (!blockDone) {
-              if (t.is_fixed && t.is_concurrent) qBadge = '固定·双线程';
-              else if (t.is_fixed) qBadge = '固定任务';
-              else if (t.is_concurrent) qBadge = '双线程';
-            }
-
-            timedItems.push({
-              kind: 'task',
-              id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
-              title: `${titlePrefix}${t.title}${partSuffix}`,
-              start: range.start,
-              end: range.end,
-              allDay: false,
-              color: taskCalendarColor || (blockDone ? '#10B981' : quad.color),
-              qClass: quad.key,
-              qName: qBadge,
-              task: t,
-            });
-          }
-        });
+        const range = segmentRange(ev.start, ev.end, windowStartIso, windowEndIso);
+        if (range) {
+          timedItems.push({
+            kind: 'event',
+            id: ev.id,
+            title: ev.title,
+            start: range.start,
+            end: range.end,
+            allDay: false,
+            color,
+            event: ev,
+          });
+        }
       });
 
-      // 3. Due tasks for this day
-      const dueTasks = tasks
-        .filter((t) => {
-          if (!t.deadline || t.status === 'completed') return false;
-          if (dateKeyFromIso(t.deadline) !== key) return false;
-          if (t.time_mode === 'daily_fixed' && parseCompletedDates(t.completed_dates).includes(key)) {
-            return false;
-          }
-          return true;
-        })
-        .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
+    // 2. Scheduled and Completed Tasks (优先展示真实 schedule_blocks；无排程记录的已完成任务按完成时间倒推)
+    const parseCompletedDates = (raw?: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
 
-      return {
-        date,
-        key,
-        windowStartMs: windowStart.getTime(),
-        allDay: allDayItems,
-        timed: layoutDayItems(timedItems),
-        due: dueTasks,
-      };
+    tasks.forEach((t) => {
+      const completedDates = parseCompletedDates(t.completed_dates);
+      const isCompletedForDay =
+        t.status === 'completed' || (t.time_mode === 'daily_fixed' && completedDates.includes(key));
+
+      let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
+
+      if (t.schedule_blocks) {
+        try {
+          const parsedBlocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+          if (Array.isArray(parsedBlocks)) {
+            blocks = parsedBlocks;
+          }
+        } catch {}
+      }
+      if (blocks.length === 0 && t.scheduled_start && t.scheduled_end) {
+        blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+      }
+      if (blocks.length === 0 && t.status === 'completed') {
+        const compEnd = parseDbIso(t.updated_at) || (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now()));
+        const durMs = (t.original_duration_minutes || t.duration_minutes || 30) * 60000;
+        const compStart = new Date(compEnd.getTime() - durMs);
+        blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
+      }
+
+      blocks.forEach((block, bIdx) => {
+        const range = segmentRange(
+          block.start,
+          block.end,
+          windowStartIso,
+          windowEndIso
+        );
+        if (range) {
+          const blockDone = isCompletedForDay || Boolean(block.completed);
+          const quad = getTaskQuadrant(t.importance, t.urgency, t.score_scale);
+          const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
+          let titlePrefix = blockDone ? '✓ ' : '';
+          if (!blockDone) {
+            if (t.is_fixed) titlePrefix += '📌 ';
+            if (t.is_concurrent) titlePrefix += '⚡ ';
+          }
+
+          let qBadge = blockDone ? '已完成' : quad.name;
+          if (!blockDone) {
+            if (t.is_fixed && t.is_concurrent) qBadge = '固定·双线程';
+            else if (t.is_fixed) qBadge = '固定任务';
+            else if (t.is_concurrent) qBadge = '双线程';
+          }
+
+          timedItems.push({
+            kind: 'task',
+            id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
+            title: `${titlePrefix}${t.title}${partSuffix}`,
+            start: range.start,
+            end: range.end,
+            allDay: false,
+            color: taskCalendarColor || (blockDone ? '#10B981' : quad.color),
+            qClass: quad.key,
+            qName: qBadge,
+            task: t,
+          });
+        }
+      });
     });
-  }, [weekStart, events, tasks, subColorMap, taskCalendarColor]);
+
+    // 3. Due tasks for this day
+    const dueTasks = tasks
+      .filter((t) => {
+        if (!t.deadline || t.status === 'completed') return false;
+        if (dateKeyFromIso(t.deadline) !== key) return false;
+        if (t.time_mode === 'daily_fixed' && parseCompletedDates(t.completed_dates).includes(key)) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
+
+    return {
+      date,
+      key,
+      windowStartMs: windowStart.getTime(),
+      allDay: allDayItems,
+      timed: layoutDayItems(timedItems),
+      due: dueTasks,
+    };
+  }, [events, tasks, subColorMap, taskCalendarColor]);
+
+  // 7 Days Data (Monday through Sunday)
+  const dayData = useMemo(() => {
+    return Array.from({ length: 7 }, (_, index) => buildDayEntry(addDays(weekStart, index)));
+  }, [weekStart, buildDayEntry]);
+
+  // 42 Days Data for Month View
+  const monthDayData = useMemo(() => {
+    if (viewMode !== 'month') return [];
+    return monthGrid.map((cell) => ({
+      ...buildDayEntry(cell.date),
+      isCurrentMonth: cell.isCurrentMonth,
+    }));
+  }, [viewMode, monthGrid, buildDayEntry]);
+
+  const overflowDayData = useMemo(() => {
+    if (!overflowDayKey) return null;
+    return monthDayData.find((d) => d.key === overflowDayKey) || null;
+  }, [overflowDayKey, monthDayData]);
 
   // Overdue tasks
   const overdueTasks = useMemo(() => {
@@ -942,20 +990,28 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {t('common.today', '今天')}
           </button>
 
-          {/* 上一周 / 下一周 翻页按钮 */}
+          {/* 上一周期 / 下一周期 翻页按钮 */}
           <div className="flex items-center">
             <button
               type="button"
-              onClick={() => selectDate(addDays(selectedDate, -7))}
-              aria-label="Previous week"
+              onClick={() =>
+                viewMode === 'month'
+                  ? selectDate(new Date(activeMonthYear, activeMonthIndex - 1, 1))
+                  : selectDate(addDays(selectedDate, -7))
+              }
+              aria-label={viewMode === 'month' ? 'Previous month' : 'Previous week'}
               className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             <button
               type="button"
-              onClick={() => selectDate(addDays(selectedDate, 7))}
-              aria-label="Next week"
+              onClick={() =>
+                viewMode === 'month'
+                  ? selectDate(new Date(activeMonthYear, activeMonthIndex + 1, 1))
+                  : selectDate(addDays(selectedDate, 7))
+              }
+              aria-label={viewMode === 'month' ? 'Next month' : 'Next week'}
               className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
               <ChevronRight className="w-5 h-5" />
@@ -964,12 +1020,44 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
           {/* 月份年份标题 (如: November 2026 / 2026年11月) */}
           <h2 className="text-sm sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight ml-1 sm:ml-2 whitespace-nowrap">
-            {formatMonthHeading(weekStart, language)}
+            {viewMode === 'month'
+              ? language.startsWith('zh')
+                ? `${activeMonthYear}年${activeMonthIndex + 1}月`
+                : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+              : formatMonthHeading(weekStart, language)}
           </h2>
         </div>
 
-        {/* 右侧：重排、日历管理、导出与刷新 */}
+        {/* 右侧：视图切换(周/月)、重排、日历管理、导出与刷新 */}
         <div className="flex items-center gap-2">
+          <div
+            className="inline-flex items-center rounded-full border border-gray-300 dark:border-[#444746] p-0.5 bg-gray-50/70 dark:bg-[#282a2c]"
+            role="group"
+            aria-label="日历视图切换"
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode('week')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                viewMode === 'week'
+                  ? 'bg-white dark:bg-[#1e1f20] text-blue-600 dark:text-[#a8c7fa] shadow-2xs'
+                  : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-gray-100'
+              }`}
+            >
+              {language.startsWith('zh') ? '周' : 'Week'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('month')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                viewMode === 'month'
+                  ? 'bg-white dark:bg-[#1e1f20] text-blue-600 dark:text-[#a8c7fa] shadow-2xs'
+                  : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-gray-100'
+              }`}
+            >
+              {language.startsWith('zh') ? '月' : 'Month'}
+            </button>
+          </div>
           <button
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
@@ -1249,7 +1337,127 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           </aside>
         </div>
 
-        {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
+        {/* 右侧核心：Google Calendar Week / Month 视图 */}
+        {viewMode === 'month' ? (
+          <div className="relative flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20]">
+            {/* 月视图星期表头 (周一 ~ 周日) */}
+            <div className="grid grid-cols-7 border-b border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#1e1f20] shrink-0">
+              {weekDayLabels.map((label) => (
+                <div
+                  key={`month-head-${label}`}
+                  className="py-2 text-center text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-[#c4c7c5] border-l first:border-l-0 border-gray-200/80 dark:border-[#444746]"
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+
+            {/* 7x6 月历网格 */}
+            <div className="flex-1 min-h-0 grid grid-cols-7 grid-rows-6 overflow-y-auto scrollbar-thin">
+              {monthDayData.map((d) => {
+                const isToday = d.key === todayKey;
+                const isSelected = d.key === localDateKey(selectedDate);
+                const sortedTimed = [...d.timed]
+                  .map((p) => p.item)
+                  .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+                const combinedItems: TimedSegment[] = [...d.allDay, ...sortedTimed];
+                const maxVisible = 3;
+                const visibleItems = combinedItems.slice(0, maxVisible);
+                const extraCount = combinedItems.length - visibleItems.length;
+
+                return (
+                  <div
+                    key={`month-cell-${d.key}`}
+                    className={`min-h-[96px] border-l border-b border-gray-200/80 dark:border-[#2b2d2f] first:border-l-0 [&:nth-child(7n+1)]:border-l-0 p-1 sm:p-1.5 flex flex-col gap-1 transition-colors ${
+                      d.isCurrentMonth
+                        ? 'bg-white dark:bg-[#1e1f20]'
+                        : 'bg-gray-50/60 dark:bg-[#191a1b]'
+                    }`}
+                  >
+                    {/* 日期角标与截止角标 */}
+                    <div className="flex items-center justify-between gap-1 px-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectDate(d.date);
+                          setViewMode('week');
+                        }}
+                        title="切换到该周视图"
+                        className={`h-6 min-w-6 px-1.5 rounded-full flex items-center justify-center text-xs transition cursor-pointer ${
+                          isToday
+                            ? 'bg-blue-600 text-white font-bold shadow-2xs'
+                            : isSelected
+                            ? 'bg-blue-100 dark:bg-[#304468] text-blue-700 dark:text-[#a8c7fa] font-semibold'
+                            : d.isCurrentMonth
+                            ? 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#282a2c] font-medium'
+                            : 'text-gray-400 dark:text-neutral-500 hover:bg-gray-100 dark:hover:bg-[#282a2c]'
+                        }`}
+                      >
+                        {d.date.getDate() === 1
+                          ? `${d.date.getMonth() + 1}月1日`
+                          : d.date.getDate()}
+                      </button>
+
+                      {d.due.length > 0 && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 font-medium"
+                          title={`当天截止待办 ${d.due.length} 项`}
+                        >
+                          截止 {d.due.length}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 当天全天日程 & 排程待办列表 */}
+                    <div className="flex flex-col gap-0.5 min-w-0 flex-1 overflow-hidden">
+                      {visibleItems.map((seg) => (
+                        <button
+                          key={`m-${d.key}-${seg.id}`}
+                          type="button"
+                          onClick={() => openCalendarItem(seg)}
+                          title={
+                            seg.allDay
+                              ? `${seg.title} (全天)`
+                              : `${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`
+                          }
+                          className="w-full text-left px-1.5 py-0.5 rounded-[4px] text-[11px] leading-tight truncate flex items-center gap-1 transition cursor-pointer hover:brightness-95"
+                          style={
+                            seg.allDay
+                              ? { backgroundColor: seg.color, color: '#ffffff' }
+                              : {
+                                  borderLeft: `3px solid ${seg.color}`,
+                                  backgroundColor: isDark
+                                    ? `color-mix(in srgb, ${seg.color} 28%, #202124)`
+                                    : `color-mix(in srgb, ${seg.color} 15%, #ffffff)`,
+                                  color: isDark ? '#f3f4f6' : '#1f2937',
+                                }
+                          }
+                        >
+                          {!seg.allDay && (
+                            <span className="text-[10px] font-mono opacity-75 shrink-0">
+                              {formatTime(seg.start)}
+                            </span>
+                          )}
+                          <span className="truncate font-medium">{seg.title}</span>
+                        </button>
+                      ))}
+
+                      {extraCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setOverflowDayKey(d.key)}
+                          className="text-left px-1.5 py-0.5 rounded text-[10px] font-medium text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 transition cursor-pointer"
+                        >
+                          +{extraCount} 更多
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
         <div className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
         <div
           ref={scrollRef}
@@ -1471,6 +1679,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           style={{ maskImage: 'linear-gradient(to top, black, transparent)', WebkitMaskImage: 'linear-gradient(to top, black, transparent)' }}
         />
         </div>
+        )}
       </div>
 
       {/* ===================== 对话框与模态框 ===================== */}
@@ -1870,6 +2079,75 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
               >
                 完成事项
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 5. 月视图某日全部事项弹窗 */}
+      {overflowDayData && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
+                  当日全部安排
+                </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
+                  {overflowDayData.date.getFullYear()}年{overflowDayData.date.getMonth() + 1}月{overflowDayData.date.getDate()}日
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOverflowDayKey(null)}
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1 scrollbar-thin">
+              {[...overflowDayData.allDay, ...[...overflowDayData.timed].map((p) => p.item).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())].map((seg) => (
+                <button
+                  key={`ov-${overflowDayData.key}-${seg.id}`}
+                  type="button"
+                  onClick={() => {
+                    setOverflowDayKey(null);
+                    openCalendarItem(seg);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between gap-2 transition cursor-pointer hover:brightness-95"
+                  style={
+                    seg.allDay
+                      ? { backgroundColor: seg.color, color: '#ffffff' }
+                      : {
+                          borderLeft: `4px solid ${seg.color}`,
+                          backgroundColor: isDark
+                            ? `color-mix(in srgb, ${seg.color} 28%, #202124)`
+                            : `color-mix(in srgb, ${seg.color} 15%, #ffffff)`,
+                          color: isDark ? '#f3f4f6' : '#1f2937',
+                        }
+                  }
+                >
+                  <span className="font-medium truncate">{seg.title}</span>
+                  <span className="text-[10px] font-mono opacity-80 shrink-0">
+                    {seg.allDay ? '全天' : `${formatTime(seg.start)}–${formatTime(seg.end)}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = overflowDayData.date;
+                  setOverflowDayKey(null);
+                  selectDate(target);
+                  setViewMode('week');
+                }}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+              >
+                切换至周视图查看时间轴
               </button>
             </div>
           </div>
