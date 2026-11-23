@@ -309,7 +309,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setThemeMode('light');
     }
   };
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const selectDate = (date: Date) => {
+    setSelectedDate(date);
+    setWeekStart(startOfWeek(date));
+  };
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subscriptions, setSubscriptions] = useState<CalendarSubscription[]>([]);
@@ -412,10 +417,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     return () => clearInterval(timer);
   }, []);
 
-  // Sync mini calendar month when weekStart changes
+  // Keep the selected date visible, including weeks that span two months.
   useEffect(() => {
-    setMiniMonthDate(new Date(weekStart));
-  }, [weekStart]);
+    setMiniMonthDate(new Date(selectedDate));
+  }, [selectedDate]);
 
   const handleCopyLink = async (linkToCopy: string, type: string) => {
     const ok = await copyText(linkToCopy);
@@ -897,7 +902,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           {/* Google 经典圆角药丸 Today 按钮 */}
           <button
             type="button"
-            onClick={() => setWeekStart(startOfWeek(new Date()))}
+            onClick={() => selectDate(new Date())}
             className="px-4 py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-xs font-medium text-gray-700 dark:text-[#e3e3e3] transition cursor-pointer"
           >
             {t('common.today', '今天')}
@@ -907,7 +912,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <div className="flex items-center">
             <button
               type="button"
-              onClick={() => setWeekStart((prev) => addDays(prev, -7))}
+              onClick={() => selectDate(addDays(selectedDate, -7))}
               aria-label="Previous week"
               className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
@@ -915,7 +920,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </button>
             <button
               type="button"
-              onClick={() => setWeekStart((prev) => addDays(prev, 7))}
+              onClick={() => selectDate(addDays(selectedDate, 7))}
               aria-label="Next week"
               className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
@@ -1080,20 +1085,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <div className="grid grid-cols-7 gap-y-0.5 text-center text-xs pb-1">
                     {miniCalendarGrid.map((item, idx) => {
                       const isToday = item.key === todayKey;
-                      const itemTime = item.date.getTime();
-                      const weekStartTime = weekStart.getTime();
-                      const weekEndTime = addDays(weekStart, 7).getTime();
-                      const isCurrentWeek = itemTime >= weekStartTime && itemTime < weekEndTime;
+                      const isSelected = item.key === localDateKey(selectedDate);
 
                       return (
                         <button
                           key={`mini-${idx}-${item.key}`}
                           type="button"
-                          onClick={() => setWeekStart(startOfWeek(item.date))}
+                          onClick={() => selectDate(item.date)}
+                          aria-pressed={isSelected}
+                          aria-current={isToday ? 'date' : undefined}
                           className={`h-7 w-7 mx-auto rounded-full flex items-center justify-center text-[11px] transition cursor-pointer ${
                             isToday
-                              ? 'bg-blue-600 text-white font-bold'
-                              : isCurrentWeek
+                              ? `bg-blue-700 dark:bg-blue-700 text-white font-bold ${isSelected ? 'ring-2 ring-blue-300 dark:ring-blue-300 ring-offset-2 dark:ring-offset-[#131314]' : ''}`
+                              : isSelected
                               ? 'bg-blue-100 dark:bg-[#304468] text-blue-700 dark:text-[#a8c7fa] font-semibold'
                               : item.isCurrentMonth
                               ? 'text-gray-700 dark:text-[#e3e3e3] hover:bg-gray-100 dark:hover:bg-[#282a2c]'
@@ -1251,7 +1255,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   {/* Google 经典圆圈日期号 */}
                   <button
                     type="button"
-                    onClick={() => setWeekStart(startOfWeek(d.date))}
+                    onClick={() => selectDate(d.date)}
                     className={`w-10 h-10 mt-1 rounded-full flex items-center justify-center text-xl transition cursor-pointer ${
                       isToday
                         ? 'bg-blue-600 text-white font-medium shadow-xs'
