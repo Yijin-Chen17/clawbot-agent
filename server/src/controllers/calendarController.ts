@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { CalendarSubscription, ExternalEvent, Task, User } from '../models/types.js';
-import { syncSubscription, syncAllUserSubscriptions, generateUserTodoIcal } from '../services/calendarSync.js';
+import { syncSubscription, syncAllUserSubscriptions, generateUserTodoIcal, calendarFetchUrl } from '../services/calendarSync.js';
 import { replanUserTasks } from '../services/scheduler.js';
 import { renderCalendarImage, renderTodoListImage } from '../services/cardRenderer.js';
 
@@ -29,6 +29,17 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
     return;
   }
 
+  if (typeof name !== 'string' || typeof url !== 'string' || !name.trim()) {
+    res.status(400).json({ error: '请提供日历名称与订阅链接' });
+    return;
+  }
+  try {
+    calendarFetchUrl(url);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+
   const result = db.prepare(`
     INSERT INTO calendar_subscriptions (user_id, name, url)
     VALUES (?, ?, ?)
@@ -40,6 +51,7 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
   let syncMsg = '';
   try {
     const { count } = await syncSubscription(sub);
+    replanUserTasks(userId);
     syncMsg = `，并成功同步了 ${count} 条外部日程事件`;
   } catch (err: any) {
     syncMsg = `，但初次同步失败：${err.message}`;
@@ -96,6 +108,7 @@ export async function syncSubscriptionNow(req: AuthenticatedRequest, res: Respon
 
   try {
     const { count } = await syncSubscription(sub);
+    replanUserTasks(userId);
     res.json({ message: `同步成功！已更新 ${count} 条外部日程。` });
   } catch (err: any) {
     res.status(500).json({ error: `同步失败：${err.message}` });

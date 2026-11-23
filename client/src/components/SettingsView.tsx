@@ -745,13 +745,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     setAddingSub(true);
     try {
-      await api.post('/calendar/subscriptions', {
+      const response = await api.post('/calendar/subscriptions', {
         name: newSubName.trim(),
         url: newSubUrl.trim(),
       });
       setNewSubName('');
       setNewSubUrl('');
-      fetchSubs();
+      await fetchSubs();
+      if (response.data.message?.includes('初次同步失败')) alert(response.data.message);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
       alert('添加失败：' + (error.response?.data?.error || error.message));

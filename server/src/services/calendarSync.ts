@@ -3,20 +3,26 @@ import icalGenerator, { ICalAlarmType, ICalEventStatus } from 'ical-generator';
 import { db } from '../config/database.js';
 import { CalendarSubscription, Task } from '../models/types.js';
 
+export function calendarFetchUrl(value: string): string {
+  const input = value.trim().replace(/^webcal:\/\//i, 'https://');
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    throw new Error('请输入有效的 webcal、http 或 https 日历订阅链接');
+  }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || !url.hostname || url.username || url.password) {
+    throw new Error('请输入有效的 webcal、http 或 https 日历订阅链接');
+  }
+  return url.href;
+}
+
 /**
  * Synchronize a single external calendar subscription
  */
 export async function syncSubscription(sub: CalendarSubscription): Promise<{ count: number }> {
-  let fetchUrl = sub.url.trim();
-  if (fetchUrl.startsWith('webcal://')) {
-    fetchUrl = 'https://' + fetchUrl.substring(9);
-  }
-
   try {
-    const events = await ical.async.fromURL(fetchUrl);
-
-    // Clean up old events for this subscription
-    db.prepare('DELETE FROM external_events WHERE subscription_id = ?').run(sub.id);
+    const events = await ical.async.fromURL(calendarFetchUrl(sub.url));
 
     const now = new Date();
     const futureLimit = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days ahead
@@ -29,6 +35,8 @@ export async function syncSubscription(sub: CalendarSubscription): Promise<{ cou
 
     let insertedCount = 0;
 
+    db.transaction(() => {
+    db.prepare('DELETE FROM external_events WHERE subscription_id = ?').run(sub.id);
     for (const k in events) {
       if (!Object.prototype.hasOwnProperty.call(events, k)) continue;
       const ev = events[k] as any;
@@ -82,6 +90,8 @@ export async function syncSubscription(sub: CalendarSubscription): Promise<{ cou
         }
       }
     }
+
+    })();
 
     db.prepare(`
       UPDATE calendar_subscriptions

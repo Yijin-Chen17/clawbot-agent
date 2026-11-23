@@ -808,13 +808,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     if (!newSubName.trim() || !newSubUrl.trim()) return;
     setSubmittingSub(true);
     try {
-      await api.post('/calendar/subscriptions', {
+      const response = await api.post('/calendar/subscriptions', {
         name: newSubName.trim(),
         url: newSubUrl.trim(),
       });
       setNewSubName('');
       setNewSubUrl('');
-      fetchData();
+      await fetchData();
+      if (response.data.message?.includes('初次同步失败')) alert(response.data.message);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
       alert(error.response?.data?.error || '添加订阅失败');
@@ -1527,10 +1528,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   required
                 />
                 <input
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={newSubUrl}
                   onChange={(e) => setNewSubUrl(e.target.value)}
-                  placeholder="https://... 订阅 URL"
+                  placeholder="webcal:// 或 https:// 订阅链接"
                   className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none"
                   required
                 />
