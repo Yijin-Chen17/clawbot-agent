@@ -480,47 +480,79 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   }, [isActive, weekStart]);
 
-  // Edge resistance for wheel and touch input, with a spring back to the scroll boundary.
+  // Bind to the current week's columns, which are replaced when the week changes.
   useEffect(() => {
     const container = scrollRef.current;
-    if (!container) return;
+    if (!container || !isActive) return;
     const columns = Array.from(container.querySelectorAll<HTMLElement>('[data-calendar-timeline]'));
     if (!columns.length) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let offset = 0;
-    let touchY: number | null = null;
+    let touch: { id: number; x: number; y: number } | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const reset = () => {
-      offset = 0;
+
+    const render = (value: number, animate: boolean) => {
       columns.forEach(column => {
-        column.style.transition = 'transform 460ms cubic-bezier(.2, 1.65, .3, 1)';
-        column.style.transform = 'translateY(0px)';
+        column.style.transition = animate && !reducedMotion.matches
+          ? 'transform 350ms cubic-bezier(.22, 1.2, .36, 1)' : 'none';
+        column.style.transform = `translateY(${value}px)`;
       });
     };
-    const pull = (delta: number) => {
-      const atTop = container.scrollTop <= 0 && delta < 0;
-      const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 1 && delta > 0;
-      if (!atTop && !atBottom) return false;
+    const reset = () => {
       if (timer) clearTimeout(timer);
+      timer = undefined;
+      if (!offset) return;
+      offset = 0;
+      render(0, true);
+    };
+    const pull = (delta: number) => {
+      if (!delta || reducedMotion.matches) return false;
+      const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+      const top = container.scrollTop <= 0.5;
+      const bottom = container.scrollTop >= maxScroll - 0.5;
+      // Consume the reverse gesture to release the stretch before scrolling inward.
+      if (offset && Math.sign(delta) === Math.sign(offset)) {
+        offset = Math.sign(offset) * Math.max(0, Math.abs(offset) - Math.abs(delta) * 0.45);
+        render(offset, false);
+        return true;
+      }
+      if (!((top && delta < 0) || (bottom && delta > 0))) return false;
       offset = Math.max(-36, Math.min(36, offset - delta * 0.22 * (1 - Math.abs(offset) / 45)));
-      columns.forEach(column => {
-        column.style.transition = 'none';
-        column.style.transform = `translateY(${offset}px)`;
-      });
-      if (touchY === null) timer = setTimeout(reset, 100);
+      render(offset, false);
       return true;
     };
     const wheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && pull(event.deltaY)) event.preventDefault();
+      if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? container.clientHeight : 1);
+      if (pull(delta)) {
+        event.preventDefault();
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(reset, 100);
+      } else if (offset) reset();
     };
-    const start = (event: TouchEvent) => { touchY = event.touches.length === 1 ? event.touches[0].clientY : null; };
+    const start = (event: TouchEvent) => {
+      if (event.touches.length !== 1) { touch = null; reset(); return; }
+      const point = event.touches[0];
+      touch = { id: point.identifier, x: point.clientX, y: point.clientY };
+      if (timer) clearTimeout(timer);
+    };
     const move = (event: TouchEvent) => {
-      if (touchY === null || event.touches.length !== 1) return;
-      const y = event.touches[0].clientY;
-      const delta = touchY - y;
-      touchY = y;
-      if (pull(delta)) event.preventDefault();
+      if (!touch || event.touches.length !== 1) { touch = null; reset(); return; }
+      const point = Array.from(event.touches).find(item => item.identifier === touch!.id);
+      if (!point) return;
+      const dx = touch.x - point.clientX;
+      const dy = touch.y - point.clientY;
+      touch.x = point.clientX;
+      touch.y = point.clientY;
+      if (Math.abs(dy) > Math.abs(dx) && pull(dy) && event.cancelable) event.preventDefault();
+      else if (offset && Math.abs(dx) > Math.abs(dy)) reset();
     };
-    const end = () => { touchY = null; if (timer) clearTimeout(timer); reset(); };
+    const end = (event: TouchEvent) => {
+      if (touch && Array.from(event.changedTouches).some(point => point.identifier === touch!.id)) {
+        touch = null;
+        reset();
+      }
+    };
     container.addEventListener('wheel', wheel, { passive: false });
     container.addEventListener('touchstart', start, { passive: true });
     container.addEventListener('touchmove', move, { passive: false });
@@ -535,7 +567,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       window.removeEventListener('touchcancel', end);
       columns.forEach(column => { column.style.transform = ''; column.style.transition = ''; });
     };
-  }, []);
+  }, [isActive, weekStart]);
 
   // Map subscriptions to colors
   const subColorMap = useMemo(() => {
@@ -1317,14 +1349,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 <div
                   key={`col-${d.key}`}
                   data-calendar-timeline
-                  className="relative border-l border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#131314]"
+                  className="relative border-l border-gray-200/80 dark:border-[#2b2d2f] bg-white dark:bg-[#131314]"
                   style={{ height: GRID_HEIGHT }}
                 >
                   {/* 水平整点网格细线 */}
                   {Array.from({ length: CALENDAR_HOURS }, (_, i) => (
                     <div
                       key={`line-${i}`}
-                      className="absolute left-0 right-0 border-b border-gray-100 dark:border-[#444746] pointer-events-none"
+                      className="absolute left-0 right-0 border-b border-gray-100 dark:border-[#2b2d2f] pointer-events-none"
                       style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
                     />
                   ))}
