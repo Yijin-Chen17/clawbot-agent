@@ -2,6 +2,7 @@ import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
+import { isDateMatchingRecurrence } from '../utils/recurrence';
 import {
   calculateDynamicImportance,
   calculateDynamicUrgency,
@@ -88,7 +89,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  const { t, themeMode, setThemeMode } = useTheme();
+  const { t, language, themeMode, setThemeMode } = useTheme();
 
   const cycleTheme = () => {
     if (themeMode === 'light') {
@@ -304,9 +305,13 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             : formatLocalDate(new Date(t.created_at || Date.now()))
           : null;
 
+      const isMatchingToday = timeMode === 'daily_fixed'
+        ? isDateMatchingRecurrence(currentTime, t.recurrence_rule)
+        : true;
+
       const isCompletedToday =
         timeMode === 'daily_fixed'
-          ? completedDates.includes(todayStr) || t.status === 'completed'
+          ? completedDates.includes(todayStr) || t.status === 'completed' || !isMatchingToday
           : t.status === 'completed';
 
       const fallbackUrgency = normalizeScoreTo100(t.urgency, t.score_scale);
@@ -337,6 +342,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importanceTier,
         impactSignals,
         timeMode,
+        recurrenceRule: t.recurrence_rule || null,
         urgencyPace,
         importanceManualOverride: manualOverride,
         scoreScale: 100,
@@ -568,6 +574,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importance_tier: data.importanceTier || inferTierFromScore(data.importance),
         impact_signals: data.impactSignals || [],
         time_mode: data.timeMode || (data.dueDate ? 'deadline' : 'flexible'),
+        recurrence_rule: data.recurrenceRule || null,
         urgency_pace: data.urgencyPace || 'soon',
         importance_manual_override:
           data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,
@@ -586,7 +593,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       const response = editingTask
         ? await api.put(`/tasks/${editingTask.id}`, payload)
         : await api.post('/tasks', payload);
-      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.replan?.summary || response.data.message });
+      setPlanning({ title: language === 'zh' ? '日程已更新' : 'Schedule updated', status: 'success', detail: response.data.replan?.summary || response.data.message });
       await fetchTasks();
       setIsTaskModalOpen(false);
       setEditingTask(null);
@@ -729,7 +736,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   // 删除任务并刷新受影响重排结果 (C08)
   const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm('确定要删除该待办事项吗？')) return;
+    if (!window.confirm(t('workspace.delete_confirm', '确定要删除该待办事项吗？'))) return;
 
     setRawServerTasks((prev) => prev.filter((t) => String(t.id) !== taskId));
     try {
@@ -776,7 +783,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
               type="button"
               onClick={onOpenMobileMenu}
               className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-              title="打开侧边导航"
+              title={t('nav.open_sidebar', '打开侧边导航')}
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -823,10 +830,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
             title={
               themeMode === 'light'
-                ? '当前：亮色模式 (点击切换为暗色)'
+                ? (language === 'zh' ? '当前：浅色模式 (点击切换为暗色)' : 'Current: Light Mode (Click for Dark)')
                 : themeMode === 'dark'
-                ? '当前：暗色模式 (点击切换为跟随系统)'
-                : '当前：跟随系统 (点击切换为亮色)'
+                ? (language === 'zh' ? '当前：深色模式 (点击切换为跟随系统)' : 'Current: Dark Mode (Click for System)')
+                : (language === 'zh' ? '当前：跟随系统 (点击切换为浅色)' : 'Current: System (Click for Light)')
             }
           >
             {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
@@ -885,7 +892,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                   <CheckCircle2 className="w-8 h-8 stroke-[1.8]" />
                 </div>
                 <div className="text-gray-800 dark:text-neutral-200 font-semibold text-base">
-                  {searchQuery ? t('workspace.no_search_results') : (currentCategory === 'completed' ? '暂无已完成事项' : '所有待办已完成')}
+                  {searchQuery ? t('workspace.no_search_results') : (currentCategory === 'completed' ? (language === 'zh' ? '暂无已完成事项' : 'No completed tasks yet') : (language === 'zh' ? '所有待办已完成' : 'All tasks completed!'))}
                 </div>
                 <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
                   {t('workspace.empty_hint', '享受高效整理的美好时光，或点击上方输入框快速添加新事项。')}

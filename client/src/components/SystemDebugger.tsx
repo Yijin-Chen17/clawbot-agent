@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
 import {
   Terminal,
@@ -56,6 +57,7 @@ interface UserOption {
 }
 
 export const SystemDebugger: React.FC = () => {
+  const { t, language } = useTheme();
   const [activeTab, setActiveTab] = useState<'logs' | 'inbound' | 'outbound' | 'workers'>('logs');
 
   // Logs state
@@ -69,14 +71,14 @@ export const SystemDebugger: React.FC = () => {
   // Inbound simulate state
   const [users, setUsers] = useState<UserOption[]>([]);
   const [simUserId, setSimUserId] = useState<number>(1);
-  const [simContent, setSimContent] = useState<string>('帮我安排明天下午2点写代码90分钟，加急4分，周五前完成');
+  const [simContent, setSimContent] = useState<string>(() => t('debug.sim_default_1', '帮我安排明天下午2点写代码90分钟，加急4分，周五前完成'));
   const [simLoading, setSimLoading] = useState<boolean>(false);
   const [simResult, setSimResult] = useState<any>(null);
 
   // Outbound test state
   const [outboundUserId, setOutboundUserId] = useState<number>(1);
   const [outboundMessage, setOutboundMessage] = useState<string>(
-    `【Clawbot 调试测试】您的微信双向通道测试成功！当前时间：${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+    `${t('debug.test_msg_default', '【Clawbot 调试测试】您的微信双向通道测试成功！当前时间：')}${new Date().toLocaleTimeString(language === 'en' ? 'en-US' : 'zh-CN', { hour12: false })}`
   );
   const [outboundLoading, setOutboundLoading] = useState<boolean>(false);
   const [outboundResult, setOutboundResult] = useState<any>(null);
@@ -152,7 +154,7 @@ export const SystemDebugger: React.FC = () => {
       await api.delete('/admin/debug/logs');
       setLogs([]);
     } catch {
-      alert('清空日志失败');
+      alert(t('debug.clear_failed', '清空日志失败'));
     }
   };
 
@@ -211,19 +213,19 @@ export const SystemDebugger: React.FC = () => {
       fetchWorkers();
       fetchLogs();
     } catch (err: any) {
-      alert('重启 Worker 失败：' + err.message);
+      alert(t('debug.restart_worker_failed', '重启 Worker 失败：') + err.message);
     }
   };
 
   // Reset SyncBuf
   const handleResetSyncBuf = async (userId: number) => {
-    if (!confirm('重置 SyncBuf 将清空最后更新点并重新拉取未确认消息，是否继续？')) return;
+    if (!confirm(t('debug.reset_syncbuf_confirm', '重置 SyncBuf 将清空最后更新点并重新拉取未确认消息，是否继续？'))) return;
     try {
       await api.post(`/admin/debug/workers/${userId}/reset-sync`);
       fetchWorkers();
       fetchLogs();
     } catch (err: any) {
-      alert('重置 SyncBuf 失败：' + err.message);
+      alert(t('debug.reset_syncbuf_failed', '重置 SyncBuf 失败：') + err.message);
     }
   };
 
@@ -239,13 +241,13 @@ export const SystemDebugger: React.FC = () => {
   });
 
   const sampleMessages = [
-    '查看日历',
-    '查看任务',
-    '重新排程',
-    '帮我安排明天下午2点写代码90分钟，加急4分，周五前完成',
-    '刚才的任务做完了',
-    '时间不够了，再延长30分钟',
-    '排个任务：准备下周开会PPT，耗时2小时',
+    t('debug.sim_case_1', '查看日历'),
+    t('debug.sim_case_2', '查看任务'),
+    t('debug.sim_case_3', '重新排程'),
+    t('debug.sim_case_4', '帮我安排明天下午2点写代码90分钟，加急4分，周五前完成'),
+    t('debug.sim_case_5', '刚才的任务做完了'),
+    t('debug.sim_case_6', '时间不够了，再延长30分钟'),
+    t('debug.sim_case_7', '排个任务：准备下周开会PPT，耗时2小时'),
   ];
 
   return (
@@ -256,14 +258,14 @@ export const SystemDebugger: React.FC = () => {
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
               <Terminal className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <span>系统运行调试器</span>
+              <span>{t('debug.title', '系统运行调试器')}</span>
             </h1>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 font-mono">
               ADMIN ONLY
             </span>
           </div>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
-            微信双向消息管道监控 · LLM 语义解析沙盒 · 动态规划排程模拟追踪
+            {t('debug.subtitle', '微信双向消息管道监控 · LLM 语义解析沙盒 · 动态规划排程模拟追踪')}
           </p>
         </div>
 
@@ -278,7 +280,7 @@ export const SystemDebugger: React.FC = () => {
             }`}
           >
             <Info className="w-3.5 h-3.5" />
-            <span>实时日志</span>
+            <span>{t('debug.tab_logs', '实时日志')}</span>
             {logs.length > 0 && (
               <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono ${
                 activeTab === 'logs' ? 'bg-white/20 text-white' : 'bg-gray-100 dark:bg-neutral-800'
@@ -297,7 +299,7 @@ export const SystemDebugger: React.FC = () => {
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>消息接收模拟</span>
+            <span>{t('debug.tab_inbound', '消息接收模拟')}</span>
           </button>
 
           <button
@@ -309,7 +311,7 @@ export const SystemDebugger: React.FC = () => {
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" />
-            <span>真实微信发送</span>
+            <span>{t('debug.tab_outbound', '真实微信发送')}</span>
           </button>
 
           <button
@@ -324,7 +326,7 @@ export const SystemDebugger: React.FC = () => {
             }`}
           >
             <Bot className="w-3.5 h-3.5" />
-            <span>管道线程状态</span>
+            <span>{t('debug.tab_workers', '管道线程状态')}</span>
           </button>
         </div>
       </div>
@@ -338,7 +340,7 @@ export const SystemDebugger: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-1 text-xs">
                 <Filter className="w-3.5 h-3.5 text-gray-400" />
-                <span className="text-gray-500 font-semibold text-[11px]">级别:</span>
+                <span className="text-gray-500 font-semibold text-[11px]">{t('debug.level', '级别:')}</span>
                 {['all', 'info', 'success', 'warn', 'error'].map((lvl) => (
                   <button
                     key={lvl}
@@ -357,7 +359,7 @@ export const SystemDebugger: React.FC = () => {
               <div className="h-4 w-px bg-gray-200 dark:bg-neutral-700 hidden sm:block" />
 
               <div className="flex items-center gap-1 text-xs">
-                <span className="text-gray-500 font-semibold text-[11px]">模块:</span>
+                <span className="text-gray-500 font-semibold text-[11px]">{t('debug.module', '模块:')}</span>
                 {['all', 'Weixin', 'LLM', 'Scheduler', 'Calendar'].map((mod) => (
                   <button
                     key={mod}
@@ -382,7 +384,7 @@ export const SystemDebugger: React.FC = () => {
                   type="text"
                   value={logSearch}
                   onChange={(e) => setLogSearch(e.target.value)}
-                  placeholder="搜索日志..."
+                  placeholder={t('debug.search_logs', '搜索日志...')}
                   className="w-full pl-7 pr-2.5 py-1 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-lg outline-none"
                 />
               </div>
@@ -396,13 +398,13 @@ export const SystemDebugger: React.FC = () => {
                 }`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
-                <span>{autoRefresh ? '自动刷新' : '已暂停'}</span>
+                <span>{autoRefresh ? t('debug.auto_refresh', '自动刷新') : t('debug.paused', '已暂停')}</span>
               </button>
 
               <button
                 onClick={fetchLogs}
                 className="p-1.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded-lg text-gray-600 dark:text-neutral-300 transition cursor-pointer"
-                title="刷新日志"
+                title={t('debug.refresh_logs', '刷新日志')}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -410,7 +412,7 @@ export const SystemDebugger: React.FC = () => {
               <button
                 onClick={handleClearLogs}
                 className="p-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
-                title="清空日志"
+                title={t('debug.clear_logs', '清空日志')}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -427,14 +429,14 @@ export const SystemDebugger: React.FC = () => {
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block" />
                 <span className="ml-2 font-semibold text-neutral-300">clawbot-agent: stdout / stderr / weixin-transit</span>
               </div>
-              <div>共 {filteredLogs.length} 条记录</div>
+              <div>{t('debug.total_prefix', '共')} {filteredLogs.length} {t('debug.records_suffix', '条记录')}</div>
             </div>
 
             {/* Log Stream Content */}
             <div className="flex-1 overflow-y-auto p-3 space-y-1 scrollbar-thin">
               {filteredLogs.length === 0 ? (
                 <div className="text-center py-20 text-neutral-500">
-                  暂无日志记录，可在上方切换筛选条件或执行测试
+                  {t('debug.no_logs', '暂无日志记录，可在上方切换筛选条件或执行测试')}
                 </div>
               ) : (
                 filteredLogs.map((log) => {
@@ -506,14 +508,14 @@ export const SystemDebugger: React.FC = () => {
             <div className="flex items-center gap-2 pb-3 border-b border-gray-100 dark:border-neutral-800">
               <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <h2 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                模拟微信消息传入
+                {t('debug.inbound_title', '模拟微信消息传入')}
               </h2>
             </div>
 
             <form onSubmit={handleSimulateInbound} className="space-y-3 text-xs">
               <div>
                 <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                  目标测试用户 (模拟该用户微信发信)
+                  {t('debug.target_user', '目标测试用户 (模拟该用户微信发信)')}
                 </label>
                 <select
                   value={simUserId}
@@ -522,7 +524,7 @@ export const SystemDebugger: React.FC = () => {
                 >
                   {users.map((u) => (
                     <option key={u.id} value={u.id}>
-                      #{u.id} - {u.username} ({u.role === 'admin' ? '管理员' : '普通用户'})
+                      #{u.id} - {u.username} ({u.role === 'admin' ? t('debug.admin_user', '管理员') : t('debug.normal_user', '普通用户')})
                     </option>
                   ))}
                 </select>
@@ -530,13 +532,13 @@ export const SystemDebugger: React.FC = () => {
 
               <div>
                 <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                  微信消息文本内容
+                  {t('debug.msg_content', '微信消息文本内容')}
                 </label>
                 <textarea
                   rows={4}
                   value={simContent}
                   onChange={(e) => setSimContent(e.target.value)}
-                  placeholder="输入模拟微信发来的文本..."
+                  placeholder={t('debug.input_sim_placeholder', '输入模拟微信发来的文本...')}
                   className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none text-xs leading-relaxed"
                   required
                 />
@@ -544,7 +546,7 @@ export const SystemDebugger: React.FC = () => {
 
               {/* Sample Quick Preset Pills */}
               <div className="space-y-1.5">
-                <span className="text-[11px] font-semibold text-gray-400 block">快捷测试用例：</span>
+                <span className="text-[11px] font-semibold text-gray-400 block">{t('debug.test_cases', '快捷测试用例：')}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {sampleMessages.map((sample, idx) => (
                     <button
@@ -565,7 +567,7 @@ export const SystemDebugger: React.FC = () => {
                 className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5 text-xs"
               >
                 {simLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{simLoading ? '正在通过 LLM & 算法排程...' : '触发微信流程模拟'}</span>
+                <span>{simLoading ? t('debug.simulating', '正在通过 LLM & 算法排程...') : t('debug.trigger_sim', '触发微信流程模拟')}</span>
               </button>
             </form>
           </div>
@@ -576,7 +578,7 @@ export const SystemDebugger: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Bot className="w-4 h-4 text-emerald-600" />
                 <h2 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                  执行链路与诊断追踪结果
+                  {t('debug.sim_result_title', '执行链路与诊断追踪结果')}
                 </h2>
               </div>
               {simResult && (
@@ -585,7 +587,7 @@ export const SystemDebugger: React.FC = () => {
                     ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
                     : 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
                 }`}>
-                  {simResult.success ? `成功 (${simResult.elapsedMs}ms)` : '处理异常'}
+                  {simResult.success ? `${t('debug.sim_success', '成功')} (${simResult.elapsedMs}ms)` : t('debug.sim_fail', '处理异常')}
                 </span>
               )}
             </div>
@@ -593,7 +595,7 @@ export const SystemDebugger: React.FC = () => {
             {!simResult ? (
               <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs space-y-1">
                 <Play className="w-8 h-8 mx-auto text-gray-300 dark:text-neutral-600 stroke-[1.5]" />
-                <div>在左侧输入测试文本并点击运行，查看完整的 LLM 提取、排程算法计算与回传微信消息</div>
+                <div>{t('debug.sim_hint', '在左侧输入测试文本并点击运行，查看完整的 LLM 提取、排程算法计算与回传微信消息')}</div>
               </div>
             ) : (
               <div className="space-y-3.5 text-xs">
@@ -601,7 +603,7 @@ export const SystemDebugger: React.FC = () => {
                 <div className="space-y-1.5">
                   <span className="font-bold text-gray-700 dark:text-neutral-300 text-[11px] flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>微信回复内容 (将推给用户手机)：</span>
+                    <span>{t('debug.reply_content', '微信回复内容 (将推给用户手机)：')}</span>
                   </span>
                   <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/80 rounded-xl text-emerald-900 dark:text-emerald-200 whitespace-pre-wrap font-sans text-xs leading-relaxed">
                     {simResult.replyText}
@@ -613,7 +615,7 @@ export const SystemDebugger: React.FC = () => {
                   <div className="space-y-1.5">
                     <span className="font-bold text-gray-700 dark:text-neutral-300 text-[11px] flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-                      <span>微信图片卡片下发预览：</span>
+                      <span>{t('debug.image_card_preview', '微信图片卡片下发预览：')}</span>
                     </span>
                     <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200 dark:border-neutral-700 flex flex-col items-center">
                       <img
@@ -621,7 +623,7 @@ export const SystemDebugger: React.FC = () => {
                         alt="WeChat Image Card"
                         className="w-full max-w-[480px] rounded-xl shadow-md border border-gray-200 dark:border-neutral-700"
                       />
-                      <span className="text-[10px] text-gray-400 mt-2">已成功生成高清卡片并同步上传至腾讯 CDN 下发</span>
+                      <span className="text-[10px] text-gray-400 mt-2">{t('debug.card_upload_success', '已成功生成高清卡片并同步上传至腾讯 CDN 下发')}</span>
                     </div>
                   </div>
                 )}
@@ -631,15 +633,15 @@ export const SystemDebugger: React.FC = () => {
                   <div className="space-y-1.5">
                     <span className="font-bold text-gray-700 dark:text-neutral-300 text-[11px] flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-                      <span>LLM 语义提取字段：</span>
+                      <span>{t('debug.llm_extracted_fields', 'LLM 语义提取字段：')}</span>
                     </span>
                     <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200 dark:border-neutral-700 font-mono text-[11px] space-y-1">
-                      <div>意图: <span className="font-bold text-blue-600 dark:text-blue-400">{simResult.diagnostics.parsed.intent}</span></div>
-                      {simResult.diagnostics.parsed.title && <div>任务标题: {simResult.diagnostics.parsed.title}</div>}
-                      {simResult.diagnostics.parsed.duration_minutes && <div>耗时: {simResult.diagnostics.parsed.duration_minutes} 分钟</div>}
-                      {simResult.diagnostics.parsed.urgency && <div>紧急度: {simResult.diagnostics.parsed.urgency}/100</div>}
-                      {simResult.diagnostics.parsed.importance && <div>重要度: {simResult.diagnostics.parsed.importance}/100</div>}
-                      {simResult.diagnostics.parsed.deadline && <div>截止时间: {simResult.diagnostics.parsed.deadline}</div>}
+                      <div>{t('debug.intent', '意图:')} <span className="font-bold text-blue-600 dark:text-blue-400">{simResult.diagnostics.parsed.intent}</span></div>
+                      {simResult.diagnostics.parsed.title && <div>{t('debug.task_title', '任务标题:')} {simResult.diagnostics.parsed.title}</div>}
+                      {simResult.diagnostics.parsed.duration_minutes && <div>{t('debug.duration', '耗时:')} {simResult.diagnostics.parsed.duration_minutes} {t('debug.minutes', '分钟')}</div>}
+                      {simResult.diagnostics.parsed.urgency && <div>{t('debug.urgency', '紧急度:')} {simResult.diagnostics.parsed.urgency}/100</div>}
+                      {simResult.diagnostics.parsed.importance && <div>{t('debug.importance', '重要度:')} {simResult.diagnostics.parsed.importance}/100</div>}
+                      {simResult.diagnostics.parsed.deadline && <div>{t('debug.deadline', '截止时间:')} {simResult.diagnostics.parsed.deadline}</div>}
                     </div>
                   </div>
                 )}
@@ -649,20 +651,20 @@ export const SystemDebugger: React.FC = () => {
                   <div className="space-y-1.5">
                     <span className="font-bold text-gray-700 dark:text-neutral-300 text-[11px] flex items-center gap-1.5">
                       <Bot className="w-3.5 h-3.5 text-purple-500" />
-                      <span>动态规划算法计算：</span>
+                      <span>{t('debug.algo_calc', '动态规划算法计算：')}</span>
                     </span>
                     <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200 dark:border-neutral-700 font-mono text-[11px]">
-                      <div>排程结果: <span className="font-bold text-emerald-600">{simResult.diagnostics.plan.success ? '成功' : '失败'}</span></div>
-                      <div>安排开始: {simResult.diagnostics.plan.scheduled_start || '无'}</div>
-                      <div>安排结束: {simResult.diagnostics.plan.scheduled_end || '无'}</div>
-                      {simResult.diagnostics.plan.message && <div>附注: {simResult.diagnostics.plan.message}</div>}
+                      <div>{t('debug.plan_result', '排程结果:')} <span className="font-bold text-emerald-600">{simResult.diagnostics.plan.success ? t('common.success', '成功') : t('common.error', '失败')}</span></div>
+                      <div>{t('debug.plan_start', '安排开始:')} {simResult.diagnostics.plan.scheduled_start || t('debug.no_records', '无')}</div>
+                      <div>{t('debug.plan_end', '安排结束:')} {simResult.diagnostics.plan.scheduled_end || t('debug.no_records', '无')}</div>
+                      {simResult.diagnostics.plan.message && <div>{t('debug.plan_note', '附注:')} {simResult.diagnostics.plan.message}</div>}
                     </div>
                   </div>
                 )}
 
                 {/* Raw diagnostic JSON */}
                 <details className="text-[11px] text-gray-500 cursor-pointer pt-1">
-                  <summary className="hover:text-gray-700 dark:hover:text-neutral-300 font-semibold">查看完整诊断 JSON 结果</summary>
+                  <summary className="hover:text-gray-700 dark:hover:text-neutral-300 font-semibold">{t('debug.view_full_json', '查看完整诊断 JSON 结果')}</summary>
                   <pre className="mt-2 p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl overflow-x-auto text-[10px] text-gray-700 dark:text-neutral-300 font-mono">
                     {JSON.stringify(simResult, null, 2)}
                   </pre>
@@ -682,10 +684,10 @@ export const SystemDebugger: React.FC = () => {
             <Smartphone className="w-5 h-5 text-emerald-600" />
             <div>
               <h2 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                真实微信消息下发测试
+                {t('debug.outbound_title', '真实微信消息下发测试')}
               </h2>
               <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                通过腾讯 Weixin iLink 官方网关直接推送通知到用户手机微信
+                {t('debug.outbound_desc', '通过腾讯 Weixin iLink 官方网关直接推送通知到用户手机微信')}
               </p>
             </div>
           </div>
@@ -693,7 +695,7 @@ export const SystemDebugger: React.FC = () => {
           <form onSubmit={handleTestSendWeChat} className="space-y-3.5 text-xs">
             <div>
               <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                选择接收消息的微信绑定用户
+                {t('debug.select_bound_user', '选择接收消息的微信绑定用户')}
               </label>
               <select
                 value={outboundUserId}
@@ -710,13 +712,13 @@ export const SystemDebugger: React.FC = () => {
 
             <div>
               <label className="block font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                测试消息文本
+                {t('debug.msg_content', '测试消息文本')}
               </label>
               <textarea
                 rows={3}
                 value={outboundMessage}
                 onChange={(e) => setOutboundMessage(e.target.value)}
-                placeholder="输入下发至微信的文本..."
+                placeholder={t('debug.test_msg_placeholder', '输入下发至微信的文本...')}
                 className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none font-sans leading-relaxed"
                 required
               />
@@ -728,7 +730,7 @@ export const SystemDebugger: React.FC = () => {
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
             >
               {outboundLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              <span>{outboundLoading ? '正在向微信官方网关发送...' : '发送至真实微信'}</span>
+              <span>{outboundLoading ? t('debug.sending_outbound', '正在向微信官方网关发送...') : t('debug.send_outbound', '发送至真实微信')}</span>
             </button>
           </form>
 
@@ -740,19 +742,19 @@ export const SystemDebugger: React.FC = () => {
             }`}>
               <div className="flex items-center gap-2 font-bold text-sm">
                 {outboundResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertCircle className="w-4 h-4 text-rose-600" />}
-                <span>{outboundResult.success ? '消息下发成功！请查看手机微信通知' : '消息下发失败'}</span>
+                <span>{outboundResult.success ? t('debug.outbound_success', '消息下发成功！请查看手机微信通知') : t('debug.outbound_fail', '消息下发失败')}</span>
               </div>
 
               {outboundResult.error && (
                 <div className="text-rose-700 dark:text-rose-300 font-mono text-[11px]">
-                  错误原因: {outboundResult.error}
+                  {t('debug.error_reason', '错误原因:')} {outboundResult.error}
                 </div>
               )}
 
               <div className="text-[11px] font-mono space-y-0.5 text-gray-600 dark:text-neutral-400">
-                <div>目标用户: {outboundResult.toUserId || '未知'}</div>
-                <div>会话 Token: {outboundResult.hasContextToken ? '已携带' : '无 (首次发送)'}</div>
-                {outboundResult.result?.message_id && <div>消息 ID: {outboundResult.result.message_id}</div>}
+                <div>{t('debug.target_user_label', '目标用户:')} {outboundResult.toUserId || t('common.error', '未知')}</div>
+                <div>{t('debug.session_token', '会话 Token:')} {outboundResult.hasContextToken ? t('debug.has_token', '已携带') : t('debug.no_token_first', '无 (首次发送)')}</div>
+                {outboundResult.result?.message_id && <div>{t('debug.message_id', '消息 ID:')} {outboundResult.result.message_id}</div>}
               </div>
             </div>
           )}
@@ -768,7 +770,7 @@ export const SystemDebugger: React.FC = () => {
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <h2 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                微信多租户长轮询 Worker 管道监视器
+                {t('debug.workers_title', '微信多租户长轮询 Worker 管道监视器')}
               </h2>
             </div>
             <button
@@ -776,7 +778,7 @@ export const SystemDebugger: React.FC = () => {
               className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 text-xs font-semibold rounded-lg transition cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${workersLoading ? 'animate-spin' : ''}`} />
-              <span>刷新状态</span>
+              <span>{t('debug.refresh_status', '刷新状态')}</span>
             </button>
           </div>
 
@@ -784,13 +786,13 @@ export const SystemDebugger: React.FC = () => {
             <table className="w-full text-xs text-left">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-neutral-800 text-gray-400 font-semibold text-[11px]">
-                  <th className="pb-2.5">用户</th>
-                  <th className="pb-2.5">微信账号 ID</th>
-                  <th className="pb-2.5">Worker 管道状态</th>
+                  <th className="pb-2.5">{t('debug.th_worker_user', '用户')}</th>
+                  <th className="pb-2.5">{t('debug.th_worker_id', '微信账号 ID')}</th>
+                  <th className="pb-2.5">{t('debug.th_worker_status', 'Worker 管道状态')}</th>
                   <th className="pb-2.5">Context Token</th>
-                  <th className="pb-2.5">大模型接口</th>
-                  <th className="pb-2.5">最近轮询时间</th>
-                  <th className="pb-2.5 text-right">操作</th>
+                  <th className="pb-2.5">{t('debug.th_worker_llm', '大模型接口')}</th>
+                  <th className="pb-2.5">{t('debug.th_worker_poll', '最近轮询时间')}</th>
+                  <th className="pb-2.5 text-right">{t('debug.actions', '操作')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/80">
@@ -800,29 +802,29 @@ export const SystemDebugger: React.FC = () => {
                       #{w.userId} {w.username}
                     </td>
                     <td className="py-3 font-mono text-[11px] text-gray-600 dark:text-neutral-400 truncate max-w-xs">
-                      {w.weixinUserId || <span className="text-gray-400">未配对</span>}
+                      {w.weixinUserId || <span className="text-gray-400">{t('debug.unpaired', '未配对')}</span>}
                     </td>
                     <td className="py-3">
                       {w.workerRunning ? (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          正在长轮询
+                          {t('debug.polling', '正在长轮询')}
                         </span>
                       ) : w.weixinConnected ? (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
-                          已停止
+                          {t('debug.stopped', '已停止')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 dark:bg-neutral-800 text-gray-500">
-                          未连接微信
+                          {t('debug.not_connected', '未连接微信')}
                         </span>
                       )}
                     </td>
                     <td className="py-3 font-mono text-[11px]">
                       {w.hasContextToken ? (
-                        <span className="text-emerald-600 font-semibold">已获取</span>
+                        <span className="text-emerald-600 font-semibold">{t('debug.obtained', '已获取')}</span>
                       ) : (
-                        <span className="text-gray-400">等待首次来信</span>
+                        <span className="text-gray-400">{t('debug.waiting_first_msg', '等待首次来信')}</span>
                       )}
                     </td>
                     <td className="py-3">
@@ -830,30 +832,30 @@ export const SystemDebugger: React.FC = () => {
                         w.hasLlmKey ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                            已配置 (自定义)
+                            {t('debug.configured_custom', '已配置 (自定义)')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                            未填 Key
+                            {t('debug.no_key', '未填 Key')}
                           </span>
                         )
                       ) : (
                         (w.balance !== undefined ? w.balance > 0 : w.hasLlmKey) ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                            已配置 (官方 ¥{(w.balance ?? 0).toFixed(2)})
+                            {t('debug.configured_official', '已配置 (官方 ¥{balance})').replace('{balance}', (w.balance ?? 0).toFixed(2))}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                            额度不足 (¥0.00)
+                            {t('debug.insufficient_balance', '额度不足 (¥0.00)')}
                           </span>
                         )
                       )}
                     </td>
                     <td className="py-3 font-mono text-[10px] text-gray-500">
-                      {w.lastPollAt ? new Date(w.lastPollAt).toLocaleTimeString() : '无记录'}
+                      {w.lastPollAt ? new Date(w.lastPollAt).toLocaleTimeString(language === 'en' ? 'en-US' : 'zh-CN') : t('debug.no_records', '无记录')}
                     </td>
                     <td className="py-3 text-right space-x-1.5">
                       {w.weixinConnected && (
@@ -862,13 +864,13 @@ export const SystemDebugger: React.FC = () => {
                             onClick={() => handleRestartWorker(w.userId)}
                             className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-600 dark:text-blue-400 rounded-lg text-[10px] font-semibold transition cursor-pointer"
                           >
-                            重启 Worker
+                            {t('debug.restart_worker', '重启 Worker')}
                           </button>
                           <button
                             onClick={() => handleResetSyncBuf(w.userId)}
                             className="px-2.5 py-1 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 text-gray-600 dark:text-neutral-300 rounded-lg text-[10px] font-semibold transition cursor-pointer"
                           >
-                            重置 SyncBuf
+                            {t('debug.reset_syncbuf', '重置 SyncBuf')}
                           </button>
                         </>
                       )}

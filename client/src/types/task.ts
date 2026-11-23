@@ -19,6 +19,7 @@ export interface TaskItem {
   importanceTier?: ImportanceTier;
   impactSignals?: ImpactSignal[];
   timeMode?: TimeMode;
+  recurrenceRule?: string | null;
   urgencyPace?: UrgencyPace;
   importanceManualOverride?: number | null;
   scoreScale?: number;

@@ -377,7 +377,7 @@ export function getActiveExternalBusyEvents(
  * 将已排程任务拆解为独立的 schedule_blocks 占用区间
  */
 export function taskToBusyEvents(
-  task: Pick<Task, 'id' | 'title' | 'scheduled_start' | 'scheduled_end' | 'schedule_blocks' | 'time_mode' | 'is_fixed' | 'completed_dates'>,
+  task: Pick<Task, 'id' | 'title' | 'scheduled_start' | 'scheduled_end' | 'schedule_blocks' | 'time_mode' | 'recurrence_rule' | 'is_fixed' | 'completed_dates'>,
   idPrefix: string = 'task',
   horizonBaseDate?: Date,
   horizonDays: number = 0,
@@ -456,6 +456,7 @@ export function taskToBusyEvents(
         dayKey = formatLocalDate(targetDay);
       }
       if (existingDayKeys.has(dayKey) || completedDates.includes(dayKey)) continue;
+      if (!isDateMatchingRecurrence(targetDay, task.recurrence_rule)) continue;
 
       baseIntervals.forEach((iv, idx) => {
         const durationMs = iv.end.getTime() - iv.start.getTime();

@@ -23,6 +23,7 @@ import {
   Repeat,
   Infinity as InfinityIcon,
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 
 interface WizardModalProps {
   isOpen: boolean;
@@ -53,6 +54,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
   dailyBusyMinutesAhead = 0,
   onConfirmTask,
 }) => {
+  const { t } = useTheme();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [importanceTier, setImportanceTier] = useState<ImportanceTier | null>(null);
   const [impactSignals, setImpactSignals] = useState<ImpactSignal[]>([]);
@@ -141,10 +143,10 @@ export const WizardModal: React.FC<WizardModalProps> = ({
             </span>
             <div>
               <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
-                象限决策向导
+                {t('wizard.title', '象限决策向导')}
               </h2>
               <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                三阶认知定级 + 智能耦合算分（0–100 分制）
+                {t('wizard.subtitle', '三阶认知定级 + 智能耦合算分（0–100 分制）')}
               </p>
             </div>
           </div>
@@ -166,7 +168,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
             />
           </div>
           <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-            步骤 {step} / 3
+            {t('wizard.step_counter', '步骤')} {step} / 3
           </span>
         </div>
 
@@ -176,10 +178,10 @@ export const WizardModal: React.FC<WizardModalProps> = ({
             <div className="space-y-4">
               <div>
                 <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
-                  第 1 步：三阶认知定级 (纵轴重要度)
+                  {t('wizard.step1_title', '第 1 步：三阶认知定级 (纵轴重要度)')}
                 </span>
                 <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mt-2">
-                  这件事在你的目标版图中属于哪一档？
+                  {t('wizard.step1_desc', '这件事在你的目标版图中属于哪一档？')}
                 </h3>
               </div>
 
@@ -202,14 +204,14 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       <div className="flex-1">
                         <div className="flex items-center justify-between">
                           <h4 className="text-xs font-bold text-gray-900 dark:text-gray-100">
-                            {cfg.label}
+                            {t(`tier.${key}.label`, cfg.label)}
                           </h4>
                           <span className="text-[11px] font-mono text-gray-500 dark:text-neutral-400">
-                            基准 {cfg.base} / 100
+                            {t('wizard.base_score', '基准')} {cfg.base} / 100
                           </span>
                         </div>
                         <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
-                          {cfg.description}
+                          {t(`tier.${key}.desc`, cfg.description)}
                         </p>
                       </div>
                     </button>
@@ -219,7 +221,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
 
               <div className="space-y-1.5">
                 <span className="text-[11px] text-gray-500 dark:text-neutral-400 block">
-                  可选附加价值信号（系统将自动加权）：
+                  {t('wizard.signals', '可选附加价值信号（系统将自动加权）：')}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {(Object.keys(IMPACT_SIGNAL_WEIGHTS) as ImpactSignal[]).map((sig) => {
@@ -237,7 +239,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                         }`}
                       >
                         {active ? '✓ ' : '+ '}
-                        {metaSig.label}
+                        {t(`signal.${sig}`, metaSig.label)}
                       </button>
                     );
                   })}
@@ -246,7 +248,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
 
               <div className="flex items-center justify-between pt-2">
                 <span className="text-[11px] text-gray-500 font-mono">
-                  {importanceTier ? `当前重要度：${importance} / 100` : '请选择一个档位'}
+                  {importanceTier ? `${t('wizard.current_imp', '当前重要度')}：${importance} / 100` : t('wizard.select_tier', '请选择一个档位')}
                 </span>
                 <button
                   type="button"
@@ -254,7 +256,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   onClick={() => setStep(2)}
                   className="px-4 py-1.5 rounded-full text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
-                  <span>下一步</span>
+                  <span>{t('wizard.next_step', '下一步')}</span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -266,10 +268,10 @@ export const WizardModal: React.FC<WizardModalProps> = ({
             <div className="space-y-4">
               <div>
                 <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
-                  第 2 步：时间属性与紧迫度测算 (横轴 X)
+                  {t('wizard.step2_title', '第 2 步：时间属性与紧迫度测算 (横轴紧迫度)')}
                 </span>
                 <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mt-2">
-                  这件事的时间安排方式是？
+                  {t('wizard.step2_desc', '这件事的时间安排方式是？')}
                 </h3>
               </div>
 
@@ -283,7 +285,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       : 'text-gray-600 dark:text-neutral-400'
                   }`}
                 >
-                  <Calendar className="h-3 w-3" /> 截止日期
+                  <Calendar className="h-3 w-3" /> {t('task.type_deadline', '截止日期')}
                 </button>
                 <button
                   type="button"
@@ -294,7 +296,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       : 'text-gray-600 dark:text-neutral-400'
                   }`}
                 >
-                  <Repeat className="h-3 w-3" /> 每日固定
+                  <Repeat className="h-3 w-3" /> {t('task.type_daily', '周期任务')}
                 </button>
                 <button
                   type="button"
@@ -305,7 +307,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       : 'text-gray-600 dark:text-neutral-400'
                   }`}
                 >
-                  <InfinityIcon className="h-3 w-3" /> 弹性待排
+                  <InfinityIcon className="h-3 w-3" /> {t('task.type_flexible', '弹性待排')}
                 </button>
               </div>
 
@@ -315,7 +317,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                          截止日期 <span className="text-rose-500">*</span>
+                          {t('task.deadline_date', '截止日期')} <span className="text-rose-500">*</span>
                         </label>
                         <input
                           type="date"
@@ -327,7 +329,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
-                          <Clock className="h-3.5 w-3.5 text-gray-400" /> 预计耗时 (分)
+                          <Clock className="h-3.5 w-3.5 text-gray-400" /> {t('task.duration', '预计耗时 (分)')}
                         </label>
                         <input
                           type="number"
@@ -337,20 +339,20 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                           onChange={(e) =>
                             setEstimatedMinutes(e.target.value ? Number(e.target.value) : '')
                           }
-                          placeholder="默认 30 分钟"
+                          placeholder="30"
                           className="w-full rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-900 dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100"
                         />
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] text-gray-400 mr-0.5">大致日期：</span>
+                      <span className="text-[11px] text-gray-400 mr-0.5">{t('wizard.approx_date', '大致日期：')}</span>
                       {[
-                        { label: '今天', days: 0 },
-                        { label: '明天', days: 1 },
-                        { label: '3天后', days: 3 },
-                        { label: '1周后', days: 7 },
-                        { label: '2周后', days: 14 },
+                        { label: t('task.today', '今天'), days: 0 },
+                        { label: t('task.tomorrow', '明天'), days: 1 },
+                        { label: t('task.in_3_days', '3天后'), days: 3 },
+                        { label: t('task.in_1_week', '1周后'), days: 7 },
+                        { label: t('task.in_2_weeks', '2周后'), days: 14 },
                       ].map((preset) => {
                         const target = new Date();
                         target.setDate(target.getDate() + preset.days);
@@ -358,7 +360,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                         const isSelected = dueDate === presetStr;
                         return (
                           <button
-                            key={preset.label}
+                            key={preset.days}
                             type="button"
                             onClick={() => handleQuickDateOffset(preset.days)}
                             className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-colors cursor-pointer ${
@@ -378,11 +380,11 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                 {timeMode === 'daily_fixed' && (
                   <div className="space-y-2">
                     <p className="text-[11px] text-gray-600 dark:text-neutral-400">
-                      每日固定任务将根据今日日程空闲度动态评估紧迫度，完成后当日降级、次日自动恢复。
+                      {t('wizard.daily_hint', '周期任务将根据当日日程空闲度动态评估紧迫度，完成后当日打卡、并在下一个周期日自动恢复。')}
                     </p>
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                        每日耗时 (分钟)
+                        {t('task.daily_duration', '单次耗时 (分钟)')}
                       </label>
                       <input
                         type="number"
@@ -392,7 +394,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                         onChange={(e) =>
                           setEstimatedMinutes(e.target.value ? Number(e.target.value) : '')
                         }
-                        placeholder="默认 30 分钟"
+                        placeholder="30"
                         className="w-full rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-900 dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100"
                       />
                     </div>
@@ -404,9 +406,9 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                     <div className="grid grid-cols-3 gap-2">
                       {(
                         [
-                          { key: 'urgent', label: '🔥 尽快推进' },
-                          { key: 'soon', label: '⏱️ 近日规划' },
-                          { key: 'later', label: '☕ 远期备忘' },
+                          { key: 'urgent', label: `🔥 ${t('task.pace_urgent', '尽快推进')}` },
+                          { key: 'soon', label: `⏱️ ${t('task.pace_soon', '近日规划')}` },
+                          { key: 'later', label: `☕ ${t('task.pace_later', '远期备忘')}` },
                         ] as Array<{ key: UrgencyPace; label: string }>
                       ).map((p) => (
                         <button
@@ -425,7 +427,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                        预计耗时 (分钟)
+                        {t('task.duration', '预计耗时 (分钟)')}
                       </label>
                       <input
                         type="number"
@@ -435,7 +437,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                         onChange={(e) =>
                           setEstimatedMinutes(e.target.value ? Number(e.target.value) : '')
                         }
-                        placeholder="默认 30 分钟"
+                        placeholder="30"
                         className="w-full rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-900 dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100"
                       />
                     </div>
@@ -446,7 +448,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
                     <Cpu className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
                     <span>
-                      耦合测算：<strong>{algoResult.statusText}</strong>
+                      {t('wizard.coupling_calc', '耦合测算：')}<strong>{algoResult.statusText}</strong>
                     </span>
                   </div>
                   <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-mono">
@@ -461,7 +463,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   onClick={() => setStep(1)}
                   className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-neutral-200 cursor-pointer"
                 >
-                  ← 返回上一步修改定级
+                  {t('wizard.back_step', '← 返回上一步修改定级')}
                 </button>
                 <button
                   type="button"
@@ -469,7 +471,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   onClick={() => setStep(3)}
                   className="px-4 py-1.5 rounded-full text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
-                  <span>下一步</span>
+                  <span>{t('wizard.next_step', '下一步')}</span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -483,7 +485,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                    向导诊断完成！自动定位落位：
+                    {t('wizard.step3_title', '向导诊断完成！自动定位落位：')}
                   </h3>
                 </div>
 
@@ -491,7 +493,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   <div className="flex items-center gap-2">
                     <span className={`h-3 w-3 rounded-full ${meta.themeColor.accentDot}`} />
                     <span className="text-base font-extrabold text-gray-900 dark:text-gray-100">
-                      {meta.name}
+                      {t(`quad.${targetQuadrantId}.name`, meta.name)}
                     </span>
                   </div>
                   <span className={`text-xs px-2.5 py-1 rounded-full font-bold border ${meta.themeColor.badgeBg}`}>
@@ -500,17 +502,17 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                 </div>
 
                 <div className="mt-2 text-xs text-gray-500 dark:text-neutral-400 font-mono">
-                  {algoResult.statusText} · 重要度 {importance} / 100 · 紧迫度 {urgency} / 100
+                  {algoResult.statusText} · {t('task.importance', '重要度')} {importance} / 100 · {t('todo.urgency_3', '紧迫度').slice(0, 3)} {urgency} / 100
                 </div>
 
                 <p className="text-xs text-gray-600 dark:text-neutral-300 mt-2">
-                  💡 <strong>行动建议</strong>：{meta.description}
+                  💡 <strong>{t('wizard.action_advice', '行动建议')}</strong>：{t(`quad.${targetQuadrantId}.desc`, meta.description)}
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                  输入此任务的名称并直接入库
+                  {t('wizard.input_task_name', '输入此任务的名称并直接入库')}
                 </label>
                 <input
                   type="text"
@@ -518,7 +520,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   autoFocus
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
-                  placeholder="例如：完成第二季度经营数据复盘报告..."
+                  placeholder={t('wizard.task_name_placeholder', '例如：完成第二季度经营数据复盘报告...')}
                   className="w-full rounded-xl border border-gray-300 bg-white px-3.5 py-2 text-xs text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100"
                 />
               </div>
@@ -529,7 +531,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                   onClick={handleReset}
                   className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 dark:hover:text-neutral-200 cursor-pointer"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" /> 重新诊断
+                  <RotateCcw className="h-3.5 w-3.5" /> {t('wizard.restart', '重新诊断')}
                 </button>
 
                 <div className="flex items-center gap-2">
@@ -538,14 +540,14 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                     onClick={onClose}
                     className="px-4 py-1.5 rounded-full text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800 cursor-pointer"
                   >
-                    取消
+                    {t('common.cancel', '取消')}
                   </button>
                   <button
                     type="submit"
                     disabled={!taskTitle.trim()}
                     className="px-5 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
                   >
-                    <span>保存并落位</span>
+                    <span>{t('wizard.save_place', '保存并落位')}</span>
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </div>

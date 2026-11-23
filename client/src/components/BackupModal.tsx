@@ -23,6 +23,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onImport,
   onClearAll,
 }) => {
+  const { t, language } = useTheme();
   const [activeTab, setActiveTab] = useState<'export' | 'import'>('export');
   const [importJsonText, setImportJsonText] = useState('');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
@@ -34,7 +35,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   if (!isOpen) return null;
 
   const generateMarkdown = () => {
-    let md = `# 艾森豪威尔四象限待办清单\n\n导出时间：${new Date().toLocaleString()}\n\n`;
+    let md = `# ${t('backup.md_title', '艾森豪威尔四象限待办清单')}\n\n${t('backup.export_time', '导出时间')}：${new Date().toLocaleString(language === 'en' ? 'en-US' : 'zh-CN')}\n\n`;
 
     const grouped: Record<string, TaskItem[]> = {
       q1: tasks.filter((t) => t.isImportant && t.isUrgent),
@@ -46,9 +47,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     (['q1', 'q2', 'q3', 'q4'] as const).forEach((qid) => {
       const meta = QUADRANTS_CONFIG[qid];
       const list = grouped[qid];
-      md += `### ${meta.name} (${meta.action})\n`;
+      const qTitle = language === 'en' ? meta.englishName : meta.name;
+      const qAction = language === 'en' ? (meta.action.split('(')[1]?.replace(')', '') || meta.action) : meta.action;
+      md += `### ${qTitle} (${qAction})\n`;
       if (list.length === 0) {
-        md += `_暂无事项_\n\n`;
+        md += `_${t('backup.no_items', '暂无事项')}_\n\n`;
       } else {
         list.forEach((t) => {
           const check = t.isCompleted ? '[x]' : '[ ]';
@@ -171,7 +174,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 shadow-2xl overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-neutral-800">
           <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
-            数据备份、导入与导出
+            {t('backup.title', '数据备份、导入与导出')}
           </h2>
           <button
             type="button"
@@ -192,7 +195,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200'
             }`}
           >
-            导出与分享
+            {t('backup.tab_export', '导出与分享')}
           </button>
           <button
             type="button"
@@ -203,7 +206,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200'
             }`}
           >
-            导入与恢复
+            {t('backup.tab_import', '导入与恢复')}
           </button>
         </div>
 
@@ -225,14 +228,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       className="px-3 py-1.5 rounded-full border border-gray-200 text-xs text-gray-700 hover:bg-gray-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800 inline-flex items-center gap-1 cursor-pointer"
                     >
                       {copiedType === 'json' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                      <span>{copiedType === 'json' ? '已复制' : '复制 JSON'}</span>
+                      <span>{copiedType === 'json' ? t('common.copied', '已复制') : t('backup.copy_json', '复制 JSON')}</span>
                     </button>
                     <button
                       type="button"
                       onClick={handleDownloadJson}
                       className="px-3.5 py-1.5 rounded-full bg-blue-600 text-xs font-semibold text-white hover:bg-blue-700 inline-flex items-center gap-1 cursor-pointer"
                     >
-                      <Download className="h-3.5 w-3.5" /> 下载文件
+                      <Download className="h-3.5 w-3.5" /> {t('backup.download_file', '下载文件')}
                     </button>
                   </div>
                 </div>
@@ -244,10 +247,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                     <div>
                       <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
-                        导出为 Markdown 清单
+                        {t('backup.export_md', '导出为 Markdown 清单')}
                       </span>
                       <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                        适合粘贴至周报、Notion 或个人笔记软件
+                        {t('backup.export_md_desc', '适合粘贴至周报、Notion 或个人笔记软件')}
                       </p>
                     </div>
                   </div>
@@ -257,14 +260,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     className="px-3.5 py-1.5 rounded-full border border-gray-200 text-xs text-gray-700 hover:bg-gray-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800 inline-flex items-center gap-1 cursor-pointer"
                   >
                     {copiedType === 'markdown' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                    <span>{copiedType === 'markdown' ? '已复制' : '复制 Markdown'}</span>
+                    <span>{copiedType === 'markdown' ? t('common.copied', '已复制') : t('backup.copy_md', '复制 Markdown')}</span>
                   </button>
                 </div>
               </div>
 
               <div className="pt-2 flex items-center justify-between">
                 <span className="text-xs text-gray-400 dark:text-neutral-500">
-                  当前待办总数：{tasks.length} 项
+                  {t('backup.total_tasks', '当前待办总数：')}{tasks.length} {t('common.items', '项')}
                 </span>
                 <button
                   type="button"
@@ -273,7 +276,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   className="text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 inline-flex items-center gap-1 cursor-pointer disabled:opacity-40"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  <span>清空所有待办</span>
+                  <span>{t('backup.clear_all', '清空所有待办')}</span>
                 </button>
               </div>
             </div>
@@ -322,7 +325,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                  或直接粘贴 JSON 文本
+                  {t('backup.paste_json', '或直接粘贴 JSON 文本')}
                 </label>
                 <textarea
                   rows={4}

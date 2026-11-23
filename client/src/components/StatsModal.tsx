@@ -1,5 +1,6 @@
 import type { QuadrantId } from '../types/task';
 import { QUADRANTS_CONFIG } from '../constants/quadrants';
+import { useTheme } from '../context/ThemeContext';
 import { X, PieChart, TrendingUp } from 'lucide-react';
 
 interface StatsModalProps {
@@ -19,6 +20,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   onClose,
   stats,
 }) => {
+  const { t, language } = useTheme();
   if (!isOpen) return null;
 
   const q2Percent = stats.breakdown.q2.percent;
@@ -30,42 +32,42 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   const getEfficiencyAdvice = () => {
     if (stats.total === 0) {
       return {
-        title: '尚未录入事项',
-        content: '录入更多待办事项后，系统将自动分析你的四象限精力投入结构。',
+        title: t('stats.advice_empty_title', '尚未录入事项'),
+        content: t('stats.advice_empty_desc', '录入更多待办事项后，系统将自动分析你的四象限精力投入结构。'),
         type: 'info',
       };
     }
     if (q1Percent > 35) {
       return {
-        title: '⚠️ 处于“救火状态”风险',
-        content: `重要且紧急事项占比已达 ${q1Percent}%（建议控制在 20%~25%）。这说明突发危机较多，容易导致身心疲惫。建议多投入时间到【Schedule】进行前置规划与防患。`,
+        title: t('stats.advice_q1_title', '⚠️ 处于“救火状态”风险'),
+        content: t('stats.advice_q1_desc', `重要且紧急事项占比已达 ${q1Percent}%（建议控制在 20%~25%）。这说明突发危机较多，容易导致身心疲惫。建议多投入时间到【Schedule】进行前置规划与防患。`),
         type: 'warning',
       };
     }
     if (q2Percent >= 50) {
       return {
-        title: '🌟 极佳的黄金效能状态！',
-        content: `【Schedule】占比达到 ${q2Percent}%（高产人士理想占比为 60%+）。你正在将核心精力投向长期目标、成长规划与预防性工作，请继续保持！`,
+        title: t('stats.advice_q2_title', '🌟 极佳的黄金效能状态！'),
+        content: t('stats.advice_q2_desc', `【Schedule】占比达到 ${q2Percent}%（高产人士理想占比为 60%+）。你正在将核心精力投向长期目标、成长规划与预防性工作，请继续保持！`),
         type: 'success',
       };
     }
     if (q3Percent > 30) {
       return {
-        title: '⚠️ 被外部琐事打扰过多',
-        content: `【Delegate】占比高达 ${q3Percent}%。很多紧急的事情并不代表重要，建议尝试授权委派、设定专注时段或礼貌拒绝。`,
+        title: t('stats.advice_q3_title', '⚠️ 被外部琐事打扰过多'),
+        content: t('stats.advice_q3_desc', `【Delegate】占比高达 ${q3Percent}%。很多紧急的事情并不代表重要，建议尝试授权委派、设定专注时段或礼貌拒绝。`),
         type: 'warning',
       };
     }
     if (q4Percent > 20) {
       return {
-        title: '⚠️ 存在时间黑洞隐患',
-        content: `【Eliminate】占比 ${q4Percent}%。建议坚决剔除逃避性事务与低价值消耗，把精力腾挪给更有意义的事。`,
+        title: t('stats.advice_q4_title', '⚠️ 存在时间黑洞隐患'),
+        content: t('stats.advice_q4_desc', `【Eliminate】占比 ${q4Percent}%。建议坚决剔除逃避性事务与低价值消耗，把精力腾挪给更有意义的事。`),
         type: 'warning',
       };
     }
     return {
-      title: '📈 精力结构相对均衡',
-      content: `当前重点放在推进 Do First 交付与扩大 Schedule 规划。持续优化时间分配，逐步提升 Schedule 长期事项比例。`,
+      title: t('stats.advice_balanced_title', '📈 精力结构相对均衡'),
+      content: t('stats.advice_balanced_desc', '当前重点放在推进 Do First 交付与扩大 Schedule 规划。持续优化时间分配，逐步提升 Schedule 长期事项比例。'),
       type: 'info',
     };
   };
@@ -82,7 +84,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
               <PieChart className="h-5 w-5" />
             </span>
             <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
-              四象限精力与效能复盘
+              {t('stats.title', '四象限精力与效能复盘')}
             </h2>
           </div>
           <button
@@ -99,19 +101,19 @@ export const StatsModal: React.FC<StatsModalProps> = ({
           {/* 数据总览卡片 */}
           <div className="grid grid-cols-3 gap-3">
             <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200/80 dark:bg-neutral-800/40 dark:border-neutral-800 text-center">
-              <div className="text-[11px] font-medium text-gray-500 dark:text-neutral-400">事项总计</div>
+              <div className="text-[11px] font-medium text-gray-500 dark:text-neutral-400">{t('stats.total', '事项总计')}</div>
               <div className="text-2xl font-black text-gray-900 dark:text-gray-100 mt-1">
                 {stats.total}
               </div>
             </div>
             <div className="p-3.5 rounded-xl bg-amber-50/50 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-900/40 text-center">
-              <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">进行待办</div>
+              <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{t('stats.pending', '进行待办')}</div>
               <div className="text-2xl font-black text-amber-700 dark:text-amber-300 mt-1">
                 {stats.pending}
               </div>
             </div>
             <div className="p-3.5 rounded-xl bg-blue-50/50 border border-blue-200/60 dark:bg-blue-950/20 dark:border-blue-900/40 text-center">
-              <div className="text-[11px] font-medium text-blue-700 dark:text-blue-400">已完成</div>
+              <div className="text-[11px] font-medium text-blue-700 dark:text-blue-400">{t('stats.completed', '已完成')}</div>
               <div className="text-2xl font-black text-blue-700 dark:text-blue-300 mt-1">
                 {stats.completed}
               </div>
@@ -122,26 +124,28 @@ export const StatsModal: React.FC<StatsModalProps> = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-gray-800 dark:text-neutral-200 uppercase tracking-wider">
-                各象限精力投入占比
+                {t('stats.breakdown_title', '各象限精力投入占比')}
               </span>
               <span className="text-xs text-gray-500 dark:text-neutral-400">
-                完成率：{stats.completionRate}%
+                {t('stats.completion_rate', '完成率')}：{stats.completionRate}%
               </span>
             </div>
 
             {(['q1', 'q2', 'q3', 'q4'] as QuadrantId[]).map((qid) => {
               const meta = QUADRANTS_CONFIG[qid];
               const qStats = stats.breakdown[qid];
+              const qName = language === 'en' ? meta.englishName : meta.name;
+              const qAction = language === 'en' ? (meta.shortAction === '立即执行' ? 'Do Now' : meta.shortAction === '专注投入' ? 'Focus' : meta.shortAction === '快速委派' ? 'Delegate' : 'Cut') : meta.shortAction;
               return (
                 <div key={qid} className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5 font-medium">
                       <span className={`h-2.5 w-2.5 rounded-full ${meta.themeColor.accentDot}`} />
-                      <span className="text-gray-800 dark:text-neutral-200">{meta.name}</span>
-                      <span className="text-[11px] text-gray-400">({meta.shortAction})</span>
+                      <span className="text-gray-800 dark:text-neutral-200">{qName}</span>
+                      <span className="text-[11px] text-gray-400">({qAction})</span>
                     </div>
                     <div className="font-semibold text-gray-700 dark:text-neutral-300">
-                      {qStats.total} 项 · {qStats.percent}%
+                      {qStats.total} {t('common.items', '项')} · {qStats.percent}%
                     </div>
                   </div>
 
@@ -175,7 +179,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
             onClick={onClose}
             className="px-5 py-1.5 rounded-full text-xs font-semibold text-gray-700 hover:bg-gray-200 dark:text-neutral-300 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
           >
-            关闭
+            {t('common.close', '关闭')}
           </button>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
 import {
   Plus,
@@ -36,7 +37,7 @@ interface Task {
 }
 
 // Eisenhower Quadrant helper
-function getQuadrant(importance: number, urgency: number): {
+function getQuadrant(importance: number, urgency: number, language?: string): {
   id: string;
   name: string;
   badge: string;
@@ -50,7 +51,7 @@ function getQuadrant(importance: number, urgency: number): {
     return {
       id: 'q1',
       name: 'Do First',
-      badge: '重要紧急',
+      badge: language === 'en' ? 'Do First' : '重要紧急',
       color: 'text-rose-700 dark:text-rose-300',
       bg: 'bg-rose-50 dark:bg-rose-950/40',
       border: 'border-rose-200/80 dark:border-rose-900/60',
@@ -60,7 +61,7 @@ function getQuadrant(importance: number, urgency: number): {
     return {
       id: 'q2',
       name: 'Schedule',
-      badge: '规划深耕',
+      badge: language === 'en' ? 'Schedule' : '规划深耕',
       color: 'text-blue-700 dark:text-blue-300',
       bg: 'bg-blue-50 dark:bg-blue-950/40',
       border: 'border-blue-200/80 dark:border-blue-900/60',
@@ -70,7 +71,7 @@ function getQuadrant(importance: number, urgency: number): {
     return {
       id: 'q3',
       name: 'Delegate',
-      badge: '批量委派',
+      badge: language === 'en' ? 'Delegate' : '批量委派',
       color: 'text-amber-700 dark:text-amber-300',
       bg: 'bg-amber-50 dark:bg-amber-950/40',
       border: 'border-amber-200/80 dark:border-amber-900/60',
@@ -79,7 +80,7 @@ function getQuadrant(importance: number, urgency: number): {
   return {
     id: 'q4',
     name: 'Eliminate',
-    badge: '琐事备忘',
+    badge: language === 'en' ? 'Eliminate' : '琐事备忘',
     color: 'text-gray-600 dark:text-neutral-400',
     bg: 'bg-gray-50 dark:bg-neutral-800/60',
     border: 'border-gray-200/80 dark:border-neutral-700/60',
@@ -87,6 +88,7 @@ function getQuadrant(importance: number, urgency: number): {
 }
 
 export const TodoList: React.FC = () => {
+  const { t, language } = useTheme();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -141,7 +143,7 @@ export const TodoList: React.FC = () => {
       fetchTasks();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '创建任务失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Failed to create task' : '创建任务失败'));
     } finally {
       setFormSubmitting(false);
     }
@@ -156,7 +158,7 @@ export const TodoList: React.FC = () => {
       fetchTasks();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '操作失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Operation failed' : '操作失败'));
     }
   };
 
@@ -171,21 +173,21 @@ export const TodoList: React.FC = () => {
   const handleReschedule = async (id: number) => {
     try {
       const res = await api.post(`/tasks/${id}/reschedule`);
-      alert(res.data.message || '重排成功');
+      alert(res.data.message || (language === 'en' ? 'Rescheduled successfully' : '重排成功'));
       fetchTasks();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '重排失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Reschedule failed' : '重排失败'));
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('确定要删除该待办任务吗？')) return;
+    if (!window.confirm(t('task.delete_confirm', '确定删除该待办任务吗？'))) return;
     try {
       await api.delete(`/tasks/${id}`);
       fetchTasks();
     } catch {
-      alert('删除失败');
+      alert(language === 'en' ? 'Delete failed' : '删除失败');
     }
   };
 
@@ -240,15 +242,15 @@ export const TodoList: React.FC = () => {
   }, [tasks]);
 
   const filterCategories = [
-    { key: 'all', label: '全部待办', icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
+    { key: 'all', label: t('nav.all_tasks', '全部待办'), icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
     { key: 'q1', label: 'Do First', icon: Flame, color: 'text-rose-600 dark:text-rose-400' },
     { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-600 dark:text-blue-400' },
     { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-600 dark:text-amber-400' },
     { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-500 dark:text-neutral-400' },
-    { key: 'scheduled', label: '已排程日程', icon: Calendar, color: 'text-sky-600 dark:text-sky-400' },
-    { key: 'in_progress', label: '进行中任务', icon: Sparkles, color: 'text-emerald-600 dark:text-emerald-400' },
-    { key: 'pending_slot', label: '待排期事项', icon: AlertCircle, color: 'text-amber-600 dark:text-amber-400' },
-    { key: 'completed', label: '已完成事项', icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
+    { key: 'scheduled', label: t('todo.scheduled', '已排程日程'), icon: Calendar, color: 'text-sky-600 dark:text-sky-400' },
+    { key: 'in_progress', label: t('todo.in_progress', '进行中任务'), icon: Sparkles, color: 'text-emerald-600 dark:text-emerald-400' },
+    { key: 'pending_slot', label: t('todo.pending_slot', '待排期事项'), icon: AlertCircle, color: 'text-amber-600 dark:text-amber-400' },
+    { key: 'completed', label: t('todo.completed', '已完成事项'), icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
   return (
@@ -260,14 +262,14 @@ export const TodoList: React.FC = () => {
           className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 border border-gray-200/80 dark:border-neutral-700/80 rounded-full text-xs font-medium transition cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
-          <span>刷新</span>
+          <span>{t('common.refresh', '刷新')}</span>
         </button>
         <button
           onClick={() => setShowModal(true)}
           className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-full text-xs font-medium shadow-xs transition cursor-pointer"
         >
           <Plus className="w-4 h-4" />
-          <span>添加任务</span>
+          <span>{t('workspace.add_task', '添加任务')}</span>
         </button>
       </div>
 
@@ -278,7 +280,7 @@ export const TodoList: React.FC = () => {
           {/* 1. Category Filter Rail */}
           <div className="bg-white dark:bg-[#1e1f20] rounded-2xl p-3 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs transition-colors">
             <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5">
-              分类与四象限
+              {t('nav.quadrants', '分类与四象限')}
             </div>
             <div className="space-y-0.5 mt-1">
               {filterCategories.map((item) => {
@@ -318,7 +320,7 @@ export const TodoList: React.FC = () => {
           <div className="hidden lg:block bg-white dark:bg-[#1e1f20] rounded-2xl p-4 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs transition-colors">
             <div className="flex items-center gap-2 pb-2.5 border-b border-gray-100 dark:border-neutral-800 text-xs font-bold text-gray-900 dark:text-gray-100">
               <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span>快速新建待办</span>
+              <span>{t('todo.quick_add', '快速新建待办')}</span>
             </div>
 
             <form onSubmit={handleCreateTask} className="space-y-3 mt-3">
@@ -327,7 +329,7 @@ export const TodoList: React.FC = () => {
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="待办名称 (如: 准备下周开会材料)"
+                  placeholder={t('todo.name_placeholder', '待办名称 (如: 准备下周开会材料)')}
                   className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 focus:bg-white dark:focus:bg-[#232425] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                   required
                 />
@@ -336,26 +338,26 @@ export const TodoList: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    预计耗时
+                    {t('todo.est_duration', '预计耗时')}
                   </label>
                   <select
                     value={duration}
                     onChange={(e) => setDuration(Number(e.target.value))}
                     className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
                   >
-                    <option value={15}>15 分钟</option>
-                    <option value={30}>30 分钟</option>
-                    <option value={45}>45 分钟</option>
-                    <option value={60}>60 分钟 (1h)</option>
-                    <option value={90}>90 分钟 (1.5h)</option>
-                    <option value={120}>120 分钟 (2h)</option>
-                    <option value={180}>180 分钟 (3h)</option>
+                    <option value={15}>15 {t('common.minutes', '分钟')}</option>
+                    <option value={30}>30 {t('common.minutes', '分钟')}</option>
+                    <option value={45}>45 {t('common.minutes', '分钟')}</option>
+                    <option value={60}>60 {t('common.minutes', '分钟')} (1h)</option>
+                    <option value={90}>90 {t('common.minutes', '分钟')} (1.5h)</option>
+                    <option value={120}>120 {t('common.minutes', '分钟')} (2h)</option>
+                    <option value={180}>180 {t('common.minutes', '分钟')} (3h)</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    截止时间 (DDL)
+                    {t('task.deadline_date', '截止时间 (DDL)')}
                   </label>
                   <input
                     type="date"
@@ -369,35 +371,35 @@ export const TodoList: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    加急度 (1-5)
+                    {t('todo.urgency_level', '加急度 (1-5)')}
                   </label>
                   <select
                     value={urgency}
                     onChange={(e) => setUrgency(Number(e.target.value))}
                     className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
                   >
-                    <option value={1}>1 - 极低</option>
-                    <option value={2}>2 - 较低</option>
-                    <option value={3}>3 - 普通</option>
-                    <option value={4}>4 - 紧急</option>
-                    <option value={5}>5 - 特急</option>
+                    <option value={1}>{t('todo.urgency_1', '1 - 极低')}</option>
+                    <option value={2}>{t('todo.urgency_2', '2 - 较低')}</option>
+                    <option value={3}>{t('todo.urgency_3', '3 - 普通')}</option>
+                    <option value={4}>{t('todo.urgency_4', '4 - 紧急')}</option>
+                    <option value={5}>{t('todo.urgency_5', '5 - 特急')}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 dark:text-neutral-400 mb-1">
-                    重要度 (1-5)
+                    {t('todo.importance_level', '重要度 (1-5)')}
                   </label>
                   <select
                     value={importance}
                     onChange={(e) => setImportance(Number(e.target.value))}
                     className="w-full px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl text-gray-900 dark:text-gray-100 outline-none"
                   >
-                    <option value={1}>1 - 极低</option>
-                    <option value={2}>2 - 较低</option>
-                    <option value={3}>3 - 普通</option>
-                    <option value={4}>4 - 重要</option>
-                    <option value={5}>5 - 核心关键</option>
+                    <option value={1}>{t('todo.importance_1', '1 - 极低')}</option>
+                    <option value={2}>{t('todo.importance_2', '2 - 较低')}</option>
+                    <option value={3}>{t('todo.importance_3', '3 - 普通')}</option>
+                    <option value={4}>{t('todo.importance_4', '4 - 重要')}</option>
+                    <option value={5}>{t('todo.importance_5', '5 - 核心关键')}</option>
                   </select>
                 </div>
               </div>
@@ -408,7 +410,7 @@ export const TodoList: React.FC = () => {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white text-xs font-medium rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{formSubmitting ? '规划排程中...' : '录入并自动规划'}</span>
+                <span>{formSubmitting ? t('calendar.replanning', '规划排程中...') : t('todo.auto_schedule_btn', '录入并自动规划')}</span>
               </button>
             </form>
           </div>
@@ -420,10 +422,10 @@ export const TodoList: React.FC = () => {
           <div className="shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl p-3 border border-gray-200/80 dark:border-neutral-800/80 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 transition-colors">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                {filterCategories.find((c) => c.key === activeFilter)?.label || '任务清单'}
+                {filterCategories.find((c) => c.key === activeFilter)?.label || t('nav.list', '待办清单')}
               </span>
               <span className="text-xs text-gray-400 dark:text-neutral-500">
-                (共 {filteredTasks.length} 项)
+                ({t('common.all', '共')} {filteredTasks.length} {t('common.items', '项')})
               </span>
             </div>
 
@@ -433,7 +435,7 @@ export const TodoList: React.FC = () => {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索标题或备注..."
+                placeholder={t('todo.search_placeholder', '搜索标题或备注...')}
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
               />
             </div>
@@ -443,35 +445,35 @@ export const TodoList: React.FC = () => {
           <div className="flex-1 min-h-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 shadow-xs divide-y divide-gray-100 dark:divide-neutral-800/80 overflow-y-auto transition-colors">
             {loading ? (
               <div className="p-12 text-center text-gray-400 dark:text-neutral-500 text-xs sm:text-sm">
-                正在加载任务列表...
+                {t('todo.loading', '正在加载任务列表...')}
               </div>
             ) : filteredTasks.length === 0 ? (
               <div className="p-12 text-center space-y-2">
                 <CheckCircle2 className="w-10 h-10 text-gray-300 dark:text-neutral-600 mx-auto stroke-[1.5]" />
                 <div className="text-gray-700 dark:text-neutral-300 font-medium text-sm">
-                  {search ? '未检索到匹配的待办' : '该分类下暂无任务'}
+                  {search ? t('workspace.no_search_results', '未检索到匹配的待办') : t('todo.empty', '该分类下暂无任务')}
                 </div>
                 <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
-                  微信发送给助手如：“明天下午3点排个开会”，或通过左侧快速添加。
+                  {t('workspace.empty_hint', '微信发送给助手如：“明天下午3点排个开会”，或通过左侧快速添加。')}
                 </p>
               </div>
             ) : (
               filteredTasks.map((task) => {
                 const isCompleted = task.status === 'completed';
                 const hasSchedule = task.scheduled_start && task.scheduled_end;
-                const quad = getQuadrant(task.importance, task.urgency);
+                const quad = getQuadrant(task.importance, task.urgency, language);
 
                 const startStr = hasSchedule
-                  ? new Date(task.scheduled_start!).toLocaleString('zh-CN', {
+                  ? new Date(task.scheduled_start!).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN', {
                       month: '2-digit',
                       day: '2-digit',
                       hour: '2-digit',
                       minute: '2-digit',
                       hour12: false,
                     })
-                  : '待排期';
+                  : t('todo.waiting_slot', '待排期');
                 const endStr = hasSchedule
-                  ? new Date(task.scheduled_end!).toLocaleTimeString('zh-CN', {
+                  ? new Date(task.scheduled_end!).toLocaleTimeString(language === 'en' ? 'en-US' : 'zh-CN', {
                       hour: '2-digit',
                       minute: '2-digit',
                       hour12: false,
@@ -497,7 +499,7 @@ export const TodoList: React.FC = () => {
                           ? 'bg-blue-600 dark:bg-blue-500 border-blue-600 dark:border-blue-500 text-white'
                           : 'border-gray-400 dark:border-neutral-500 hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-transparent hover:text-blue-600 dark:hover:text-blue-400'
                       }`}
-                      title={isCompleted ? '标记为未完成' : '标记为已完成'}
+                      title={isCompleted ? t('task.mark_uncompleted', '标记为未完成') : t('task.mark_completed', '标记为已完成')}
                     >
                       <Check className="w-3 h-3 stroke-[3]" />
                     </button>
@@ -524,24 +526,24 @@ export const TodoList: React.FC = () => {
 
                         {Boolean(task.is_fixed) && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-900/60">
-                            📌 固定
+                            📌 {t('matrix.fixed', '固定')}
                           </span>
                         )}
                         {Boolean(task.is_concurrent) && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/60">
-                            ⚡ 双线程
+                            ⚡ {t('matrix.dual', '双线程')}
                           </span>
                         )}
 
                         {/* Status badge */}
                         {task.status === 'in_progress' && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 animate-pulse">
-                            进行中
+                            {t('todo.in_progress', '进行中')}
                           </span>
                         )}
                         {task.status === 'pending_slot' && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
-                            待规划时段
+                            {t('todo.pending_slot', '待排期事项')}
                           </span>
                         )}
                       </div>
@@ -550,11 +552,11 @@ export const TodoList: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-neutral-400">
                         <span className="inline-flex items-center gap-1 font-mono bg-gray-100 dark:bg-[#28292a] px-2.5 py-0.5 rounded-full text-gray-700 dark:text-neutral-300">
                           <Clock className="w-3 h-3 text-blue-600 dark:text-blue-400" />
-                          {hasSchedule ? `${startStr} ~ ${endStr}` : '等待安排时段'}
+                          {hasSchedule ? `${startStr} ~ ${endStr}` : t('todo.waiting_slot', '等待安排时段')}
                         </span>
 
                         <span className="bg-gray-100 dark:bg-[#28292a] px-2 py-0.5 rounded-full">
-                          {task.duration_minutes} 分钟
+                          {task.duration_minutes} {t('common.minutes', '分钟')}
                         </span>
 
                         {task.deadline && (
@@ -566,8 +568,8 @@ export const TodoList: React.FC = () => {
                             }`}
                           >
                             <Calendar className="w-3 h-3" />
-                            {isOverdue ? '已逾期: ' : '截止: '}
-                            {new Date(task.deadline).toLocaleDateString('zh-CN', {
+                            {isOverdue ? t('todo.overdue', '已逾期') + ': ' : t('todo.deadline', '截止') + ': '}
+                            {new Date(task.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN', {
                               month: '2-digit',
                               day: '2-digit',
                               hour: '2-digit',
@@ -578,7 +580,7 @@ export const TodoList: React.FC = () => {
 
                         {task.notes && (
                           <span className="text-gray-400 dark:text-neutral-500 truncate max-w-xs">
-                            备注: {task.notes}
+                            {t('common.notes', '备注')}: {task.notes}
                           </span>
                         )}
                       </div>
@@ -591,7 +593,7 @@ export const TodoList: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleAction(task.id, 'extend', 30)}
-                            title="延长 30 分钟"
+                            title={t('task.extend_30m', '延长 30 分钟')}
                             className="px-2 py-1 bg-gray-100 dark:bg-[#28292a] hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-[11px] font-medium rounded-full transition cursor-pointer"
                           >
                             +30m
@@ -600,7 +602,7 @@ export const TodoList: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleReschedule(task.id)}
-                            title="重新规划排程"
+                            title={t('task.replan', '重新规划排程')}
                             className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-full transition cursor-pointer"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
@@ -612,7 +614,7 @@ export const TodoList: React.FC = () => {
                         type="button"
                         onClick={() => handleDelete(task.id)}
                         className="p-1.5 text-gray-400 dark:text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-full transition cursor-pointer"
-                        title="删除任务"
+                        title={t('common.delete', '删除任务')}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
