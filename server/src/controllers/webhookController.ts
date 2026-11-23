@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState } from '../models/types.js';
 import { parseUserMessageWithLLM } from '../services/llm.js';
-import { scheduleTask, computeTodayBusyMinutes, replanUserTasks } from '../services/scheduler.js';
+import { scheduleTask, computeTodayBusyMinutes, replanUserTasks, extendTaskDuration } from '../services/scheduler.js';
 import { templates, sendClawbotMessage } from '../services/clawbot.js';
 import {
   calculateDynamicImportance,
@@ -91,21 +91,12 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
         replyText = templates.taskCompleted(activeTask.title);
       } else if (action === 'extend') {
         const extMin = parsed.extend_minutes || 30;
-        const currentEnd = new Date(activeTask.scheduled_end || new Date());
-        const newEnd = new Date(currentEnd.getTime() + extMin * 60 * 1000);
-        const newEndStr = newEnd.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-
-        db.prepare(`
-          UPDATE tasks
-          SET
-            scheduled_end = ?,
-            duration_minutes = duration_minutes + ?,
-            end_reminder_sent = 0,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(newEnd.toISOString(), extMin, activeTask.id);
-
-        replyText = templates.taskExtended(activeTask.title, extMin, newEndStr);
+        const extResult = extendTaskDuration(userId, activeTask.id, extMin);
+        if (!extResult.success) {
+          replyText = `⚠️ 延长失败：${extResult.message}`;
+        } else {
+          replyText = templates.taskExtended(activeTask.title, extMin, extResult.newEndStr || '');
+        }
       } else if (action === 'reschedule') {
         const plan = scheduleTask(userId, {
           id: activeTask.id,

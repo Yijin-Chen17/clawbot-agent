@@ -3,8 +3,8 @@ import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
-import { parseUserMessageWithLLM, getEffectiveLlmConfig } from './llm.js';
-import { scheduleTask, replanUserTasks, completeTaskPart, computeTodayBusyMinutes } from './scheduler.js';
+import { parseUserMessageWithLLM } from './llm.js';
+import { scheduleTask, replanUserTasks, completeTaskPart, extendTaskDuration, computeTodayBusyMinutes } from './scheduler.js';
 import {
   calculateDynamicImportance,
   calculateDynamicUrgency,
@@ -904,18 +904,12 @@ export async function processWeChatMessage(
         return { replyText: reply, diagnostics: { intent: parsed.intent, parsed, action: 'completed' } };
       } else if (action === 'extend') {
         const extMin = parsed.extend_minutes || 30;
-        const currentEnd = new Date(activeTask.scheduled_end || new Date());
-        const newEnd = new Date(currentEnd.getTime() + extMin * 60 * 1000);
-        const newEndStr = newEnd.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-
-        db.prepare(`
-          UPDATE tasks
-          SET scheduled_end = ?, duration_minutes = duration_minutes + ?, end_reminder_sent = 0, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(newEnd.toISOString(), extMin, activeTask.id);
-
-        const reply = templates.taskExtended(activeTask.title, extMin, newEndStr);
-        addDebugLog('Scheduler', 'info', `待办 #${activeTask.id} (${activeTask.title}) 延长 ${extMin}m 至 ${newEndStr}`);
+        const extResult = extendTaskDuration(userId, activeTask.id, extMin);
+        if (!extResult.success) {
+          return { replyText: `⚠️ 延长失败：${extResult.message}`, diagnostics: { intent: parsed.intent, parsed, action: 'extend' } };
+        }
+        const reply = templates.taskExtended(activeTask.title, extMin, extResult.newEndStr || '');
+        addDebugLog('Scheduler', 'info', `待办 #${activeTask.id} (${activeTask.title}) 延长 ${extMin}m 至 ${extResult.newEndStr} 并已自适应重排`);
         return { replyText: reply, diagnostics: { intent: parsed.intent, parsed, action: 'extend', extMin } };
       } else if (action === 'reschedule') {
         const plan = scheduleTask(userId, {
