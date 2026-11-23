@@ -19,6 +19,7 @@ export interface BackupTaskPayload {
   importanceTier?: 'vital' | 'support' | 'minor' | null;
   impactSignals?: string[];
   timeMode: 'deadline' | 'daily_fixed' | 'flexible';
+  recurrenceRule?: string | null;
   urgencyPace?: 'urgent' | 'soon' | 'later';
   importanceManualOverride?: number | null;
   deadline?: string | null;
@@ -121,6 +122,7 @@ export function exportUserBackup(userId: number): BackupArchiveV2 {
       importanceTier: t.importance_tier || null,
       impactSignals: parseImpactSignalsArray(t.impact_signals),
       timeMode: t.time_mode || (t.deadline ? 'deadline' : 'flexible'),
+      recurrenceRule: t.recurrence_rule || null,
       urgencyPace: t.urgency_pace || 'soon',
       importanceManualOverride: t.importance_manual_override ?? null,
       deadline: t.deadline || null,
@@ -219,6 +221,7 @@ export function normalizeBackupInput(raw: unknown, timezone: string): BackupTask
         importanceTier: item.importanceTier ?? item.importance_tier ?? null,
         impactSignals: parseImpactSignalsArray(item.impactSignals ?? item.impact_signals),
         timeMode,
+        recurrenceRule: item.recurrenceRule ?? item.recurrence_rule ?? null,
         urgencyPace: item.urgencyPace ?? item.urgency_pace ?? 'soon',
         importanceManualOverride: item.importanceManualOverride ?? item.importance_manual_override ?? null,
         deadline,
@@ -365,11 +368,11 @@ export function commitBackupImport(
         const info = db.prepare(`
           INSERT INTO tasks (
             user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-            importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
+            importance_tier, impact_signals, time_mode, recurrence_rule, urgency_pace, importance_manual_override,
             score_scale, completed_dates, deadline, deadline_kind,
             scheduled_start, scheduled_end, is_fixed, is_concurrent, tags, status,
             notes, active_template, source_fingerprint
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           userId,
           item.title,
@@ -380,6 +383,7 @@ export function commitBackupImport(
           item.importanceTier || null,
           JSON.stringify(item.impactSignals || []),
           item.timeMode,
+          item.timeMode === 'daily_fixed' ? item.recurrenceRule || null : null,
           item.urgencyPace || 'soon',
           item.importanceManualOverride ?? null,
           JSON.stringify(item.completedDates || []),

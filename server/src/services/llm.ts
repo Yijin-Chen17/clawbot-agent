@@ -258,6 +258,7 @@ const llmExtractionSchema = z.object({
   importance_tier: z.enum(['vital', 'support', 'minor']).nullable().optional(),
   impact_signals: z.array(z.string()).nullable().optional(),
   time_mode: z.enum(['deadline', 'daily_fixed', 'flexible']).nullable().optional(),
+  recurrence_rule: z.any().nullable().optional(),
   urgency_pace: z.enum(['urgent', 'soon', 'later']).nullable().optional(),
   deadline: z.string().nullable().optional(),
   deadline_kind: z.enum(['hard', 'soft']).nullable().optional(),
@@ -323,6 +324,7 @@ JSON 格式规范：
   "importance_tier": "vital" | "support" | "minor" | null,
   "impact_signals": string[] | null,
   "time_mode": "deadline" | "daily_fixed" | "flexible" | null,
+  "recurrence_rule": string | null,
   "urgency": number | null,
   "dueDate": string | null,
   "deadline": string | null,
@@ -366,7 +368,7 @@ JSON 格式规范：
    - 固定时间任务 (is_fixed: true): 当用户明确指定任务执行的具体时间点或时间段（如“明天晚上19点看论文一小时”、“安排固定任务 明天下午2点到4点部门开会”），提取 is_fixed: true，并填入完整 ISO 8601 字符串 fixed_start 与 fixed_end（给出开始和时长时推算结束时间）。仅表示截止时间（如“明天19点之前完成”）不视为固定任务。
    - 硬截止 (deadline_kind: "hard"): 当用户明确表示“不可逾期/死线/硬截止/必须在此前完成”，设为 "hard"，否则 "soft"。
    - 双线程任务 (is_concurrent: true): 背景性/允许与其他日程并行重叠时设为 true。
-   - 每日固定例行任务: 如"每天下午2点锻炼1小时" / "每天阅读30分钟" -> time_mode: "daily_fixed"。
+   - 周期/每日例行任务: 如"每天下午2点锻炼1小时" / "每周一和周三晚上健身" -> time_mode: "daily_fixed"，指定每周特定日期时填入 recurrence_rule JSON（如 '{"type":"weekly","daysOfWeek":[1,3]}'）。
 2. 删除目标 (delete_item): 提取 delete_target { type, name, date }。
 3. 修改目标 (modify_item): 提取 modify_target。
 4. 状态汇报 (status_update):

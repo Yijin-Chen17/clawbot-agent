@@ -53,6 +53,7 @@ const MIGRATIONS: Migration[] = [
       `);
 
       ensureColumn(db, 'tasks', 'tags', "TEXT DEFAULT '[]'");
+      ensureColumn(db, 'tasks', 'recurrence_rule', 'TEXT DEFAULT NULL');
       ensureColumn(db, 'tasks', 'version', 'INTEGER NOT NULL DEFAULT 1');
       ensureColumn(db, 'tasks', 'active_template', 'INTEGER NOT NULL DEFAULT 1');
       ensureColumn(db, 'tasks', 'source_fingerprint', 'TEXT DEFAULT NULL');
