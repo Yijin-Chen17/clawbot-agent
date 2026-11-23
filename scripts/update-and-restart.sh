@@ -66,7 +66,11 @@ pnpm install
 # 8. 编译构建前端
 echo ""
 echo "🔨 [3/4] 编译前端项目 (pnpm run build)..."
+mkdir -p "${APP_DIR}/client/dist"
+chmod 2775 "${APP_DIR}/client/dist" 2>/dev/null || true
 pnpm run build
+chmod -R g+rwX "${APP_DIR}/client/dist" 2>/dev/null || true
+find "${APP_DIR}/client/dist" -type d -exec chmod g+s {} + 2>/dev/null || true
 
 # 9. 重启或启动 PM2 服务
 echo ""
