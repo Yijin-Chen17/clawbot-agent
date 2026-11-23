@@ -1,5 +1,17 @@
 import { Router } from 'express';
-import { register, login, getMe, updateProfile, uploadAvatar, changePassword, sendRegisterCode, checkUsername, deleteMyAccount } from '../controllers/authController.js';
+import {
+  register,
+  login,
+  getMe,
+  updateProfile,
+  uploadAvatar,
+  changePassword,
+  sendRegisterCode,
+  sendResetPasswordCode,
+  resetPassword,
+  checkUsername,
+  deleteMyAccount,
+} from '../controllers/authController.js';
 import {
   listUsers,
   approveUser,
@@ -55,6 +67,8 @@ export const router = Router();
 // ================= Public Routes =================
 router.get('/auth/check-username', checkUsername);
 router.post('/auth/send-code', sendRegisterCode);
+router.post('/auth/send-reset-code', sendResetPasswordCode);
+router.post('/auth/reset-password', resetPassword);
 router.post('/auth/register', register);
 router.post('/auth/login', login);
 router.get('/calendar/subscribe/:token', exportDedicatedIcal);

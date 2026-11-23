@@ -8,9 +8,9 @@ import { db } from '../config/database.js';
 import { JWT_SECRET } from '../config/env.js';
 import { User } from '../models/types.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
-import { sendEmailVerificationCode, verifyEmailCode, isValidEmail } from '../services/emailService.js';
+import { sendEmailVerificationCode, verifyEmailCode, isValidEmail, type VerificationCodeType } from '../services/emailService.js';
 
-export async function sendRegisterCode(req: Request, res: Response): Promise<void> {
+async function handleSendEmailCode(req: Request, res: Response, type: VerificationCodeType): Promise<void> {
   const { email, lang } = req.body;
   const userLang: 'zh' | 'en' = lang === 'en' ? 'en' : 'zh';
 
@@ -20,11 +20,71 @@ export async function sendRegisterCode(req: Request, res: Response): Promise<voi
   }
 
   try {
-    const result = await sendEmailVerificationCode(email, 'register', userLang);
+    const result = await sendEmailVerificationCode(email, type, userLang);
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message || (userLang === 'en' ? 'Failed to send verification code' : '发送验证码失败') });
   }
+}
+
+export async function sendRegisterCode(req: Request, res: Response): Promise<void> {
+  await handleSendEmailCode(req, res, 'register');
+}
+
+export async function sendResetPasswordCode(req: Request, res: Response): Promise<void> {
+  await handleSendEmailCode(req, res, 'reset_password');
+}
+
+export function resetPassword(req: Request, res: Response): void {
+  const { email, code, newPassword, lang } = req.body;
+  const isEn = lang === 'en';
+
+  if (!email || typeof email !== 'string' || !isValidEmail(email.trim())) {
+    res.status(400).json({ error: isEn ? 'Please enter a valid email address' : '请输入有效的绑定邮箱' });
+    return;
+  }
+
+  if (!code || typeof code !== 'string' || code.trim().length !== 6) {
+    res.status(400).json({ error: isEn ? 'Please enter the 6-digit verification code' : '请输入 6 位邮箱验证码' });
+    return;
+  }
+
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    res.status(400).json({ error: isEn ? 'New password must be at least 6 characters' : '新密码长度至少需要 6 位' });
+    return;
+  }
+
+  const trimmedEmail = email.trim().toLowerCase();
+  const user = db.prepare('SELECT id, status FROM users WHERE LOWER(email) = ?').get(trimmedEmail) as
+    | { id: number; status: string }
+    | undefined;
+
+  if (!user) {
+    res.status(404).json({ error: isEn ? 'No account is bound to this email address' : '该邮箱未绑定任何账号' });
+    return;
+  }
+
+  if (user.status === 'banned') {
+    res.status(403).json({ error: isEn ? 'This account has been banned and cannot reset password' : '该账号已被管理员封禁，无法重置密码' });
+    return;
+  }
+
+  const codeValid = verifyEmailCode(trimmedEmail, code, 'reset_password');
+  if (!codeValid) {
+    res.status(400).json({ error: isEn ? 'Invalid or expired verification code' : '邮箱验证码错误、已失效或已过期，请重新获取' });
+    return;
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const newHash = bcrypt.hashSync(newPassword, salt);
+
+  db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newHash, user.id);
+
+  res.json({
+    message: isEn
+      ? 'Password reset successful! Please sign in with your new password.'
+      : '密码重置成功，请使用新密码登录！',
+  });
 }
 
 export function checkUsername(req: Request, res: Response): void {
@@ -139,7 +199,8 @@ export function login(req: Request, res: Response): void {
     return;
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(username, username) as User | undefined;
+  const trimmedLogin = String(username).trim();
+  const user = db.prepare('SELECT * FROM users WHERE username = ? OR LOWER(email) = ?').get(trimmedLogin, trimmedLogin.toLowerCase()) as User | undefined;
   if (!user || !user.password_hash) {
     res.status(401).json({ error: '账号或密码错误' });
     return;

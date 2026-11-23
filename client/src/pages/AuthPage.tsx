@@ -18,10 +18,14 @@ import {
   XCircle,
 } from 'lucide-react';
 
+type AuthMode = 'login' | 'register' | 'reset';
+
 export const AuthPage: React.FC = () => {
   const { login } = useAuth();
   const { isDark, setThemeMode, themeMode, language, setLanguage } = useTheme();
-  const [isRegister, setIsRegister] = useState(false);
+  const [mode, setMode] = useState<AuthMode>('login');
+  const isRegister = mode === 'register';
+  const isReset = mode === 'reset';
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -30,6 +34,17 @@ export const AuthPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const switchMode = (nextMode: AuthMode, keepSuccess: boolean = false) => {
+    setMode(nextMode);
+    setError(null);
+    if (!keepSuccess) setSuccessMsg(null);
+    setCode('');
+    setPassword('');
+    setConfirmPassword('');
+    setCountdown(0);
+    setUsernameStatus({ status: 'idle', message: '' });
+  };
 
   // 用户名实时查重状态
   const [usernameStatus, setUsernameStatus] = useState<{
@@ -115,7 +130,8 @@ export const AuthPage: React.FC = () => {
     setCodeSending(true);
 
     try {
-      const res = await api.post('/auth/send-code', {
+      const endpoint = isReset ? '/auth/send-reset-code' : '/auth/send-code';
+      const res = await api.post(endpoint, {
         email: trimmedEmail,
         lang: language,
       });
@@ -142,7 +158,24 @@ export const AuthPage: React.FC = () => {
     setError(null);
     setSuccessMsg(null);
 
-    if (!username.trim() || !password) {
+    if (isReset) {
+      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        setError(language === 'zh' ? '请填写正确的绑定邮箱地址' : 'Please enter a valid email address');
+        return;
+      }
+      if (!code.trim() || code.trim().length !== 6) {
+        setError(language === 'zh' ? '请输入 6 位邮箱验证码' : 'Please enter the 6-digit email code');
+        return;
+      }
+      if (password.length < 6) {
+        setError(language === 'zh' ? '新密码长度至少需要 6 位' : 'New password must be at least 6 characters');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError(language === 'zh' ? '两次输入的密码不一致' : 'Passwords do not match');
+        return;
+      }
+    } else if (!username.trim() || !password) {
       setError(language === 'zh' ? '请填写完整的账号与密码' : 'Please fill in both account and password');
       return;
     }
@@ -182,7 +215,23 @@ export const AuthPage: React.FC = () => {
     setLoading(true);
 
     try {
-      if (isRegister) {
+      if (isReset) {
+        const trimmedEmail = email.trim().toLowerCase();
+        const res = await api.post('/auth/reset-password', {
+          email: trimmedEmail,
+          code: code.trim(),
+          newPassword: password,
+          lang: language,
+        });
+        setUsername(trimmedEmail);
+        setSuccessMsg(
+          res.data.message ||
+            (language === 'zh'
+              ? '密码重置成功，请使用新密码登录！'
+              : 'Password reset successful! Please sign in with your new password.')
+        );
+        switchMode('login', true);
+      } else if (isRegister) {
         const res = await api.post('/auth/register', {
           username: username.trim(),
           email: email.trim(),
@@ -270,6 +319,7 @@ export const AuthPage: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {!isReset && (
           <div>
             <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
               {isRegister
@@ -345,12 +395,19 @@ export const AuthPage: React.FC = () => {
               </div>
             )}
           </div>
+          )}
 
-          {isRegister && (
+          {(isRegister || isReset) && (
             <>
               <div>
                 <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-                  {language === 'zh' ? '注册邮箱 (唯一绑定)' : 'Registered Email (Unique)'}
+                  {isReset
+                    ? language === 'zh'
+                      ? '账号绑定邮箱'
+                      : 'Registered Email'
+                    : language === 'zh'
+                    ? '注册邮箱 (唯一绑定)'
+                    : 'Registered Email (Unique)'}
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
@@ -405,26 +462,57 @@ export const AuthPage: React.FC = () => {
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-              {language === 'zh' ? '密码 (6位以上)' : 'Password (min 6 chars)'}
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300">
+                {isReset
+                  ? language === 'zh'
+                    ? '新密码 (6位以上)'
+                    : 'New Password (min 6 chars)'
+                  : language === 'zh'
+                  ? '密码 (6位以上)'
+                  : 'Password (min 6 chars)'}
+              </label>
+              {mode === 'login' && (
+                <button
+                  type="button"
+                  onClick={() => switchMode('reset')}
+                  className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  {language === 'zh' ? '忘记密码？' : 'Forgot password?'}
+                </button>
+              )}
+            </div>
             <div className="relative">
               <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={language === 'zh' ? '请输入密码' : 'Enter password'}
+                placeholder={
+                  isReset
+                    ? language === 'zh'
+                      ? '请输入新密码'
+                      : 'Enter new password'
+                    : language === 'zh'
+                    ? '请输入密码'
+                    : 'Enter password'
+                }
                 className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-2xl focus:bg-white dark:focus:bg-[#232425] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm font-medium transition"
                 required
               />
             </div>
           </div>
 
-          {isRegister && (
+          {(isRegister || isReset) && (
             <div>
               <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1.5">
-                {language === 'zh' ? '确认密码' : 'Confirm Password'}
+                {isReset
+                  ? language === 'zh'
+                    ? '确认新密码'
+                    : 'Confirm New Password'
+                  : language === 'zh'
+                  ? '确认密码'
+                  : 'Confirm Password'}
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
@@ -450,7 +538,11 @@ export const AuthPage: React.FC = () => {
             ) : (
               <>
                 <span>
-                  {isRegister
+                  {isReset
+                    ? language === 'zh'
+                      ? '确认重置密码'
+                      : 'Reset Password'
+                    : isRegister
                     ? language === 'zh'
                       ? '立即注册并进入系统'
                       : 'Register & Enter Workspace'
@@ -466,7 +558,11 @@ export const AuthPage: React.FC = () => {
 
         <div className="mt-6 pt-5 border-t border-gray-100 dark:border-neutral-800 flex items-center justify-between text-xs sm:text-sm">
           <span className="text-gray-500 dark:text-neutral-400">
-            {isRegister
+            {isReset
+              ? language === 'zh'
+                ? '想起密码了？'
+                : 'Remembered your password?'
+              : isRegister
               ? language === 'zh'
                 ? '已有账号？'
                 : 'Already have an account?'
@@ -476,15 +572,10 @@ export const AuthPage: React.FC = () => {
           </span>
           <button
             type="button"
-            onClick={() => {
-              setIsRegister(!isRegister);
-              setError(null);
-              setSuccessMsg(null);
-              setUsernameStatus({ status: 'idle', message: '' });
-            }}
+            onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
             className="text-blue-600 dark:text-blue-400 hover:underline font-semibold transition cursor-pointer"
           >
-            {isRegister
+            {mode !== 'login'
               ? language === 'zh'
                 ? '返回登录'
                 : 'Back to Sign In'
