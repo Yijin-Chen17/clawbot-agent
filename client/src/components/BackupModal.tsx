@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { TaskItem } from '../types/task';
 import { QUADRANTS_CONFIG } from '../constants/quadrants';
 import { api } from '../api/client';
+import { useTheme } from '../context/ThemeContext';
 import { X, Download, Upload, Copy, Check, RotateCcw, FileText } from 'lucide-react';
 
 interface BackupModalProps {
