@@ -9,6 +9,7 @@ export interface User {
   status: 'pending' | 'approved' | 'rejected' | 'banned';
   balance?: number;
   token_secret: string;
+  session_version?: number;
   created_at: string;
   updated_at: string;
 }
@@ -17,6 +18,8 @@ export interface WorkSlot {
   start: string; // "09:00"
   end: string;   // "12:00"
 }
+
+export type WeixinConnectionStatus = 'disconnected' | 'connected' | 'rebind_required';
 
 export interface UserSettings {
   user_id: number;
@@ -34,7 +37,10 @@ export interface UserSettings {
   reminder_before_end_minutes: number;
   calendar_sync_interval_minutes: number;
   advance_deadline_days?: number;
+  timezone?: string;
+  calendar_color?: string | null;
   weixin_connected?: number;
+  weixin_status?: WeixinConnectionStatus;
   weixin_bot_token?: string;
   weixin_bot_id?: string;
   weixin_user_id?: string;
@@ -52,7 +58,7 @@ export interface RedemptionCode {
   code: string;
   amount: number;
   status: 'active' | 'used' | 'disabled';
-  created_by?: number;
+  created_by?: number | null;
   used_by_user_id?: number | null;
   used_by_username?: string | null;
   used_at?: string | null;
@@ -70,7 +76,11 @@ export interface CalendarSubscription {
   user_id: number;
   name: string;
   url: string;
+  color?: string | null;
   last_sync_at: string | null;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  current_generation?: number;
   sync_status: 'ok' | 'error';
   error_message: string | null;
   created_at: string;
@@ -81,6 +91,11 @@ export interface ExternalEvent {
   user_id: number;
   subscription_id?: number | null;
   uid?: string | null;
+  generation?: number;
+  recurrence_id?: string | null;
+  status?: string;
+  transparency?: string;
+  occurrence_start?: string | null;
   title: string;
   start_time: string; // ISO
   end_time: string;   // ISO
@@ -109,12 +124,178 @@ export interface Task {
   scheduled_start: string | null; // ISO
   scheduled_end: string | null;   // ISO
   schedule_blocks?: string | null; // JSON array of scheduled focus blocks
+  tags?: string | null; // JSON array of tag strings
+  version?: number;
+  active_template?: number;
+  source_fingerprint?: string | null;
   is_fixed?: number;        // 1 = 固定任务，不参与自动重排
   is_concurrent?: number;   // 1 = 双线程任务，可与其他任务或日程重叠
   status: 'pending_slot' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'delayed';
   notes?: string | null;
   start_reminder_sent: number;
   end_reminder_sent: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TaskInstanceStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type PlanStatus = 'scheduled' | 'partial' | 'pending' | 'conflict';
+
+export interface TaskInstance {
+  id: number;
+  task_id: number;
+  user_id: number;
+  business_date: string; // YYYY-MM-DD in account timezone
+  instance_type: 'once' | 'daily';
+  status: TaskInstanceStatus;
+  estimated_minutes: number;
+  completed_minutes: number;
+  plan_status: PlanStatus;
+  allocated_minutes: number;
+  unallocated_minutes: number;
+  plan_reason?: string | null;
+  version: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProgressAction =
+  | 'start'
+  | 'complete_part'
+  | 'complete'
+  | 'cancel'
+  | 'reopen'
+  | 'extend'
+  | 'adjust_estimate';
+
+export interface ProgressEvent {
+  id: number;
+  user_id: number;
+  command_id: string;
+  instance_id: number;
+  block_id?: string | null;
+  action: ProgressAction;
+  delta_minutes: number;
+  target_remaining_minutes?: number | null;
+  reason?: string | null;
+  created_at: string;
+}
+
+export interface SchedulePlan {
+  id: number;
+  user_id: number;
+  version: number;
+  trigger_source: string;
+  status: 'committed' | 'superseded';
+  summary?: string | null;
+  calendar_generation_snapshot?: string | null;
+  created_at: string;
+}
+
+export type ScheduleBlockStatus =
+  | 'planned'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'conflict'
+  | 'superseded';
+
+export interface ScheduleBlockRecord {
+  id: string;
+  user_id: number;
+  plan_version: number;
+  instance_id: number;
+  task_id: number;
+  start_time: string; // UTC ISO
+  end_time: string;   // UTC ISO
+  duration_minutes: number;
+  part_index: number;
+  total_parts: number;
+  is_fixed: number;
+  is_committed: number;
+  is_concurrent: number;
+  status: ScheduleBlockStatus;
+  replaced_from_block_id?: string | null;
+  energy_zone?: string | null;
+  strategy_label?: string | null;
+  break_after_minutes?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleProposalRecord {
+  id: string;
+  user_id: number;
+  base_plan_version: number;
+  reason_type: 'deadline_risk' | 'priority_gain' | 'extend_conflict';
+  reason_text: string;
+  payload_json: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'superseded';
+  expires_at: string;
+  resolved_at?: string | null;
+  created_at: string;
+}
+
+export interface CommandInboxRecord {
+  id: number;
+  user_id: number;
+  channel: 'web' | 'weixin_ilink' | 'webhook' | 'system';
+  channel_account_id: string;
+  sender_id: string;
+  external_msg_id: string;
+  idempotency_key?: string | null;
+  payload_hash: string;
+  status: 'received' | 'processing' | 'completed' | 'failed';
+  response_json?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationDraft {
+  id: number;
+  user_id: number;
+  channel: string;
+  thread_key: string;
+  intent: string;
+  draft_json: string;
+  missing_fields_json?: string | null;
+  version: number;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type NotificationStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'unknown'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
+
+export interface NotificationOutboxRecord {
+  id: number;
+  user_id: number;
+  instance_id: number;
+  block_id: string;
+  plan_version: number;
+  reminder_type: 'start' | 'end';
+  channel: string;
+  scheduled_fire_at: string;
+  expires_at: string;
+  status: NotificationStatus;
+  idempotency_key: string;
+  attempt_count: number;
+  next_retry_at?: string | null;
+  provider_msg_id?: string | null;
+  last_error?: string | null;
+  lease_owner?: string | null;
+  lease_until?: string | null;
+  payload_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -129,31 +310,33 @@ export interface ConversationState {
 }
 
 export interface LLMExtractionResult {
-  swap_decision?: 'confirm' | 'reject' | 'other' | null; // 日程调整多轮确认时的判断结果
+  swap_decision?: 'confirm' | 'reject' | 'other' | null;
   intent: 'create_task' | 'status_update' | 'query_schedule' | 'delete_item' | 'modify_item' | 'other';
   title?: string | null;
   description?: string | null;
   duration_minutes?: number | null;
-  urgency?: number | null; // 0 - 100 (or legacy 0-10)
-  importance?: number | null; // 0 - 100 (or legacy 0-10)
+  urgency?: number | null;
+  importance?: number | null;
   importance_tier?: 'vital' | 'support' | 'minor' | null;
   impact_signals?: string[] | null;
   time_mode?: 'deadline' | 'daily_fixed' | 'flexible' | null;
   urgency_pace?: 'urgent' | 'soon' | 'later' | null;
-  deadline?: string | null; // ISO 8601 string or YYYY-MM-DD
-  dueDate?: string | null; // 对齐 oxoxox-oxox: YYYY-MM-DD
-  estimatedMinutes?: number | null; // 对齐 oxoxox-oxox: 预计耗时分钟数
-  tags?: string[] | null; // 标签列表
-  is_fixed?: boolean | null; // 是否为指定时间的固定任务
-  is_concurrent?: boolean | null; // 是否为双线程任务（允许重叠）
-  fixed_start?: string | null; // 固定任务开始时间
-  fixed_end?: string | null; // 固定任务结束时间
-  allow_split?: boolean | null; // 是否允许拆分
-  status_action?: 'complete' | 'complete_part' | 'extend' | 'reschedule' | 'cancel' | null;
+  deadline?: string | null;
+  deadline_kind?: 'hard' | 'soft' | null;
+  dueDate?: string | null;
+  estimatedMinutes?: number | null;
+  tags?: string[] | null;
+  is_fixed?: boolean | null;
+  is_concurrent?: boolean | null;
+  fixed_start?: string | null;
+  fixed_end?: string | null;
+  allow_split?: boolean | null;
+  status_action?: 'start' | 'complete' | 'complete_part' | 'extend' | 'reschedule' | 'cancel' | 'reopen' | 'stop_daily' | null;
   extend_minutes?: number | null;
   target_task_name?: string | null;
-  completed_part_index?: number | null; // 完成的分段序号（如第1段）
-  completed_minutes?: number | null; // 本次完成的耗时分钟数（如完成了2小时=120）
+  target_date?: string | null;
+  completed_part_index?: number | null;
+  completed_minutes?: number | null;
   delete_target?: {
     type?: 'task' | 'calendar_event' | 'auto';
     name?: string | null;
@@ -165,10 +348,13 @@ export interface LLMExtractionResult {
     new_title?: string | null;
     new_duration_minutes?: number | null;
     new_deadline?: string | null;
+    deadline_kind?: 'hard' | 'soft' | null;
     new_start?: string | null;
     new_end?: string | null;
     is_fixed?: boolean | null;
     is_concurrent?: boolean | null;
+    tags?: string[] | null;
+    notes?: string | null;
   } | null;
 }
 

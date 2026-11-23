@@ -11,6 +11,12 @@ export interface Window {
   day: number;
 }
 
+export type OptimizerRejectReason =
+  | 'hard_deadline_violation'
+  | 'insufficient_capacity'
+  | 'outside_work_window'
+  | 'search_budget_exhausted';
+
 export function deadlineMs(value?: string | null): number {
   if (!value) return Infinity;
   const parsed = new Date(/^\d{4}-\d\d-\d\d$/.test(value) ? value + 'T23:59:59.999' : value).getTime();
@@ -36,7 +42,6 @@ export function recurringDebt(task: Pick<Task, 'created_at' | 'completed_dates'>
   const date = new Date(today);
   date.setHours(0, 0, 0, 0);
   let debt = 0;
-  // Older instances contribute less than 0.001 in total.
   for (let age = 0; age < 40; age++) {
     date.setDate(date.getDate() - 1);
     if (date < created) break;
@@ -46,7 +51,7 @@ export function recurringDebt(task: Pick<Task, 'created_at' | 'completed_dates'>
   return debt;
 }
 
-interface Placement {
+export interface Placement {
   index: number;
   start: number;
   minutes: number;
@@ -66,16 +71,37 @@ interface State {
   tie: number;
 }
 
-export function selectCalendarBlocks(
-  tasks: Task[], windows: Window[], future: Window[], options: {
-    cap: number; rest: number; maxChunk: number; minChunk: number; allowSplit: boolean;
+export interface SelectCalendarBlocksResult {
+  placements: Placement[];
+  rejectedReasons: Map<number, OptimizerRejectReason>;
+}
+
+export function selectCalendarBlocksDetailed(
+  tasks: Task[],
+  windows: Window[],
+  future: Window[],
+  options: {
+    cap: number;
+    rest: number;
+    maxChunk: number;
+    minChunk: number;
+    allowSplit: boolean;
+    advanceDeadlineDays?: number;
     debt?: Map<number, number>;
-  },
-): Placement[] {
-  if (!windows.length || !tasks.length) return [];
+  }
+): SelectCalendarBlocksResult {
+  const rejectedReasons = new Map<number, OptimizerRejectReason>();
+  if (!tasks.length) return { placements: [], rejectedReasons };
+  if (!windows.length) {
+    tasks.forEach(t => rejectedReasons.set(t.id, 'outside_work_window'));
+    return { placements: [], rejectedReasons };
+  }
+
   const allWindows = [...windows, ...future];
   const day = windows[0].day;
   const { cap, rest, maxChunk, minChunk, allowSplit } = options;
+  const advanceDays = Math.max(0, Number(options.advanceDeadlineDays ?? 0));
+
   const items = tasks.map(task => {
     const duration = Math.max(1, Math.ceil(task.duration_minutes || 45));
     let plan: number[] = [];
@@ -84,13 +110,23 @@ export function selectCalendarBlocks(
       if (Array.isArray(value) && value.every(n => Number.isInteger(n) && n > 0)) plan = value;
     } catch {}
     const importance = normalizeScoreTo100(task.importance, task.score_scale) / 100;
+    const due = deadlineMs(task.deadline);
+    const softTargetDue = Number.isFinite(due) && advanceDays > 0
+      ? Math.max(windows[0].start, due - advanceDays * 86400_000)
+      : due;
     return {
-      duration, plan, planTotal: plan.reduce((a, b) => a + b, 0),
-      importance, due: deadlineMs(task.deadline), hard: task.deadline_kind === 'hard' && Number.isFinite(deadlineMs(task.deadline)),
+      duration,
+      plan,
+      planTotal: plan.reduce((a, b) => a + b, 0),
+      importance,
+      due,
+      softTargetDue,
+      hard: task.deadline_kind === 'hard' && Number.isFinite(due),
       extra: task.urgency_pace === 'urgent' ? 1 : task.urgency_pace === 'later' ? 0 : task.urgency_pace === 'soon' ? 0.5 : 0,
       missed: task.time_mode === 'daily_fixed' ? recurringDebt(task, new Date(day)) : 0,
     };
   });
+
   const phase = (index: number, left: number) => {
     const { plan, planTotal } = items[index];
     if (!allowSplit) return left;
@@ -99,9 +135,9 @@ export function selectCalendarBlocks(
       if (done < minutes) return Math.min(left, minutes - done);
       done -= minutes;
     }
-    // Balance fallback phases so the last one is not a token fragment.
     return Math.ceil(left / Math.ceil(left / maxChunk));
   };
+
   const capacity = (cursor: number, due: number, used: number) => {
     const byDay = new Map<number, number>();
     for (const w of allWindows) {
@@ -109,21 +145,23 @@ export function selectCalendarBlocks(
       if (minutes > 0) byDay.set(w.day, (byDay.get(w.day) || 0) + minutes);
     }
     let total = 0;
-    for (const [key, value] of byDay) total += Math.min(value, cap - (key === day ? used : 0));
+    for (const [key, value] of byDay) total += Math.min(value, Math.max(0, cap - (key === day ? used : 0)));
     return total;
   };
+
   const pressure = (index: number, remaining: number, cursor: number, used: number) => {
-    const { due, hard } = items[index];
+    const { due, softTargetDue, hard } = items[index];
     if (!remaining || !Number.isFinite(due)) return 0;
-    const available = capacity(cursor, due, used);
+    const effectiveDue = hard ? due : softTargetDue;
+    const available = capacity(cursor, effectiveDue, used);
     const load = remaining / Math.max(available, 1);
     const raw = deadlinePressure(load, hard) + (!hard ? Math.max(0, cursor - due) / (7 * 86400_000) : 0);
     return raw / (1 + raw);
   };
 
-  // Find an actual placement for each hard phase, including rests and daily limits.
-  // A bounded search may return no witness even when an alternative exists.
   const hard = items.map((item, i) => item.hard ? i : -1).filter(i => i >= 0).sort((a, b) => items[a].due - items[b].due);
+  let witnessBudgetExhausted = false;
+
   const hasWitness = (state: State, required: number[]): boolean => {
     if (required.every(i => !state.remaining[i])) return true;
     let demand = 0;
@@ -135,7 +173,11 @@ export function selectCalendarBlocks(
     let nodes = 0;
     const visit = (window: number, cursor: number, used: number): boolean => {
       if (required.every(i => !left[i])) return true;
-      if (++nodes > 512 || window >= allWindows.length) return false;
+      if (++nodes > 512) {
+        witnessBudgetExhausted = true;
+        return false;
+      }
+      if (window >= allWindows.length) return false;
       const w = allWindows[window];
       for (const i of required) {
         if (!left[i]) continue;
@@ -155,16 +197,33 @@ export function selectCalendarBlocks(
 
   const terminal = windows[windows.length - 1].end;
   const initial: State = {
-    cursor: windows[0].start, window: 0, used: 0, remaining: items.map(item => item.duration),
-    debt: tasks.map(task => options.debt?.get(task.id) || 0), last: -1, blocks: [], cost: 0, score: 0, tie: 0,
+    cursor: windows[0].start,
+    window: 0,
+    used: 0,
+    remaining: items.map(item => item.duration),
+    debt: tasks.map(task => options.debt?.get(task.id) || 0),
+    last: -1,
+    blocks: [],
+    cost: 0,
+    score: 0,
+    tie: 0,
   };
+
   const required = hasWitness(initial, hard) ? hard : hard.reduce<number[]>((accepted, i) => {
     const next = [...accepted, i];
     return hasWitness(initial, next) ? next : accepted;
   }, []);
   const rejected = new Set(hard.filter(i => !required.includes(i)));
+  for (const idx of rejected) {
+    rejectedReasons.set(
+      tasks[idx].id,
+      witnessBudgetExhausted ? 'search_budget_exhausted' : 'hard_deadline_violation'
+    );
+  }
+
   const fairness = (debt: number[], remaining: number[]) =>
     debt.reduce((sum, d, i) => sum + (remaining[i] ? (d / BLOCK) ** 2 : 0), 0);
+
   const rank = (s: State) => {
     const progress = items.reduce((sum, item, i) => {
       const before = pressure(i, item.duration, terminal, s.used);
@@ -206,8 +265,12 @@ export function selectCalendarBlocks(
         candidate.tie = topsis(candidate);
         next.push(candidate);
       };
-      push({ ...s, window: s.window + 1, cursor: allWindows[s.window + 1]?.start ?? terminal,
-        used: allWindows[s.window + 1]?.day === day ? s.used : 0 });
+      push({
+        ...s,
+        window: s.window + 1,
+        cursor: allWindows[s.window + 1]?.start ?? terminal,
+        used: allWindows[s.window + 1]?.day === day ? s.used : 0,
+      });
       const eligible = items.map((item, i) => {
         if (rejected.has(i) || !s.remaining[i] || (item.hard && s.cursor >= item.due)) return 0;
         const urgency = Math.min(1, 0.25 * item.extra + 0.75 * pressure(i, s.remaining[i], s.cursor, s.used) + 0.15 * item.missed);
@@ -227,24 +290,60 @@ export function selectCalendarBlocks(
         const sum = eligible.reduce((a, b) => a + b, 0);
         const debt = s.debt.map((d, j) => d + minutes * eligible[j] / sum - (i === j ? minutes : 0));
         const cut = minutes < desired ? 0.5 + 0.5 * (1 - minutes / desired) ** 2 : 0;
-        // Account for the cost of letting other overdue work wait during this block.
-        const overdueWaiting = items.reduce((sum, other, j) => {
-          if (j === i || !s.remaining[j] || other.hard || !Number.isFinite(other.due)) return sum;
+        const overdueWaiting = items.reduce((sumW, other, j) => {
+          if (j === i || !s.remaining[j] || other.hard || !Number.isFinite(other.due)) return sumW;
           const overdueDays = Math.max(0, (s.cursor - other.due) / 86400_000);
-          return sum + (overdueDays > 0 ? 0.6 * other.importance * (1 + Math.min(overdueDays / 7, 1)) : 0);
+          return sumW + (overdueDays > 0 ? 0.6 * other.importance * (1 + Math.min(overdueDays / 7, 1)) : 0);
         }, 0) * minutes / BLOCK;
         const switching = s.last >= 0 && s.last !== i ? 0.12 : 0;
         const night = new Date(s.cursor).getHours() < 6 ? 0.15 : 0;
         const onTime = !item.hard && end <= item.due && Number.isFinite(item.due) ? 0.2 : 0;
         const delay = Math.max(0, s.cursor - initial.cursor) / Math.max(MINUTE, terminal - initial.cursor);
-        push({ ...s, cursor: end + pause * MINUTE, used: s.used + minutes, remaining, debt, last: i,
+        push({
+          ...s,
+          cursor: end + pause * MINUTE,
+          used: s.used + minutes,
+          remaining,
+          debt,
+          last: i,
           blocks: [...s.blocks, { index: i, start: s.cursor, minutes, rest: pause }],
-          cost: s.cost + cut + switching + overdueWaiting + (night - onTime + 0.08 * delay * item.importance + fairness(debt, remaining)) * minutes / BLOCK });
+          cost: s.cost + cut + switching + overdueWaiting + (night - onTime + 0.08 * delay * item.importance + fairness(debt, remaining)) * minutes / BLOCK,
+        });
       }
     }
     next.sort(compare);
     beam = next.slice(0, WIDTH);
   }
   if (best && options.debt) tasks.forEach((task, i) => options.debt!.set(task.id, best!.debt[i]));
-  return best?.blocks || [];
+
+  // Mark remaining unplaced tasks
+  if (best) {
+    tasks.forEach((task, i) => {
+      if (best!.remaining[i] > 0 && !rejectedReasons.has(task.id)) {
+        rejectedReasons.set(
+          task.id,
+          items[i].hard ? 'hard_deadline_violation' : 'insufficient_capacity'
+        );
+      }
+    });
+  }
+
+  return { placements: best?.blocks || [], rejectedReasons };
+}
+
+export function selectCalendarBlocks(
+  tasks: Task[],
+  windows: Window[],
+  future: Window[],
+  options: {
+    cap: number;
+    rest: number;
+    maxChunk: number;
+    minChunk: number;
+    allowSplit: boolean;
+    advanceDeadlineDays?: number;
+    debt?: Map<number, number>;
+  }
+): Placement[] {
+  return selectCalendarBlocksDetailed(tasks, windows, future, options).placements;
 }

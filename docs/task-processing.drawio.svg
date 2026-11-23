@@ -1,0 +1,154 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1220" height="1385" viewBox="0 0 1220 1385" content="&lt;mxfile host=&quot;app.diagrams.net&quot; type=&quot;device&quot;&gt;&lt;diagram name=&quot;任务处理逻辑流架构&quot; id=&quot;task-processing&quot;&gt;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&lt;/diagram&gt;&lt;/mxfile&gt;">
+  <title>任务处理逻辑流架构</title>
+  <desc>实线表示命令或数据的流向。任务实例保存执行事实，计划版本保存未来排程，投递记录保存渠道回执。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b7180" />
+    </marker>
+  </defs>
+  <rect width="1220" height="1385" fill="white" />
+  <text x="48" y="58" fill="#193545" text-anchor="start" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="33" font-weight="bold">任务处理逻辑流架构</text>
+  <text x="48" y="93" fill="#475f6d" text-anchor="start" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="normal">实线表示命令或数据的流向。任务实例保存执行事实，计划版本保存未来排程，投递记录保存渠道回执。</text>
+  <polyline points="363.0,162.0 457.0,162.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,162.0 857.0,162.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,201.0 610.0,258.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="363.0,297.0 457.0,297.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,297.0 857.0,297.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="1010.0,258.0 1010,227 686.5,227 686.5,201.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,336.0 610.0,393.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="457.0,432.0 363.0,432.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,432.0 857.0,432.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,471.0 610.0,528.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="1010.0,471.0 1010,501 686.5,501 686.5,528.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="363.0,567.0 457.0,567.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,567.0 857.0,567.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="1010.0,606.0 1010.0,663.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="857.0,702.0 763.0,702.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,606.0 610.0,656.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="457.0,586.5 403,586.5 403,636 210,636 210.0,663.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="363.0,702.0 399,702 399,647 610,647 610.0,656.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="457.0,702.0 407,702 407,770 210,770 210.0,798.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="57.0,837.0 30,837 30,486 533.5,486 533.5,528.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,748.0 610.0,798.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="457.0,837.0 403,837 403,902 210,902 210.0,933.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,876.0 610.0,933.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,972.0 857.0,972.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="1010.0,1011.0 1010,1038 819,1038 819,952.5 763.0,952.5" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,1011.0 610.0,1068.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="610.0,1146.0 610.0,1203.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <polyline points="763.0,1242.0 1185,1242 1185,112 610,112 610.0,123.0" fill="none" stroke="#5b7180" stroke-width="1.6" marker-end="url(#arrow)" />
+  <rect x="57.0" y="123.0" width="306" height="78" rx="11" fill="#f0eef9" stroke="#9085ad" stroke-width="1.5" />
+  <text x="210" y="158" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">入口适配器</text>
+  <text x="210" y="180" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">网页 API、微信、Webhook、日切事件</text>
+  <rect x="457.0" y="123.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="610" y="158" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">命令入箱</text>
+  <text x="610" y="180" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">校验账号与来源；按命令或消息 ID 去重</text>
+  <rect x="857.0" y="123.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="1010" y="158" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">返回已受理结果</text>
+  <text x="1010" y="180" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">重复命令复用处理中状态或最终回执</text>
+  <rect x="457.0" y="258.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="610" y="293" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">命令解析与目标校验</text>
+  <text x="610" y="315" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">表单直接映射；核对实例、日期和分段 ID</text>
+  <rect x="57.0" y="258.0" width="306" height="78" rx="11" fill="#f0eef9" stroke="#9085ad" stroke-width="1.5" />
+  <text x="210" y="293" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">自然语言与模型服务</text>
+  <text x="210" y="315" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">提取意图或估时；官方额度按调用结算</text>
+  <rect x="857.0" y="258.0" width="306" height="78" rx="11" fill="#fff1da" stroke="#b88841" stroke-width="1.5" />
+  <text x="1010" y="293" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">会话草稿</text>
+  <text x="1010" y="315" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">字段缺失或对象不唯一时，保存版本并追问</text>
+  <rect x="457.0" y="393.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="610" y="428" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">任务与实例服务</text>
+  <text x="610" y="450" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">一次任务建实例；每日模板按本地日期派生</text>
+  <rect x="57.0" y="393.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="210" y="428" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">执行记录</text>
+  <text x="210" y="450" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">开始、分段完成、取消和重开按事件去重</text>
+  <rect x="857.0" y="393.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="1010" y="428" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">实例终止</text>
+  <text x="1010" y="450" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">完成或取消：释放占用，撤销待发提醒</text>
+  <rect x="57.0" y="528.0" width="306" height="78" rx="11" fill="#f0eef9" stroke="#9085ad" stroke-width="1.5" />
+  <text x="210" y="563" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">约束快照</text>
+  <text x="210" y="585" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">工作窗、忙时、固定块、双轨容量与截止</text>
+  <rect x="457.0" y="528.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="610" y="563" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">规划器</text>
+  <text x="610" y="585" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">读取剩余分钟，仅分配未来可移动块</text>
+  <rect x="857.0" y="528.0" width="306" height="78" rx="11" fill="#fff1da" stroke="#b88841" stroke-width="1.5" />
+  <text x="1010" y="563" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">提案服务</text>
+  <text x="1010" y="585" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">移动已承诺时段前，保存版本并请求确认</text>
+  <rect x="57.0" y="663.0" width="306" height="78" rx="11" fill="#f9eae5" stroke="#b48773" stroke-width="1.5" />
+  <text x="210" y="698" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">待安排或部分排入</text>
+  <text x="210" y="720" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">列出未排分钟及原因，硬截止须完整可行</text>
+  <polygon points="610,656.0 763.0,702 610,748.0 457.0,702" fill="#fff1da" stroke="#b88841" stroke-width="1.5" />
+  <text x="610" y="708" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">提交前版本仍有效？</text>
+  <rect x="857.0" y="663.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="1010" y="698" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">处理用户决定</text>
+  <text x="1010" y="720" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">接受用提案；拒绝用合法备选或待安排</text>
+  <rect x="57.0" y="798.0" width="306" height="78" rx="11" fill="#f9eae5" stroke="#b48773" stroke-width="1.5" />
+  <text x="210" y="833" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">失效候选作废</text>
+  <text x="210" y="855" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">重读任务、忙时和当前计划版本</text>
+  <rect x="457.0" y="798.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="610" y="833" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">计划提交事务 · SQLite</text>
+  <text x="610" y="855" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">原子写计划版、稳定块 ID 与通知变更</text>
+  <rect x="57.0" y="933.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="210" y="968" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">统一查询</text>
+  <text x="210" y="990" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">按区间读块，供看板、微信与 ICS 使用</text>
+  <rect x="457.0" y="933.0" width="306" height="78" rx="11" fill="#edf4fa" stroke="#7796ac" stroke-width="1.5" />
+  <text x="610" y="968" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">通知投递服务</text>
+  <text x="610" y="990" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">校验实例、计划版本与有效期，再发送</text>
+  <rect x="857.0" y="933.0" width="306" height="78" rx="11" fill="#f9eae5" stroke="#b48773" stroke-width="1.5" />
+  <text x="1010" y="968" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">失败或结果未知</text>
+  <text x="1010" y="990" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">失败退避；未知查回执；过期停止投递</text>
+  <rect x="457.0" y="1068.0" width="306" height="78" rx="11" fill="#e0f3e9" stroke="#518b71" stroke-width="1.5" />
+  <text x="610" y="1103" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">记录渠道回执</text>
+  <text x="610" y="1125" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">渠道接受仅更新投递状态</text>
+  <rect x="457.0" y="1203.0" width="306" height="78" rx="11" fill="#f0eef9" stroke="#9085ad" stroke-width="1.5" />
+  <text x="610" y="1238" fill="#193545" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="bold">用户回复或在网页操作</text>
+  <text x="610" y="1260" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="15" font-weight="normal">携带实例与块 ID，再次进入命令入箱</text>
+  <rect x="791.0" y="153.0" width="38" height="18" fill="white" />
+  <text x="810.0" y="167.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">重复</text>
+  <rect x="584.0" y="220.5" width="52" height="18" fill="white" />
+  <text x="610.0" y="234.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">新命令</text>
+  <rect x="377.0" y="288.0" width="66" height="18" fill="white" />
+  <text x="410.0" y="302.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">解析结果</text>
+  <rect x="784.0" y="288.0" width="52" height="18" fill="white" />
+  <text x="810.0" y="302.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">待补充</text>
+  <rect x="815.25" y="218.0" width="66" height="18" fill="white" />
+  <text x="848.25" y="232.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">用户补充</text>
+  <rect x="591.0" y="355.5" width="38" height="18" fill="white" />
+  <text x="610.0" y="369.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">有效</text>
+  <rect x="384.0" y="423.0" width="52" height="18" fill="white" />
+  <text x="410.0" y="437.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">记进度</text>
+  <rect x="791.0" y="423.0" width="38" height="18" fill="white" />
+  <text x="810.0" y="437.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">终态</text>
+  <rect x="577.0" y="490.5" width="66" height="18" fill="white" />
+  <text x="610.0" y="504.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">待排工时</text>
+  <rect x="808.25" y="492.0" width="80" height="18" fill="white" />
+  <text x="848.25" y="506.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">释放后重排</text>
+  <rect x="391.0" y="558.0" width="38" height="18" fill="white" />
+  <text x="410.0" y="572.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">输入</text>
+  <rect x="784.0" y="558.0" width="52" height="18" fill="white" />
+  <text x="810.0" y="572.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">需确认</text>
+  <rect x="577.0" y="622.0" width="66" height="18" fill="white" />
+  <text x="610.0" y="636.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">直接提交</text>
+  <rect x="273.5" y="627.0" width="66" height="18" fill="white" />
+  <text x="306.5" y="641.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">容量不足</text>
+  <rect x="485.5" y="638.0" width="38" height="18" fill="white" />
+  <text x="504.5" y="652.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">候选</text>
+  <rect x="296.5" y="761.0" width="24" height="18" fill="white" />
+  <text x="308.5" y="775.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">否</text>
+  <rect x="11.0" y="652.5" width="38" height="18" fill="white" />
+  <text x="30.0" y="666.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">重算</text>
+  <rect x="598.0" y="764.0" width="24" height="18" fill="white" />
+  <text x="610.0" y="778.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">是</text>
+  <rect x="411.0" y="828.0" width="38" height="18" fill="white" />
+  <text x="430.0" y="842.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">发布</text>
+  <rect x="791.0" y="963.0" width="38" height="18" fill="white" />
+  <text x="810.0" y="977.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">异常</text>
+  <rect x="895.5" y="1029.0" width="38" height="18" fill="white" />
+  <text x="914.5" y="1043.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">重试</text>
+  <rect x="577.0" y="1030.5" width="66" height="18" fill="white" />
+  <text x="610.0" y="1044.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">渠道接受</text>
+  <rect x="570.0" y="1165.5" width="80" height="18" fill="white" />
+  <text x="610.0" y="1179.5" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">收到后反馈</text>
+  <rect x="1159.0" y="668.0" width="52" height="18" fill="white" />
+  <text x="1185.0" y="682.0" fill="#475f6d" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="normal">新命令</text>
+</svg>

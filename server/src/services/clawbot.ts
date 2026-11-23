@@ -5,19 +5,27 @@ import { normalizeScoreTo100 } from '../utils/priorityAlgorithm.js';
 
 export const templates = {
   /**
-   * 当任务关键字段缺失时，向用户索取补充信息的模板
+   * 当任务关键字段缺失时，向用户索取实际缺失字段的模板（M03, M07）
    */
   askMissingFields: (
     title: string,
     missing: {
-      duration: boolean;
-      deadline: boolean;
-      urgency: boolean;
-      importance: boolean;
+      duration?: boolean;
+      deadline?: boolean;
+      urgency?: boolean;
+      importance?: boolean;
+      fixed_start?: boolean;
+      fixed_end?: boolean;
     }
   ) => {
     const list: string[] = [];
-    if (missing.duration) {
+    if (missing.fixed_start) {
+      list.push(`• 固定开始时间（例如“明天下午2点”）？`);
+    }
+    if (missing.fixed_end) {
+      list.push(`• 固定结束时间或持续时长（例如“到下午4点”或“持续2小时”）？`);
+    }
+    if (missing.duration && !missing.fixed_end) {
       list.push(`• 预计耗时多少分钟？`);
     }
     if (missing.deadline) {
@@ -31,7 +39,7 @@ export const templates = {
   },
 
   /**
-   * 日程规划成功提醒 (精简直观，支持分段安排展示与双线程/固定时间任务标注)
+   * 日程规划成功提醒 (支持分段安排展示与双线程/固定时间任务标注 M06)
    */
   scheduleSuccess: (
     titleOrParams: string | {
@@ -44,6 +52,7 @@ export const templates = {
       blocks?: { start: string; end: string; duration?: number; partIndex?: number; totalParts?: number }[];
       isFixed?: boolean;
       isConcurrent?: boolean;
+      timezone?: string;
     },
     legacyStartStr?: string,
     legacyEndStr?: string,
@@ -61,6 +70,7 @@ export const templates = {
       blocks?: { start: string; end: string; duration?: number; partIndex?: number; totalParts?: number }[];
       isFixed?: boolean;
       isConcurrent?: boolean;
+      timezone?: string;
     };
 
     if (typeof titleOrParams === 'object') {
@@ -76,7 +86,8 @@ export const templates = {
       };
     }
 
-    const { title, startStr, endStr, duration, urgency, importance, blocks, isFixed, isConcurrent } = p;
+    const { title, startStr, endStr, duration, urgency, importance, blocks, isFixed, isConcurrent, timezone } = p;
+    const tz = timezone || 'Asia/Shanghai';
     const imp100 = normalizeScoreTo100(importance, importance <= 10 ? 10 : 100);
     const urg100 = normalizeScoreTo100(urgency, urgency <= 10 ? 10 : 100);
     const qName =
@@ -94,8 +105,8 @@ export const templates = {
       parts.push(`• 总耗时：${duration}分钟 (分 ${blocks.length} 节)`);
       parts.push(`• 分段安排：`);
       blocks.forEach((b, idx) => {
-        const s = new Date(b.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-        const e = new Date(b.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const s = new Date(b.start).toLocaleString('zh-CN', { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const e = new Date(b.end).toLocaleTimeString('zh-CN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
         const dur = b.duration || Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60000);
         parts.push(`  ${idx + 1}. ${s} ~ ${e} (${dur}分钟)`);
       });
@@ -105,7 +116,6 @@ export const templates = {
 
     parts.push(`• 象限：${qName}`);
 
-    // 属性行：仅在为固定任务或双线程任务时显示，不是的话不用写出来
     if (isFixed && isConcurrent) {
       parts.push(`• 属性：固定时间任务 · 双线程`);
     } else if (isFixed) {
@@ -117,60 +127,43 @@ export const templates = {
     return parts.join('\n');
   },
 
-  /**
-   * 排程未找到合适空隙的提醒
-   */
   scheduleFailed: (title: string, duration: number, reason: string) => {
     return `⚠️ 任务「${title}」(${duration}分钟) 暂无法排入：${reason}`;
   },
 
-  /**
-   * 提前完成模板
-   */
   taskCompleted: (title: string) => {
     return `✅ 任务「${title}」已完成`;
   },
 
-  /**
-   * 延长时长模板
-   */
   taskExtended: (title: string, extendMinutes: number, newEndStr: string) => {
     return `⏱️ 任务「${title}」已延长 ${extendMinutes} 分钟 (至 ${newEndStr})`;
   },
 
-  /**
-   * 重新安排模板
-   */
   taskRescheduled: (title: string, newStartStr: string, newEndStr: string) => {
     return `🔄 任务「${title}」已重排至 ${newStartStr} ~ ${newEndStr}`;
   },
 
-  /**
-   * 开始前提醒模板
-   */
   reminderBeforeStart: (title: string, startStr: string, endStr: string, minutes: number) => {
-    return `🔔「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})`;
+    return `🔔「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})。开始执行请回复「开始」`;
   },
 
-  /**
-   * 结束前核对询问模板
-   */
   reminderBeforeEnd: (title: string, minutes: number) => {
     return `⏰「${title}」预计还有约 ${minutes} 分钟结束。已完成请回复「已完成」，需延时回复「延长XX分钟」。`;
   },
 
-  /**
-   * 每日日程概览
-   */
-  scheduleQueryList: (tasks: Task[], dateStr: string) => {
+  scheduleQueryList: (tasks: Task[], dateStr: string, timezone: string = 'Asia/Shanghai') => {
     if (tasks.length === 0) {
       return `📅 ${dateStr} 暂无排程中的待办任务`;
     }
 
     const lines = tasks.map((t, i) => {
-      const s = t.scheduled_start ? new Date(t.scheduled_start).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
-      const e = t.scheduled_end ? new Date(t.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
-      const statusIcon = t.status === 'completed' ? '✅' : '📌';
+      const s = t.scheduled_start
+        ? new Date(t.scheduled_start).toLocaleTimeString('zh-CN', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false })
+        : '--:--';
+      const e = t.scheduled_end
+        ? new Date(t.scheduled_end).toLocaleTimeString('zh-CN', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false })
+        : '--:--';
+      const statusIcon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '▶️' : '📌';
       return `${i + 1}. ${statusIcon} [${s}-${e}] ${t.title} (${t.duration_minutes}m)`;
     });
 
@@ -178,11 +171,35 @@ export const templates = {
   },
 };
 
+export interface OutboundReceipt {
+  outcome: 'sent' | 'failed' | 'unknown';
+  channel: 'weixin_ilink' | 'webhook_outbound' | 'none';
+  providerMsgId?: string;
+  error?: string;
+}
+
+export type OutboundSender = (settings: UserSettings, message: string, idempotencyKey?: string) => Promise<OutboundReceipt>;
+let customOutboundSender: OutboundSender | null = null;
+
+export function setOutboundSenderForTest(sender: OutboundSender | null): void {
+  customOutboundSender = sender;
+}
+
 /**
- * Send message out to WeChat via Weixin iLink or custom Clawbot Gateway API
+ * 投递外发消息并返回可核对回执（C02, C03）：
+ * - 无可用通道时明确返回 failed，不再假装成功
+ * - 区分明确失败（failed）与超时未知（unknown）
  */
-export async function sendClawbotMessage(settings: UserSettings, message: string): Promise<boolean> {
-  // 1. If paired via OpenClaw / Tencent Weixin iLink, send directly to user
+export async function sendClawbotMessageWithReceipt(
+  settings: UserSettings,
+  message: string,
+  idempotencyKey?: string
+): Promise<OutboundReceipt> {
+  if (customOutboundSender) {
+    return customOutboundSender(settings, message, idempotencyKey);
+  }
+
+  // 1. Weixin iLink channel
   if (settings.weixin_connected && settings.weixin_bot_token && settings.weixin_user_id) {
     const baseUrl = settings.weixin_base_url || 'https://ilinkai.weixin.qq.com';
     const res = await sendWeixinTextMessage(
@@ -193,14 +210,30 @@ export async function sendClawbotMessage(settings: UserSettings, message: string
       message,
       settings.weixin_context_token
     );
-    if (res.success) return true;
+    if (res.success) {
+      return {
+        outcome: 'sent',
+        channel: 'weixin_ilink',
+        providerMsgId: res.data?.message_id ? String(res.data.message_id) : undefined,
+      };
+    }
+    const errText = res.error || '微信网关发送失败';
+    if (/timeout|ECONNABORTED|ETIMEDOUT/i.test(errText)) {
+      return { outcome: 'unknown', channel: 'weixin_ilink', error: errText };
+    }
+    // Fall through to outbound URL if configured, else report failure
+    if (!settings.clawbot_outbound_url) {
+      return { outcome: 'failed', channel: 'weixin_ilink', error: errText };
+    }
   }
 
-  // 2. Fallback to custom Clawbot outbound webhook URL if configured
-  if (!settings.clawbot_outbound_url) {
-    console.log('[Clawbot Outbound Mock] (未配置 outbound_url，直接打印至控制台):');
-    console.log(message);
-    return true;
+  // 2. Custom Clawbot outbound webhook URL
+  if (!settings.clawbot_outbound_url || !settings.clawbot_outbound_url.trim()) {
+    return {
+      outcome: 'failed',
+      channel: 'none',
+      error: '未连接微信且未配置 outbound_url',
+    };
   }
 
   try {
@@ -210,6 +243,7 @@ export async function sendClawbotMessage(settings: UserSettings, message: string
       text: message,
       message: message,
       key: settings.clawbot_outbound_key || undefined,
+      idempotencyKey: idempotencyKey || undefined,
     };
 
     const headers: Record<string, string> = {
@@ -218,14 +252,30 @@ export async function sendClawbotMessage(settings: UserSettings, message: string
     if (settings.clawbot_outbound_key) {
       headers['Authorization'] = `Bearer ${settings.clawbot_outbound_key}`;
     }
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
 
-    await axios.post(settings.clawbot_outbound_url, payload, {
+    const resp = await axios.post(settings.clawbot_outbound_url, payload, {
       headers,
       timeout: 8000,
     });
-    return true;
+    return {
+      outcome: 'sent',
+      channel: 'webhook_outbound',
+      providerMsgId: resp.data?.msgId ? String(resp.data.msgId) : undefined,
+    };
   } catch (err: any) {
-    console.error('[Clawbot Outbound Error]:', err.message);
-    return false;
+    const msg = err.message || 'Outbound request failed';
+    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || /timeout/i.test(msg)) {
+      return { outcome: 'unknown', channel: 'webhook_outbound', error: msg };
+    }
+    console.error('[Clawbot Outbound Error]:', msg);
+    return { outcome: 'failed', channel: 'webhook_outbound', error: msg };
   }
+}
+
+export async function sendClawbotMessage(settings: UserSettings, message: string): Promise<boolean> {
+  const receipt = await sendClawbotMessageWithReceipt(settings, message);
+  return receipt.outcome === 'sent';
 }

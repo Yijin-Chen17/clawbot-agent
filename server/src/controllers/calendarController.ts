@@ -1,17 +1,24 @@
 import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
-import { CalendarSubscription, ExternalEvent, Task, User } from '../models/types.js';
+import { CalendarSubscription, User } from '../models/types.js';
 import { syncSubscription, syncAllUserSubscriptions, generateUserTodoIcal, calendarFetchUrl } from '../services/calendarSync.js';
 import { replanUserTasks } from '../services/scheduler.js';
 import { renderCalendarImage, renderTodoListImage } from '../services/cardRenderer.js';
+import { checkAccountEligibility } from '../services/accountService.js';
+import { queryScheduleInRange } from '../services/scheduleQueryService.js';
+import { ignoreExternalCalendarInstance } from '../services/taskService.js';
 
 export function listSubscriptions(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
   const subscriptions = db.prepare(`
     SELECT
       cs.*,
-      (SELECT count(*) FROM external_events WHERE subscription_id = cs.id) as event_count
+      (
+        SELECT count(*) FROM external_events ee
+        WHERE ee.subscription_id = cs.id
+          AND COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0)
+      ) as event_count
     FROM calendar_subscriptions cs
     WHERE cs.user_id = ?
     ORDER BY cs.created_at DESC
@@ -45,21 +52,31 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
     VALUES (?, ?, ?)
   `).run(userId, name.trim(), url.trim());
 
-  const sub = db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ?').get(result.lastInsertRowid) as CalendarSubscription;
+  const subId = Number(result.lastInsertRowid);
+  const sub = db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ?').get(subId) as CalendarSubscription;
 
-  // Try initial sync immediately
   let syncMsg = '';
+  let syncOk = true;
   try {
     const { count } = await syncSubscription(sub);
-    replanUserTasks(userId);
+    replanUserTasks(userId, { triggerSource: 'create_subscription' });
     syncMsg = `，并成功同步了 ${count} 条外部日程事件`;
   } catch (err: any) {
+    syncOk = false;
     syncMsg = `，但初次同步失败：${err.message}`;
   }
 
+  // Re-fetch updated subscription state (C04)
+  const latestSub = db.prepare(`
+    SELECT cs.*,
+      (SELECT count(*) FROM external_events ee WHERE ee.subscription_id = cs.id AND COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0)) as event_count
+    FROM calendar_subscriptions cs WHERE cs.id = ?
+  `).get(subId);
+
   res.status(201).json({
     message: `日历订阅「${name}」已添加${syncMsg}！`,
-    subscription: sub,
+    syncOk,
+    subscription: latestSub,
   });
 }
 
@@ -67,10 +84,22 @@ export function deleteSubscription(req: AuthenticatedRequest, res: Response): vo
   const userId = req.user!.id;
   const { id } = req.params;
 
-  db.prepare('DELETE FROM external_events WHERE subscription_id = ? AND user_id = ?').run(id, userId);
-  db.prepare('DELETE FROM calendar_subscriptions WHERE id = ? AND user_id = ?').run(id, userId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM external_events WHERE subscription_id = ? AND user_id = ?').run(id, userId);
+    db.prepare('DELETE FROM calendar_ignored_instances WHERE subscription_id = ? AND user_id = ?').run(id, userId);
+    db.prepare('DELETE FROM calendar_subscriptions WHERE id = ? AND user_id = ?').run(id, userId);
+  })();
 
-  res.json({ message: '日历订阅已移除' });
+  // Replan immediately to reclaim freed time slots (C04)
+  const replan = replanUserTasks(userId, { triggerSource: 'delete_subscription' });
+  res.json({ message: '日历订阅已移除并已重排空闲时段', planVersion: replan.planVersion });
+}
+
+export function ignoreExternalEvent(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const eventId = Number(req.params.id);
+  const resIgn = ignoreExternalCalendarInstance(userId, eventId);
+  res.json(resIgn);
 }
 
 export function updateCalendarColor(req: AuthenticatedRequest, res: Response): void {
@@ -100,24 +129,33 @@ export async function syncSubscriptionNow(req: AuthenticatedRequest, res: Respon
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const sub = db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ? AND user_id = ?').get(id, userId) as CalendarSubscription | undefined;
+  const sub = db
+    .prepare('SELECT * FROM calendar_subscriptions WHERE id = ? AND user_id = ?')
+    .get(id, userId) as CalendarSubscription | undefined;
   if (!sub) {
     res.status(404).json({ error: '日历订阅不存在' });
     return;
   }
 
   try {
-    const { count } = await syncSubscription(sub);
-    replanUserTasks(userId);
-    res.json({ message: `同步成功！已更新 ${count} 条外部日程。` });
+    const syncRes = await syncSubscription(sub);
+    let planVersion: number | undefined;
+    if (syncRes.changed) {
+      const replan = replanUserTasks(userId, { triggerSource: 'sync_subscription' });
+      planVersion = replan.planVersion;
+    }
+    res.json({
+      message: `同步成功！已更新 ${syncRes.count} 条外部日程。`,
+      ...syncRes,
+      planVersion,
+    });
   } catch (err: any) {
     res.status(500).json({ error: `同步失败：${err.message}` });
   }
 }
 
 /**
- * Combined calendar view for FullCalendar UI:
- * Includes both external calendar busy events and Clawbot TODO scheduled events
+ * 统一日历视图查询接口（C05）：与微信和 ICS 共用同一份区间块读模型
  */
 export function getCalendarEvents(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -126,101 +164,87 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   const startIso = (start as string) || new Date(Date.now() - 15 * 86400000).toISOString();
   const endIso = (end as string) || new Date(Date.now() + 30 * 86400000).toISOString();
 
-  // 1. External events
-  const externalEvents = db.prepare(`
-    SELECT ee.id, ee.uid, ee.title, ee.start_time as start, ee.end_time as end, ee.is_all_day, ee.subscription_id,
-           cs.name as subscription_name
-    FROM external_events ee
-    LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
-    WHERE ee.user_id = ? AND ee.end_time >= ? AND ee.start_time <= ?
-  `).all(userId, startIso, endIso) as any[];
-
-  // 2. Scheduled tasks
-    const tasks = db.prepare(`
-    SELECT
-      id, title, scheduled_start as start, scheduled_end as end,
-      duration_minutes, urgency, importance, score_scale, status, deadline, notes, schedule_blocks,
-      is_fixed, is_concurrent
-    FROM tasks
-    WHERE user_id = ?
-      AND scheduled_start IS NOT NULL
-      AND scheduled_end IS NOT NULL
-      AND scheduled_end >= ?
-      AND scheduled_start <= ?
-  `).all(userId, startIso, endIso) as any[];
+  const unified = queryScheduleInRange(userId, startIso, endIso);
 
   const formattedEvents = [
-    ...externalEvents.map(ev => ({
-      id: `ext-${ev.id}`,
+    ...unified.externalEvents.map(ev => ({
+      id: ev.id,
       title: ev.title,
       start: ev.start,
       end: ev.end,
-      allDay: Boolean(ev.is_all_day),
-      subscriptionId: ev.subscription_id,
-      subscriptionName: ev.subscription_name || '外部日程',
-      backgroundColor: '#0284c7', // Sky / Cyan
+      allDay: ev.isAllDay,
+      subscriptionId: ev.subscriptionId,
+      subscriptionName: ev.subscriptionName,
+      backgroundColor: '#0284c7',
       borderColor: '#0284c7',
       extendedProps: {
         type: 'external',
-        subscriptionId: ev.subscription_id,
-        subscriptionName: ev.subscription_name || '外部日程',
+        subscriptionId: ev.subscriptionId,
+        subscriptionName: ev.subscriptionName,
+        uid: ev.uid,
       },
     })),
-    ...tasks.flatMap(t => {
-      const urg100 = t.score_scale === 100 || t.urgency > 10 ? t.urgency : t.urgency <= 5 ? t.urgency * 20 : t.urgency * 10;
-      const imp100 = t.score_scale === 100 || t.importance > 10 ? t.importance : t.importance <= 5 ? t.importance * 20 : t.importance * 10;
-      let color = '#3b82f6'; // default blue
-      if (t.status === 'completed') color = '#10b981'; // emerald green
-      else if (urg100 >= 65) color = '#ef4444';        // red/urgent
-      else if (imp100 >= 50) color = '#f59e0b';        // amber/important
+    ...unified.blocks.map(b => {
+      let color = '#3b82f6';
+      if (b.blockStatus === 'completed' || b.instanceStatus === 'completed') color = '#10b981';
+      else if (b.blockStatus === 'conflict') color = '#dc2626';
+      else if (b.urgency >= 65) color = '#ef4444';
+      else if (b.importance >= 50) color = '#f59e0b';
 
-      let blocks: any[] = [];
-      if (t.schedule_blocks) {
-        try {
-          blocks = JSON.parse(t.schedule_blocks);
-        } catch {}
-      }
-      if (!Array.isArray(blocks) || blocks.length === 0) {
-        blocks = [{ start: t.start, end: t.end }];
-      }
+      const partSuffix = b.totalParts > 1 ? ` (${b.partIndex}/${b.totalParts}节)` : '';
+      let prefix = '';
+      if (b.isFixed) prefix += '📌 ';
+      if (b.isConcurrent) prefix += '⚡ ';
+      if (b.blockStatus === 'conflict') prefix += '⚠️ ';
 
-      return blocks.map((block, bIdx) => {
-        const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
-        let prefix = '';
-        if (t.is_fixed) prefix += '📌 ';
-        if (t.is_concurrent) prefix += '⚡ ';
-        return {
-          id: `task-${t.id}-${bIdx}`,
-          title: `${prefix}${t.title}${partSuffix}`,
-          start: block.start,
-          end: block.end,
-          backgroundColor: color,
-          borderColor: color,
-          extendedProps: {
-            type: 'task',
-            taskId: t.id,
-            urgency: t.urgency,
-            importance: t.importance,
-            duration: block.duration || t.duration_minutes,
-            status: t.status,
-            deadline: t.deadline,
-            notes: t.notes,
-            is_fixed: t.is_fixed ? 1 : 0,
-            is_concurrent: t.is_concurrent ? 1 : 0,
-            isFixed: Boolean(t.is_fixed),
-            isConcurrent: Boolean(t.is_concurrent),
-            strategyLabel: block.strategyLabel,
-            energyZone: block.energyZone,
-          },
-        };
-      });
+      return {
+        id: b.blockId,
+        title: `${prefix}${b.title}${partSuffix}`,
+        start: b.start,
+        end: b.end,
+        backgroundColor: color,
+        borderColor: color,
+        extendedProps: {
+          type: 'task',
+          blockId: b.blockId,
+          taskId: b.taskId,
+          instanceId: b.instanceId,
+          planVersion: b.planVersion,
+          partIndex: b.partIndex,
+          totalParts: b.totalParts,
+          urgency: b.urgency,
+          importance: b.importance,
+          duration: b.durationMinutes,
+          status: b.blockStatus === 'completed' ? 'completed' : b.instanceStatus,
+          blockStatus: b.blockStatus,
+          planStatus: b.planStatus,
+          allocatedMinutes: b.allocatedMinutes,
+          unallocatedMinutes: b.unallocatedMinutes,
+          deadline: b.deadline,
+          deadlineKind: b.deadlineKind,
+          notes: b.notes,
+          tags: b.tags,
+          is_fixed: b.isFixed ? 1 : 0,
+          is_concurrent: b.isConcurrent ? 1 : 0,
+          isFixed: b.isFixed,
+          isCommitted: b.isCommitted,
+          isConcurrent: b.isConcurrent,
+          strategyLabel: b.strategyLabel,
+          energyZone: b.energyZone,
+          businessDate: b.businessDate,
+        },
+      };
     }),
   ];
 
   const subscriptions = db.prepare(`
     SELECT
       cs.*,
-      (SELECT count(*) FROM external_events WHERE subscription_id = cs.id) as event_count
+      (
+        SELECT count(*) FROM external_events ee
+        WHERE ee.subscription_id = cs.id
+          AND COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0)
+      ) as event_count
     FROM calendar_subscriptions cs
     WHERE cs.user_id = ?
     ORDER BY cs.created_at DESC
@@ -233,6 +257,8 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
 
   res.json({
+    planVersion: unified.planVersion,
+    timezone: unified.timezone,
     events: formattedEvents,
     subscriptions,
     taskColor: (db.prepare('SELECT calendar_color FROM user_settings WHERE user_id = ?').get(userId) as { calendar_color?: string } | undefined)?.calendar_color || null,
@@ -244,9 +270,6 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   });
 }
 
-/**
- * Public endpoint for exporting dedicated TODO list as iCalendar / webcal subscription
- */
 export function exportDedicatedIcal(req: Request, res: Response): void {
   const rawToken = Array.isArray(req.params.token) ? req.params.token[0] : (req.params.token || '');
   let token = rawToken.trim();
@@ -259,9 +282,16 @@ export function exportDedicatedIcal(req: Request, res: Response): void {
     return;
   }
 
-  const user = db.prepare('SELECT id, username FROM users WHERE token_secret = ?').get(token) as User | undefined;
+  const user = db.prepare('SELECT id, username, status FROM users WHERE token_secret = ?').get(token) as User | undefined;
   if (!user) {
     res.status(404).send('Invalid or expired subscription link');
+    return;
+  }
+
+  // Unified eligibility check for public ICS links (A02)
+  const elig = checkAccountEligibility(user.id);
+  if (!elig.eligible) {
+    res.status(403).send(elig.message || 'Account disabled');
     return;
   }
 
@@ -276,21 +306,30 @@ export function exportDedicatedIcal(req: Request, res: Response): void {
   }
 }
 
-/**
- * Manually trigger full calendar sync and adaptive task replanning
- */
 export async function syncAndReplanAll(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   try {
     const syncRes = await syncAllUserSubscriptions(userId);
-    const replanRes = replanUserTasks(userId);
-    res.json({
-      message: `同步与自适应排程完成！`,
+    const replanRes = syncRes.anyChanged ? replanUserTasks(userId, { triggerSource: 'sync_and_replan' }) : null;
+
+    const allFailed = syncRes.results.length > 0 && syncRes.subscriptionsSynced === 0;
+    const partialFailed = syncRes.failedCount > 0 && syncRes.subscriptionsSynced > 0;
+
+    res.status(allFailed ? 502 : 200).json({
+      success: !allFailed,
+      message: allFailed
+        ? '全部外部日历同步失败，已保留上一份可用忙时快照'
+        : partialFailed
+        ? `部分日历同步完成（成功 ${syncRes.subscriptionsSynced}，失败 ${syncRes.failedCount}）`
+        : '同步与自适应排程完成！',
       totalEvents: syncRes.totalEvents,
       subscriptionsSynced: syncRes.subscriptionsSynced,
-      scheduledCount: replanRes.scheduledCount,
-      failedCount: replanRes.failedCount,
-      summary: replanRes.summary,
+      failedCount: syncRes.failedCount,
+      anyChanged: syncRes.anyChanged,
+      results: syncRes.results,
+      scheduledCount: replanRes?.scheduledCount,
+      planVersion: replanRes?.planVersion,
+      summary: replanRes?.summary || '外部日程无变化，保持当前排程',
     });
   } catch (err: any) {
     res.status(500).json({ error: `处理失败: ${err.message}` });
@@ -299,15 +338,12 @@ export async function syncAndReplanAll(req: AuthenticatedRequest, res: Response)
 
 export function replanAll(req: AuthenticatedRequest, res: Response): void {
   try {
-    res.json(replanUserTasks(req.user!.id));
+    res.json(replanUserTasks(req.user!.id, { triggerSource: 'manual_replan' }));
   } catch (error: any) {
     res.status(500).json({ error: error.message || '排程失败' });
   }
 }
 
-/**
- * Preview today's calendar PNG card
- */
 export async function previewCalendarCard(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   try {
@@ -319,9 +355,6 @@ export async function previewCalendarCard(req: AuthenticatedRequest, res: Respon
   }
 }
 
-/**
- * Preview Todo list PNG card
- */
 export async function previewTodoCard(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   try {

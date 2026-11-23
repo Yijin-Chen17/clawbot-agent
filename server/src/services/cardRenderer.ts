@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { db } from '../config/database.js';
 import { Task } from '../models/types.js';
+import { queryScheduleInRange, queryTodoSummary } from './scheduleQueryService.js';
 
 function escapeXml(unsafe: string): string {
   return (unsafe || '')
@@ -189,26 +190,15 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const searchStartIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).toISOString();
   const searchEndIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7, 23, 59, 59, 999).toISOString();
 
-  // 1. Fetch external events
-  const externalEvents = db.prepare(`
-    SELECT title, start_time, end_time, is_all_day, subscription_id
-    FROM external_events
-    WHERE user_id = ? AND end_time >= ? AND start_time <= ?
-    ORDER BY start_time ASC
-  `).all(userId, searchStartIso, searchEndIso) as {
-    title: string;
-    start_time: string;
-    end_time: string;
-    is_all_day: number;
-    subscription_id?: number | null;
-  }[];
-
-  // 2. Fetch all tasks (both scheduled and completed)
-  const allTasks = db.prepare(`
-    SELECT * FROM tasks
-    WHERE user_id = ?
-    ORDER BY scheduled_start ASC
-  `).all(userId) as Task[];
+  // Unified read model: matches Web CalendarView & ICS export (C05)
+  const unified = queryScheduleInRange(userId, searchStartIso, searchEndIso);
+  const externalEvents = unified.externalEvents.map(ev => ({
+    title: ev.title,
+    start_time: ev.start,
+    end_time: ev.end,
+    is_all_day: ev.isAllDay ? 1 : 0,
+    subscription_id: ev.subscriptionId,
+  }));
 
   const weekdaysZh = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const weekdaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -292,127 +282,110 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       }
     }
 
-    // Process Scheduled and Completed Tasks for this day
-    for (const t of allTasks) {
-      const isCompleted = t.status === 'completed';
-      let blocks: { start: string; end: string; partIndex?: number; totalParts?: number }[] = [];
+    // Process Scheduled and Completed Blocks from unified read model
+    for (const b of unified.blocks) {
+      const isCompleted = b.blockStatus === 'completed' || b.instanceStatus === 'completed';
+      const range = segmentRange(b.start, b.end, wStartIso, wEndIso);
+      if (!range) continue;
 
       if (isCompleted) {
-        // 根据完成时间往前推
-        const compEnd = parseDbIso(t.updated_at) || (t.scheduled_end ? new Date(t.scheduled_end) : (t.deadline ? new Date(t.deadline) : new Date(t.created_at)));
-        const durMs = (t.duration_minutes || 30) * 60000;
-        const compStart = new Date(compEnd.getTime() - durMs);
-        blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
+        totalCompleted++;
       } else {
-        if (t.schedule_blocks) {
-          try {
-            blocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
-          } catch {}
+        totalTasks++;
+      }
+      const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
+      const partSuffix = b.totalParts > 1 ? ` (${b.partIndex}/${b.totalParts})` : '';
+
+      let color = '#3b82f6';
+      let bg = '#eff6ff';
+      let border = '#bfdbfe';
+      let timeColor = '#1d4ed8';
+      let titleColor = '#1e3a8a';
+      let badge = 'Schedule';
+      let badgeColor = '#3b82f6';
+
+      if (isCompleted) {
+        color = '#10b981';
+        bg = '#ecfdf5';
+        border = '#a7f3d0';
+        timeColor = '#047857';
+        titleColor = '#065f46';
+        badge = '已完成';
+        badgeColor = '#10b981';
+      } else if (b.blockStatus === 'conflict') {
+        color = '#dc2626';
+        bg = '#fef2f2';
+        border = '#fecaca';
+        timeColor = '#b91c1c';
+        titleColor = '#7f1d1d';
+        badge = '冲突';
+        badgeColor = '#dc2626';
+      } else {
+        if (b.isFixed && b.isConcurrent) {
+          badge = '固定·双线程';
+        } else if (b.isFixed) {
+          badge = '固定';
+        } else if (b.isConcurrent) {
+          badge = '双线程';
         }
-        if (!Array.isArray(blocks) || blocks.length === 0) {
-          if (t.scheduled_start && t.scheduled_end) {
-            blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
-          }
+        const imp = b.importance >= 50;
+        const urg = b.urgency >= 50;
+        if (imp && urg) {
+          color = '#ef4444';
+          bg = '#fef2f2';
+          border = '#fecaca';
+          timeColor = '#b91c1c';
+          titleColor = '#7f1d1d';
+          if (!b.isFixed && !b.isConcurrent) badge = 'Do First';
+          badgeColor = '#ef4444';
+        } else if (imp && !urg) {
+          color = '#3b82f6';
+          bg = '#eff6ff';
+          border = '#bfdbfe';
+          timeColor = '#1d4ed8';
+          titleColor = '#1e3a8a';
+          if (!b.isFixed && !b.isConcurrent) badge = 'Schedule';
+          badgeColor = '#3b82f6';
+        } else if (!imp && urg) {
+          color = '#f59e0b';
+          bg = '#fffbeb';
+          border = '#fde68a';
+          timeColor = '#b45309';
+          titleColor = '#78350f';
+          if (!b.isFixed && !b.isConcurrent) badge = 'Delegate';
+          badgeColor = '#f59e0b';
+        } else {
+          color = '#9ca3af';
+          bg = '#f9fafb';
+          border = '#e5e7eb';
+          timeColor = '#4b5563';
+          titleColor = '#1f2937';
+          if (!b.isFixed && !b.isConcurrent) badge = 'Eliminate';
+          badgeColor = '#9ca3af';
         }
       }
 
-      blocks.forEach((b, bIdx) => {
-        const range = segmentRange(b.start, b.end, wStartIso, wEndIso);
-        if (range) {
-          if (isCompleted) {
-            totalCompleted++;
-          } else {
-            totalTasks++;
-          }
-          const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
-          const partSuffix = b.totalParts && b.totalParts > 1 ? ` (${b.partIndex || bIdx + 1}/${b.totalParts})` : '';
+      let attrPrefix = '';
+      if (!isCompleted) {
+        if (b.isFixed) attrPrefix += '📌 ';
+        if (b.isConcurrent) attrPrefix += '⚡ ';
+      }
 
-          let color = '#3b82f6';
-          let bg = '#eff6ff';
-          let border = '#bfdbfe';
-          let timeColor = '#1d4ed8';
-          let titleColor = '#1e3a8a';
-          let badge = 'Schedule';
-          let badgeColor = '#3b82f6';
-
-          if (isCompleted) {
-            color = '#10b981';
-            bg = '#ecfdf5';
-            border = '#a7f3d0';
-            timeColor = '#047857';
-            titleColor = '#065f46';
-            badge = '已完成';
-            badgeColor = '#10b981';
-          } else {
-            if (t.is_fixed && t.is_concurrent) {
-              badge = '固定·双线程';
-            } else if (t.is_fixed) {
-              badge = '固定';
-            } else if (t.is_concurrent) {
-              badge = '双线程';
-            }
-            const impRaw = t.importance ?? 50;
-            const urgRaw = t.urgency ?? 50;
-            const imp = (t.score_scale === 100 || impRaw > 10 ? impRaw : impRaw <= 5 ? impRaw * 20 : impRaw * 10) >= 50;
-            const urg = (t.score_scale === 100 || urgRaw > 10 ? urgRaw : urgRaw <= 5 ? urgRaw * 20 : urgRaw * 10) >= 50;
-            if (imp && urg) {
-              color = '#ef4444';
-              bg = '#fef2f2';
-              border = '#fecaca';
-              timeColor = '#b91c1c';
-              titleColor = '#7f1d1d';
-              if (!t.is_fixed && !t.is_concurrent) badge = 'Do First';
-              badgeColor = '#ef4444';
-            } else if (imp && !urg) {
-              color = '#3b82f6';
-              bg = '#eff6ff';
-              border = '#bfdbfe';
-              timeColor = '#1d4ed8';
-              titleColor = '#1e3a8a';
-              if (!t.is_fixed && !t.is_concurrent) badge = 'Schedule';
-              badgeColor = '#3b82f6';
-            } else if (!imp && urg) {
-              color = '#f59e0b';
-              bg = '#fffbeb';
-              border = '#fde68a';
-              timeColor = '#b45309';
-              titleColor = '#78350f';
-              if (!t.is_fixed && !t.is_concurrent) badge = 'Delegate';
-              badgeColor = '#f59e0b';
-            } else {
-              color = '#9ca3af';
-              bg = '#f9fafb';
-              border = '#e5e7eb';
-              timeColor = '#4b5563';
-              titleColor = '#1f2937';
-              if (!t.is_fixed && !t.is_concurrent) badge = 'Eliminate';
-              badgeColor = '#9ca3af';
-            }
-          }
-
-          let attrPrefix = '';
-          if (!isCompleted) {
-            if (t.is_fixed) attrPrefix += '📌 ';
-            if (t.is_concurrent) attrPrefix += '⚡ ';
-          }
-
-          dayTimed.push({
-            id: `task-${t.id}-${bIdx}-${isCompleted ? 'done' : 'active'}`,
-            kind: 'task',
-            title: `${isCompleted ? '✓ ' : attrPrefix}${t.title}${partSuffix}`,
-            start: range.start,
-            end: range.end,
-            isCompleted,
-            durationMinutes: dur,
-            color,
-            bg,
-            border,
-            timeColor,
-            titleColor,
-            badge,
-            badgeColor,
-          });
-        }
+      dayTimed.push({
+        id: `task-${b.blockId}-${isCompleted ? 'done' : 'active'}`,
+        kind: 'task',
+        title: `${isCompleted ? '✓ ' : attrPrefix}${b.title}${partSuffix}`,
+        start: range.start,
+        end: range.end,
+        isCompleted,
+        durationMinutes: dur,
+        color,
+        bg,
+        border,
+        timeColor,
+        titleColor,
+        badge,
+        badgeColor,
       });
     }
 
@@ -709,24 +682,12 @@ export const renderCalendarImage = renderWeekCalendarImage;
  * 2. Render Google Tasks Style "Todo List" PNG Image
  */
 export async function renderTodoListImage(userId: number): Promise<Buffer> {
-  const tasks = db.prepare(`
-    SELECT * FROM tasks
-    WHERE user_id = ?
-    ORDER BY 
-      CASE status 
-        WHEN 'in_progress' THEN 1 
-        WHEN 'scheduled' THEN 2 
-        WHEN 'pending' THEN 3 
-        WHEN 'completed' THEN 4 
-      END ASC,
-      urgency DESC,
-      scheduled_start ASC
-    LIMIT 12
-  `).all(userId) as Task[];
-
-  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
-  const scheduledCount = tasks.filter((t) => t.status === 'scheduled').length;
-  const completedCount = tasks.filter((t) => t.status === 'completed').length;
+  const summary = queryTodoSummary(userId, 12);
+  const tasks = summary.items;
+  const inProgressCount = summary.counts.inProgress;
+  const scheduledCount = summary.counts.scheduled;
+  const completedCount = summary.counts.completed;
+  const totalCount = summary.counts.total;
 
   const width = 800;
   const itemHeight = 74;
@@ -833,7 +794,7 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
         <text x="30" y="80" fill="#f0f9ff" font-size="15" font-weight="500">进行中 ${inProgressCount} · 已规划 ${scheduledCount} · 已完成 ${completedCount}</text>
         
         <rect x="520" y="35" width="170" height="40" rx="12" fill="#ffffff" opacity="0.2"/>
-        <text x="605" y="60" fill="#ffffff" font-size="14" font-weight="bold" text-anchor="middle">共 ${tasks.length} 项任务</text>
+        <text x="605" y="60" fill="#ffffff" font-size="14" font-weight="bold" text-anchor="middle">共 ${totalCount} 项任务</text>
       </g>
 
       <!-- Task items -->

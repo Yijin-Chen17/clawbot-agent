@@ -4,6 +4,19 @@ import { getAppConfig } from '../config/appConfig.js';
 
 export type VerificationCodeType = 'register' | 'reset_password';
 
+export type EmailSender = (mailOptions: {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+}) => Promise<void>;
+
+let customEmailSender: EmailSender | null = null;
+
+export function setEmailSenderForTest(sender: EmailSender | null): void {
+  customEmailSender = sender;
+}
+
 export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -69,7 +82,10 @@ export function clearVerifyFailures(key: string): void {
 }
 
 /**
- * 发送邮箱验证码
+ * 发送邮箱验证码（A03）：
+ * - 先检查 SMTP 配置与仅针对已成功发送记录做频率限制
+ * - 先建 sending 记录，发信成功后再标记 sent 并作废同类型旧验证码
+ * - 发信失败不触发 60s 冷却，也不会产生可用验证码
  */
 export async function sendEmailVerificationCode(
   email: string,
@@ -83,7 +99,6 @@ export async function sendEmailVerificationCode(
     throw new Error(isEn ? 'Please enter a valid email address' : '请输入正确的邮箱地址');
   }
 
-  // 若为注册验证码，检查该邮箱是否已被占用；若为重置密码，确认邮箱已绑定有效账号
   if (type === 'register') {
     const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(trimmedEmail);
     if (existing) {
@@ -113,12 +128,13 @@ export async function sendEmailVerificationCode(
     }
   }
 
-  // 频率限制：检查 60 秒内是否已经给该邮箱发过
+  // Only count successfully delivered codes for 60s cooldown
   const recent = db.prepare(`
     SELECT id FROM email_verification_codes
-    WHERE email = ? AND created_at > datetime('now', '-60 seconds')
+    WHERE email = ? AND type = ? AND delivery_status = 'sent'
+      AND created_at > datetime('now', '-60 seconds')
     LIMIT 1
-  `).get(trimmedEmail);
+  `).get(trimmedEmail, type);
 
   if (recent) {
     throw new Error(
@@ -128,26 +144,10 @@ export async function sendEmailVerificationCode(
     );
   }
 
-  // 生成 6 位随机纯数字验证码
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10分钟有效
-
-  // 写入验证码数据库并重置失败计数
-  clearVerifyFailures(`${type}:${trimmedEmail}`);
-  db.prepare(`
-    INSERT INTO email_verification_codes (email, code, type, expires_at)
-    VALUES (?, ?, ?, ?)
-  `).run(trimmedEmail, code, type, expiresAt);
-
   const config = getAppConfig();
   const { host, port, secure, user, pass, from } = config.smtp;
 
-  // 如果 SMTP 尚未配置或授权码为空
-  if (!host || !user || !pass) {
-    console.warn(`\n==================================================`);
-    console.warn(`[SMTP Warning] 系统尚未在 config.yaml 中配置 SMTP 授权码！`);
-    console.warn(`[SMTP Mock Code] 目标邮箱: ${trimmedEmail} | 验证码: ${code}`);
-    console.warn(`==================================================\n`);
+  if (!customEmailSender && (!host || !user || !pass)) {
     throw new Error(
       isEn
         ? 'SMTP authorization is not configured in config.yaml. Please contact administrator.'
@@ -155,39 +155,27 @@ export async function sendEmailVerificationCode(
     );
   }
 
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user,
-      pass,
-    },
-  });
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-  // 严格规范发件人 (From)，防止 163/QQ/网易企业邮等报 553 Mail from must equal authorized user
-  let senderFrom = `"Clawbot Tasks" <${user}>`;
-  if (from && from.trim()) {
+  const insertRes = db.prepare(`
+    INSERT INTO email_verification_codes (email, code, type, expires_at, used, delivery_status)
+    VALUES (?, ?, ?, ?, 0, 'sending')
+  `).run(trimmedEmail, code, type, expiresAt);
+  const challengeId = Number(insertRes.lastInsertRowid);
+
+  let senderFrom = `"Clawbot Tasks" <${user || 'noreply@clawbot.local'}>`;
+  if (from && from.trim() && user) {
     const trimmedFrom = from.trim();
     if (trimmedFrom.includes('<') && trimmedFrom.includes('>')) {
       const match = trimmedFrom.match(/^(.*?)\s*<([^>]+)>/);
-      if (match) {
-        const displayName = match[1].trim() || 'Clawbot Tasks';
-        // 保证尖括号内的邮箱与 SMTP 认证账号一致
-        senderFrom = `"${displayName.replace(/"/g, '')}" <${user}>`;
-      } else {
-        senderFrom = `"${trimmedFrom.replace(/"/g, '')}" <${user}>`;
-      }
-    } else if (trimmedFrom.includes('@')) {
-      // 若仅填写了邮箱
-      senderFrom = `"Clawbot Tasks" <${user}>`;
-    } else {
-      // 若仅填写了发信昵称（如 "Clawbot"）
+      const displayName = match?.[1]?.trim() || 'Clawbot Tasks';
+      senderFrom = `"${displayName.replace(/"/g, '')}" <${user}>`;
+    } else if (!trimmedFrom.includes('@')) {
       senderFrom = `"${trimmedFrom.replace(/"/g, '')}" <${user}>`;
     }
   }
 
-  // 邮件标题（不包含具体验证码，保护安全，避免在邮件列表预览或通知首页直接泄露）
   const {
     subject: emailSubject,
     subtitle: emailSubtitle,
@@ -227,7 +215,34 @@ export async function sendEmailVerificationCode(
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    if (customEmailSender) {
+      await customEmailSender(mailOptions);
+    } else {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: { user, pass },
+      });
+      await transporter.sendMail(mailOptions);
+    }
+
+    db.transaction(() => {
+      // Invalidate all previous unused codes for this (email, type)
+      db.prepare(`
+        UPDATE email_verification_codes
+        SET used = 1
+        WHERE email = ? AND type = ? AND id != ? AND used = 0
+      `).run(trimmedEmail, type, challengeId);
+
+      db.prepare(`
+        UPDATE email_verification_codes
+        SET delivery_status = 'sent'
+        WHERE id = ?
+      `).run(challengeId);
+      clearVerifyFailures(`${type}:${trimmedEmail}`);
+    })();
+
     return {
       success: true,
       message: isEn
@@ -235,6 +250,12 @@ export async function sendEmailVerificationCode(
         : '验证码已发送至您的邮箱，10分钟内有效',
     };
   } catch (err: any) {
+    db.prepare(`
+      UPDATE email_verification_codes
+      SET delivery_status = 'send_failed', error_message = ?, used = 1
+      WHERE id = ?
+    `).run(err.message || 'SMTP send failed', challengeId);
+
     console.error('[EmailService] SMTP 发送邮件失败:', err.message);
     throw new Error(
       isEn
@@ -245,7 +266,7 @@ export async function sendEmailVerificationCode(
 }
 
 /**
- * 校验邮箱验证码
+ * 校验并原子消费最新成功发送的邮箱验证码（可运行于外层事务内，A03）。
  */
 export function verifyEmailCode(
   email: string,
@@ -258,15 +279,15 @@ export function verifyEmailCode(
   if (!trimmedEmail || !trimmedCode) return false;
 
   const attemptKey = `${type}:${trimmedEmail}`;
-  const record = db.prepare(`
-    SELECT id, expires_at, used
+  const latestSent = db.prepare(`
+    SELECT id, code, expires_at, used
     FROM email_verification_codes
-    WHERE email = ? AND code = ? AND type = ? AND used = 0
+    WHERE email = ? AND type = ? AND delivery_status = 'sent' AND used = 0
     ORDER BY id DESC
     LIMIT 1
-  `).get(trimmedEmail, trimmedCode, type) as any;
+  `).get(trimmedEmail, type) as any;
 
-  if (!record) {
+  if (!latestSent || latestSent.code !== trimmedCode) {
     const locked = recordVerifyFailure(attemptKey);
     if (locked) {
       db.prepare('UPDATE email_verification_codes SET used = 1 WHERE email = ? AND type = ? AND used = 0')
@@ -275,11 +296,14 @@ export function verifyEmailCode(
     return false;
   }
 
-  const isExpired = new Date(record.expires_at).getTime() < Date.now();
+  const isExpired = new Date(latestSent.expires_at).getTime() < Date.now();
   if (isExpired) return false;
 
-  // 标记已使用并清空重试计数，防止重放
-  db.prepare('UPDATE email_verification_codes SET used = 1 WHERE id = ?').run(record.id);
+  const upd = db
+    .prepare("UPDATE email_verification_codes SET used = 1 WHERE id = ? AND used = 0 AND delivery_status = 'sent'")
+    .run(latestSent.id);
+  if (upd.changes !== 1) return false;
+
   clearVerifyFailures(attemptKey);
   return true;
 }

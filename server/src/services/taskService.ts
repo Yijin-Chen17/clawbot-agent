@@ -1,0 +1,895 @@
+import { db } from '../config/database.js';
+import type { ExternalEvent, Task, TaskInstance, UserSettings } from '../models/types.js';
+import { getUserTimezone } from './accountService.js';
+import { getAccountDayBoundsUtc, getAccountLocalDateKey, parseAccountDateOrIso } from '../utils/timezone.js';
+import {
+  ensureTaskInstance,
+  executeInstanceProgressCommand,
+  getLatestPlanVersion,
+  syncLegacyTaskProjection,
+} from './instanceService.js';
+import { planTaskWithLLM } from './llm.js';
+import {
+  computeTodayBusyMinutes,
+  extendTaskDuration,
+  getActiveExternalBusyEvents,
+  replanUserTasks,
+  scheduleTask,
+  type ScheduleProposal,
+} from './scheduler.js';
+import { createScheduleProposal } from './proposalService.js';
+import {
+  createTaskCommandSchema,
+  normalizeCommandDeadline,
+  parseImpactSignalsArray,
+  parseTagsArray,
+  resolveTaskPriorityScores,
+  updateTaskCommandSchema,
+  validateFixedInterval,
+} from './taskCommandSchema.js';
+
+export type TargetResolution =
+  | { status: 'found_task'; task: Task; instance?: TaskInstance | null }
+  | { status: 'found_external'; event: ExternalEvent }
+  | { status: 'ambiguous'; candidates: Array<{ id: number; type: 'task' | 'calendar_event'; title: string; date?: string; status?: string }> }
+  | { status: 'not_found'; message: string };
+
+/**
+ * 统一目标消歧（M01）：
+ * - 优先使用明确 taskId / instanceId
+ * - 按名称匹配时按类型与可选日期筛选；命中多项时列出候选，绝不回退到首个或最新无关任务
+ */
+export function resolveCommandTarget(params: {
+  userId: number;
+  taskId?: number;
+  instanceId?: number;
+  name?: string | null;
+  type?: 'task' | 'calendar_event' | 'auto';
+  date?: string | null;
+  includeCompleted?: boolean;
+}): TargetResolution {
+  const tz = getUserTimezone(params.userId);
+  const now = new Date();
+  const targetDate = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : getAccountLocalDateKey(now, tz);
+
+  if (params.instanceId) {
+    const inst = db
+      .prepare('SELECT * FROM task_instances WHERE id = ? AND user_id = ?')
+      .get(params.instanceId, params.userId) as TaskInstance | undefined;
+    if (!inst) {
+      return { status: 'not_found', message: '未找到指定的任务实例' };
+    }
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(inst.task_id, params.userId) as Task;
+    return { status: 'found_task', task, instance: inst };
+  }
+
+  if (params.taskId) {
+    const task = db
+      .prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?')
+      .get(params.taskId, params.userId) as Task | undefined;
+    if (!task) {
+      return { status: 'not_found', message: '未找到指定任务' };
+    }
+    const inst = ensureTaskInstance(params.userId, task.id, targetDate, now);
+    return { status: 'found_task', task, instance: inst };
+  }
+
+  const trimmedName = (params.name || '').trim();
+  if (!trimmedName) {
+    return { status: 'not_found', message: '请明确说明要操作的任务或日程名称' };
+  }
+
+  const wantType = params.type || 'auto';
+  const taskCandidates: Task[] = [];
+  if (wantType === 'task' || wantType === 'auto') {
+    const statusFilter = params.includeCompleted ? "status != 'cancelled'" : "status NOT IN ('completed', 'cancelled')";
+    const rows = db.prepare(`
+      SELECT * FROM tasks
+      WHERE user_id = ? AND title LIKE ? AND ${statusFilter}
+      ORDER BY id DESC
+    `).all(params.userId, `%${trimmedName}%`) as Task[];
+
+    // Check exact title match first if multiple fuzzy matches exist
+    const exact = rows.filter(r => r.title.trim().toLowerCase() === trimmedName.toLowerCase());
+    taskCandidates.push(...(exact.length > 0 ? exact : rows));
+  }
+
+  const eventCandidates: ExternalEvent[] = [];
+  if (wantType === 'calendar_event' || (wantType === 'auto' && taskCandidates.length === 0)) {
+    let query = `
+      SELECT ee.*
+      FROM external_events ee
+      LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+      WHERE ee.user_id = ? AND ee.title LIKE ?
+        AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))
+        AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+    `;
+    const queryParams: any[] = [params.userId, `%${trimmedName}%`];
+    if (params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)) {
+      const bounds = getAccountDayBoundsUtc(params.date, tz);
+      query += ' AND ee.end_time >= ? AND ee.start_time <= ?';
+      queryParams.push(bounds.start.toISOString(), bounds.end.toISOString());
+    }
+    query += ' ORDER BY ee.start_time ASC';
+    const evRows = db.prepare(query).all(...queryParams) as ExternalEvent[];
+    const exactEv = evRows.filter(e => e.title.trim().toLowerCase() === trimmedName.toLowerCase());
+    eventCandidates.push(...(exactEv.length > 0 ? exactEv : evRows));
+  }
+
+  const combinedCount = taskCandidates.length + eventCandidates.length;
+  if (combinedCount === 0) {
+    return { status: 'not_found', message: `未找到包含「${trimmedName}」的任务或日程` };
+  }
+
+  if (combinedCount > 1) {
+    return {
+      status: 'ambiguous',
+      candidates: [
+        ...taskCandidates.slice(0, 5).map(t => ({
+          id: t.id,
+          type: 'task' as const,
+          title: t.title,
+          date: t.scheduled_start ? getAccountLocalDateKey(new Date(t.scheduled_start), tz) : undefined,
+          status: t.status,
+        })),
+        ...eventCandidates.slice(0, 5).map(e => ({
+          id: e.id,
+          type: 'calendar_event' as const,
+          title: e.title,
+          date: getAccountLocalDateKey(new Date(e.start_time), tz),
+        })),
+      ],
+    };
+  }
+
+  if (taskCandidates.length === 1) {
+    const task = taskCandidates[0];
+    const inst = ensureTaskInstance(params.userId, task.id, targetDate, now);
+    return { status: 'found_task', task, instance: inst };
+  }
+
+  return { status: 'found_external', event: eventCandidates[0] };
+}
+
+function checkFixedOverlapWithExisting(
+  userId: number,
+  startIso: string,
+  endIso: string,
+  isConcurrent: boolean,
+  excludeTaskId?: number
+): string | null {
+  if (isConcurrent) return null;
+  const startMs = new Date(startIso).getTime();
+  const endMs = new Date(endIso).getTime();
+
+  const ext = getActiveExternalBusyEvents(userId, startIso, endIso);
+  const hitExt = ext.find(e => !e.isAllDay && e.start.getTime() < endMs && e.end.getTime() > startMs);
+  if (hitExt) {
+    return `固定时段与外部日程「${hitExt.title}」冲突`;
+  }
+
+  const overlappingFixed = db.prepare(`
+    SELECT sb.*, t.title
+    FROM schedule_blocks sb
+    JOIN tasks t ON t.id = sb.task_id
+    WHERE sb.user_id = ?
+      AND sb.status IN ('planned', 'in_progress')
+      AND sb.is_concurrent = 0
+      AND (sb.is_fixed = 1 OR sb.is_committed = 1)
+      AND (? IS NULL OR sb.task_id != ?)
+      AND sb.end_time > ?
+      AND sb.start_time < ?
+    LIMIT 1
+  `).get(userId, excludeTaskId ?? null, excludeTaskId ?? null, startIso, endIso) as { title: string } | undefined;
+
+  if (overlappingFixed) {
+    return `固定时段与已有固定任务「${overlappingFixed.title}」重叠冲突`;
+  }
+  return null;
+}
+
+export interface CreateTaskServiceResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  task?: Task;
+  instance?: TaskInstance | null;
+  planVersion?: number;
+  proposal?: ScheduleProposal & { proposalId: string };
+  replan?: ReturnType<typeof replanUserTasks>;
+}
+
+/**
+ * 共享任务创建服务（T01, T02, T11, T13）：
+ * - 先做命令校验、硬截止校验与固定区间/冲突校验
+ * - 用户已显式传入耗时时不强制依赖模型；仅未传耗时时调用模型估算
+ * - 在同一事务内写入 task、task_instance 与固定块，再执行排程发布
+ */
+export async function createTaskCommand(params: {
+  userId: number;
+  rawInput: Record<string, any>;
+  allowProposal?: boolean;
+  dryRun?: boolean;
+}): Promise<CreateTaskServiceResult> {
+  const tz = getUserTimezone(params.userId);
+  const now = new Date();
+  const raw = params.rawInput || {};
+
+  const hasExplicitDuration =
+    raw.duration_minutes !== undefined && raw.duration_minutes !== null && raw.duration_minutes !== '';
+
+  if (
+    hasExplicitDuration &&
+    (!Number.isInteger(Number(raw.duration_minutes)) ||
+      Number(raw.duration_minutes) <= 0 ||
+      Number(raw.duration_minutes) > 100000)
+  ) {
+    return { success: false, statusCode: 400, message: '预计耗时必须为有效的正整数分钟数' };
+  }
+
+  const normalizedInput = {
+    title: raw.title,
+    notes: raw.notes ?? null,
+    duration_minutes: hasExplicitDuration ? Number(raw.duration_minutes) : null,
+    has_explicit_duration: hasExplicitDuration,
+    importance: raw.importance !== undefined && raw.importance !== null ? Number(raw.importance) : null,
+    urgency: raw.urgency !== undefined && raw.urgency !== null ? Number(raw.urgency) : null,
+    importance_tier: raw.importance_tier ?? null,
+    impact_signals: parseImpactSignalsArray(raw.impact_signals),
+    importance_manual_override:
+      raw.importance_manual_override !== undefined &&
+      raw.importance_manual_override !== null &&
+      raw.importance_manual_override !== ''
+        ? Number(raw.importance_manual_override)
+        : null,
+    score_scale: raw.score_scale ?? 100,
+    time_mode: raw.time_mode ?? null,
+    urgency_pace: raw.urgency_pace ?? null,
+    deadline: raw.deadline ?? null,
+    deadline_kind: raw.deadline_kind ?? null,
+    is_fixed: Boolean(raw.is_fixed),
+    is_concurrent: Boolean(raw.is_concurrent),
+    scheduled_start: raw.scheduled_start ?? null,
+    scheduled_end: raw.scheduled_end ?? null,
+    tags: parseTagsArray(raw.tags),
+    auto_schedule: raw.auto_schedule !== undefined ? Boolean(raw.auto_schedule) : true,
+    session_plan: Array.isArray(raw.session_plan) ? raw.session_plan : null,
+    source_fingerprint: raw.source_fingerprint ?? null,
+  };
+
+  const parsedCmd = createTaskCommandSchema.safeParse(normalizedInput);
+  if (!parsedCmd.success) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: parsedCmd.error.issues[0]?.message || '任务参数无效',
+    };
+  }
+  const cmd = parsedCmd.data;
+
+  // 1. Validate deadline and hard deadline early BEFORE any LLM call (T13)
+  const normalizedDeadline = normalizeCommandDeadline(cmd.deadline, tz);
+  const deadlineKind: 'hard' | 'soft' = cmd.deadline_kind === 'hard' ? 'hard' : 'soft';
+  if (deadlineKind === 'hard' && !normalizedDeadline) {
+    return { success: false, statusCode: 400, message: '不可逾期任务需要有效的截止时间' };
+  }
+
+  // 2. Validate fixed interval BEFORE any LLM call (T02)
+  const fixedCheck = validateFixedInterval({
+    isFixed: Boolean(cmd.is_fixed),
+    startRaw: cmd.scheduled_start,
+    endRaw: cmd.scheduled_end,
+    durationMinutes: cmd.duration_minutes ?? null,
+    deadlineIso: normalizedDeadline,
+    deadlineKind,
+    timezone: tz,
+  });
+  if (!fixedCheck.valid) {
+    return { success: false, statusCode: 400, message: fixedCheck.error || '固定时段参数无效' };
+  }
+
+  if (cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso) {
+    const overlapErr = checkFixedOverlapWithExisting(
+      params.userId,
+      fixedCheck.startIso,
+      fixedCheck.endIso,
+      Boolean(cmd.is_concurrent)
+    );
+    if (overlapErr) {
+      return { success: false, statusCode: 409, message: overlapErr };
+    }
+  }
+
+  // 3. Resolve duration & optional semantic sessions
+  let finalDuration = fixedCheck.durationMinutes ?? cmd.duration_minutes ?? null;
+  let sessionPlan: number[] | null = cmd.session_plan ?? null;
+
+  if (!finalDuration || finalDuration <= 0) {
+    try {
+      const plan = await planTaskWithLLM(params.userId, cmd.title, undefined, cmd.notes || undefined, {
+        dryRun: params.dryRun,
+      });
+      finalDuration = plan.minutes;
+      sessionPlan = plan.sessions;
+    } catch (err: any) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: err.message || '无法预估任务耗时，请检查 LLM 配置或填写预计耗时',
+      };
+    }
+  } else if (!sessionPlan && !cmd.is_fixed && finalDuration > 90 && raw.use_llm_sessions) {
+    try {
+      const plan = await planTaskWithLLM(params.userId, cmd.title, finalDuration, cmd.notes || undefined, {
+        dryRun: params.dryRun,
+      });
+      sessionPlan = plan.sessions;
+    } catch {
+      sessionPlan = null;
+    }
+  }
+
+  // 4. Compute unified 100-scale scores
+  const todayBusy = computeTodayBusyMinutes(params.userId, now);
+  const scores = resolveTaskPriorityScores({
+    durationMinutes: finalDuration,
+    isFixed: Boolean(cmd.is_fixed),
+    importance: cmd.importance,
+    urgency: cmd.urgency,
+    importanceTier: cmd.importance_tier,
+    impactSignals: parseImpactSignalsArray(cmd.impact_signals),
+    manualOverride: cmd.importance_manual_override,
+    scoreScale: cmd.score_scale,
+    timeMode: cmd.time_mode,
+    urgencyPace: cmd.urgency_pace,
+    deadlineIso: normalizedDeadline,
+    scheduledStartIso: fixedCheck.startIso,
+    scheduledEndIso: fixedCheck.endIso,
+    dailyBusyMinutesAhead: todayBusy,
+  });
+
+  // 5. Optional proposal check (used by Weixin / interactive flow when displacing movable future slots)
+  if (params.allowProposal && !cmd.is_fixed && cmd.auto_schedule !== false) {
+    const prePlan = scheduleTask(params.userId, {
+      title: cmd.title,
+      duration_minutes: finalDuration,
+      session_plan: sessionPlan ? JSON.stringify(sessionPlan) : null,
+      deadline_kind: deadlineKind,
+      urgency_pace: scores.urgencyPace,
+      time_mode: scores.timeMode,
+      is_concurrent: cmd.is_concurrent ? 1 : 0,
+      urgency: scores.urgency,
+      importance: scores.importance,
+      deadline: normalizedDeadline,
+    });
+
+    if (prePlan.proposal) {
+      const conflictInst = ensureTaskInstance(
+        params.userId,
+        prePlan.proposal.conflictTask.id,
+        getAccountLocalDateKey(now, tz),
+        now
+      );
+      if (conflictInst) {
+        const propRecord = createScheduleProposal({
+          userId: params.userId,
+          basePlanVersion: getLatestPlanVersion(params.userId),
+          reasonType: prePlan.proposal.type,
+          reasonText: prePlan.proposal.reasonText,
+          payload: {
+            newTaskSpec: {
+              title: cmd.title,
+              duration_minutes: finalDuration,
+              original_duration_minutes: finalDuration,
+              urgency: scores.urgency,
+              importance: scores.importance,
+              importance_tier: scores.importanceTier,
+              impact_signals: scores.impactSignals,
+              time_mode: scores.timeMode,
+              urgency_pace: scores.urgencyPace,
+              deadline: normalizedDeadline,
+              deadline_kind: deadlineKind,
+              is_concurrent: Boolean(cmd.is_concurrent),
+              tags: cmd.tags,
+              notes: cmd.notes || null,
+              session_plan: sessionPlan,
+            },
+            proposal: prePlan.proposal,
+            conflictInstanceId: conflictInst.id,
+            conflictInstanceVersion: conflictInst.version,
+            fallbackDirectPlan:
+              prePlan.success && prePlan.scheduled_start && prePlan.scheduled_end
+                ? {
+                    start: prePlan.scheduled_start,
+                    end: prePlan.scheduled_end,
+                    blocks: prePlan.schedule_blocks ? JSON.parse(prePlan.schedule_blocks) : [],
+                  }
+                : null,
+          },
+        });
+
+        return {
+          success: true,
+          statusCode: 202,
+          message: '按当前日程排程存在冲突或更优调整建议，请确认是否同步调整',
+          proposal: { ...prePlan.proposal, proposalId: propRecord.id },
+        };
+      }
+    }
+  }
+
+  // 6. Atomic DB insert of task + task_instance (+ fixed block if fixed)
+  let newTaskId = 0;
+  let newInstanceId = 0;
+
+  db.transaction(() => {
+    const initialStatus: Task['status'] = cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso ? 'scheduled' : 'pending_slot';
+    const fixedBlocksJson =
+      cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso
+        ? JSON.stringify([{ start: fixedCheck.startIso, end: fixedCheck.endIso, duration: finalDuration }])
+        : null;
+
+    const res = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
+        importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
+        score_scale, completed_dates, deadline, deadline_kind,
+        scheduled_start, scheduled_end, is_fixed, is_concurrent, tags, status,
+        schedule_blocks, session_plan, notes, version, active_template, source_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      params.userId,
+      cmd.title,
+      finalDuration,
+      finalDuration,
+      scores.urgency,
+      scores.importance,
+      scores.importanceTier,
+      JSON.stringify(scores.impactSignals),
+      scores.timeMode,
+      scores.urgencyPace,
+      scores.manualOverride,
+      normalizedDeadline,
+      deadlineKind,
+      fixedCheck.startIso,
+      fixedCheck.endIso,
+      cmd.is_fixed ? 1 : 0,
+      cmd.is_concurrent ? 1 : 0,
+      JSON.stringify(cmd.tags || []),
+      initialStatus,
+      fixedBlocksJson,
+      sessionPlan ? JSON.stringify(sessionPlan) : null,
+      cmd.notes || null,
+      cmd.source_fingerprint || null
+    );
+
+    newTaskId = Number(res.lastInsertRowid);
+    const inst = ensureTaskInstance(params.userId, newTaskId, getAccountLocalDateKey(now, tz), now)!;
+    newInstanceId = inst.id;
+
+    if (cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso) {
+      const planVer = getLatestPlanVersion(params.userId);
+      db.prepare(`
+        INSERT INTO schedule_blocks (
+          id, user_id, plan_version, instance_id, task_id,
+          start_time, end_time, duration_minutes, part_index, total_parts,
+          is_fixed, is_committed, is_concurrent, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?, 'planned')
+      `).run(
+        `blk-${newTaskId}-${newInstanceId}-fixed`,
+        params.userId,
+        planVer,
+        newInstanceId,
+        newTaskId,
+        fixedCheck.startIso,
+        fixedCheck.endIso,
+        finalDuration,
+        cmd.is_concurrent ? 1 : 0
+      );
+      syncLegacyTaskProjection(params.userId, newTaskId, now);
+    }
+  })();
+
+  let replan: ReturnType<typeof replanUserTasks> | undefined;
+  if (cmd.auto_schedule !== false || cmd.is_fixed) {
+    replan = replanUserTasks(params.userId, { triggerSource: 'create_task' });
+  }
+
+  const createdTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newTaskId) as Task;
+  const createdInst = db.prepare('SELECT * FROM task_instances WHERE id = ?').get(newInstanceId) as TaskInstance | null;
+
+  const msg = createdTask.scheduled_start
+    ? cmd.is_fixed
+      ? '固定任务已创建并锁定时间段！'
+      : '任务已创建并排入日历'
+    : createdInst?.plan_reason
+    ? `任务已创建，${createdInst.plan_reason}`
+    : '任务已创建，暂未找到合适时段';
+
+  return {
+    success: true,
+    statusCode: 201,
+    message: msg,
+    task: createdTask,
+    instance: createdInst,
+    planVersion: replan?.planVersion,
+    replan,
+  };
+}
+
+/**
+ * 共享任务局部更新服务（T01, T02, T11）：
+ * - 拒绝越权状态直写、校验固定时间区间与冲突
+ * - 显式更新局部字段，保护既有 tags / deadline_kind / 历史已投入工时
+ */
+export async function updateTaskCommand(params: {
+  userId: number;
+  taskId: number;
+  rawInput: Record<string, any>;
+}): Promise<CreateTaskServiceResult> {
+  const tz = getUserTimezone(params.userId);
+  const now = new Date();
+  const existing = db
+    .prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?')
+    .get(params.taskId, params.userId) as Task | undefined;
+
+  if (!existing) {
+    return { success: false, statusCode: 404, message: '任务不存在' };
+  }
+
+  const raw = params.rawInput || {};
+  const normalizedInput: Record<string, any> = {};
+  if (raw.title !== undefined) normalizedInput.title = raw.title;
+  if (raw.notes !== undefined) normalizedInput.notes = raw.notes;
+  if (raw.duration_minutes !== undefined && raw.duration_minutes !== null && raw.duration_minutes !== '') {
+    normalizedInput.duration_minutes = Number(raw.duration_minutes);
+  }
+  if (raw.importance !== undefined && raw.importance !== null) normalizedInput.importance = Number(raw.importance);
+  if (raw.urgency !== undefined && raw.urgency !== null) normalizedInput.urgency = Number(raw.urgency);
+  if (raw.importance_tier !== undefined) normalizedInput.importance_tier = raw.importance_tier;
+  if (raw.impact_signals !== undefined) normalizedInput.impact_signals = parseImpactSignalsArray(raw.impact_signals);
+  if (raw.importance_manual_override !== undefined) {
+    normalizedInput.importance_manual_override =
+      raw.importance_manual_override !== null && raw.importance_manual_override !== ''
+        ? Number(raw.importance_manual_override)
+        : null;
+  }
+  if (raw.score_scale !== undefined) normalizedInput.score_scale = raw.score_scale;
+  if (raw.time_mode !== undefined) normalizedInput.time_mode = raw.time_mode;
+  if (raw.urgency_pace !== undefined) normalizedInput.urgency_pace = raw.urgency_pace;
+  if (raw.deadline !== undefined) normalizedInput.deadline = raw.deadline;
+  if (raw.deadline_kind !== undefined) normalizedInput.deadline_kind = raw.deadline_kind;
+  if (raw.is_fixed !== undefined) normalizedInput.is_fixed = Boolean(raw.is_fixed);
+  if (raw.is_concurrent !== undefined) normalizedInput.is_concurrent = Boolean(raw.is_concurrent);
+  if (raw.scheduled_start !== undefined) normalizedInput.scheduled_start = raw.scheduled_start;
+  if (raw.scheduled_end !== undefined) normalizedInput.scheduled_end = raw.scheduled_end;
+  if (raw.tags !== undefined) normalizedInput.tags = parseTagsArray(raw.tags);
+  if (raw.expected_version !== undefined) normalizedInput.expected_version = Number(raw.expected_version);
+
+  const parsedCmd = updateTaskCommandSchema.safeParse(normalizedInput);
+  if (!parsedCmd.success) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: parsedCmd.error.issues[0]?.message || '更新参数无效',
+    };
+  }
+  const cmd = parsedCmd.data;
+
+  if (cmd.expected_version !== undefined && existing.version !== undefined && cmd.expected_version !== existing.version) {
+    return { success: false, statusCode: 409, message: '任务已被其他操作修改，请刷新后重试' };
+  }
+
+  const nextTitle = cmd.title ?? existing.title;
+  const nextIsFixed = cmd.is_fixed !== undefined ? cmd.is_fixed : Boolean(existing.is_fixed);
+  const nextIsConcurrent = cmd.is_concurrent !== undefined ? cmd.is_concurrent : Boolean(existing.is_concurrent);
+  const nextDeadline =
+    cmd.deadline !== undefined
+      ? normalizeCommandDeadline(cmd.deadline, tz)
+      : normalizeCommandDeadline(existing.deadline, tz);
+  const nextDeadlineKind: 'hard' | 'soft' =
+    cmd.deadline_kind ?? (nextDeadline ? (existing.deadline_kind === 'hard' ? 'hard' : 'soft') : 'soft');
+
+  if (nextDeadlineKind === 'hard' && !nextDeadline) {
+    return { success: false, statusCode: 400, message: '不可逾期任务需要有效的截止时间' };
+  }
+
+  const nextDuration = cmd.duration_minutes ?? existing.duration_minutes;
+  const nextStartRaw = cmd.scheduled_start !== undefined ? cmd.scheduled_start : existing.scheduled_start;
+  const nextEndRaw = cmd.scheduled_end !== undefined ? cmd.scheduled_end : existing.scheduled_end;
+
+  const fixedCheck = validateFixedInterval({
+    isFixed: nextIsFixed,
+    startRaw: nextStartRaw,
+    endRaw: nextEndRaw,
+    durationMinutes: cmd.duration_minutes ?? (nextIsFixed ? nextDuration : null),
+    deadlineIso: nextDeadline,
+    deadlineKind: nextDeadlineKind,
+    timezone: tz,
+  });
+
+  if (!fixedCheck.valid) {
+    return { success: false, statusCode: 400, message: fixedCheck.error || '固定时段参数无效' };
+  }
+
+  if (nextIsFixed && fixedCheck.startIso && fixedCheck.endIso) {
+    const overlapErr = checkFixedOverlapWithExisting(
+      params.userId,
+      fixedCheck.startIso,
+      fixedCheck.endIso,
+      nextIsConcurrent,
+      existing.id
+    );
+    if (overlapErr) {
+      return { success: false, statusCode: 409, message: overlapErr };
+    }
+  }
+
+  const finalDuration = fixedCheck.durationMinutes ?? nextDuration;
+  const nextTags = cmd.tags !== undefined ? cmd.tags : parseTagsArray(existing.tags);
+  const nextSignals = cmd.impact_signals !== undefined ? cmd.impact_signals : parseImpactSignalsArray(existing.impact_signals);
+
+  const todayKey = getAccountLocalDateKey(now, tz);
+  const inst = ensureTaskInstance(params.userId, existing.id, todayKey, now);
+  const isCompletedToday = inst?.status === 'completed';
+
+  const scores = resolveTaskPriorityScores({
+    durationMinutes: finalDuration,
+    isFixed: nextIsFixed,
+    importance: cmd.importance !== undefined ? cmd.importance : existing.importance,
+    urgency: cmd.urgency !== undefined ? cmd.urgency : existing.urgency,
+    importanceTier: cmd.importance_tier !== undefined ? cmd.importance_tier : existing.importance_tier,
+    impactSignals: parseImpactSignalsArray(nextSignals),
+    manualOverride:
+      cmd.importance_manual_override !== undefined
+        ? cmd.importance_manual_override
+        : existing.importance_manual_override,
+    scoreScale: cmd.score_scale ?? existing.score_scale ?? 100,
+    timeMode: cmd.time_mode ?? existing.time_mode,
+    urgencyPace: cmd.urgency_pace ?? existing.urgency_pace,
+    deadlineIso: nextDeadline,
+    scheduledStartIso: nextIsFixed ? fixedCheck.startIso : existing.scheduled_start,
+    scheduledEndIso: nextIsFixed ? fixedCheck.endIso : existing.scheduled_end,
+    isCompletedToday,
+    dailyBusyMinutesAhead: computeTodayBusyMinutes(params.userId, now, existing.id),
+  });
+
+  const nextVersion = (existing.version || 1) + 1;
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE tasks
+      SET title = ?,
+          duration_minutes = ?,
+          original_duration_minutes = CASE
+            WHEN ? != duration_minutes THEN COALESCE(original_duration_minutes, 0) + (? - duration_minutes)
+            ELSE original_duration_minutes
+          END,
+          urgency = ?,
+          importance = ?,
+          importance_tier = ?,
+          impact_signals = ?,
+          time_mode = ?,
+          urgency_pace = ?,
+          importance_manual_override = ?,
+          score_scale = 100,
+          deadline = ?,
+          deadline_kind = ?,
+          is_fixed = ?,
+          is_concurrent = ?,
+          tags = ?,
+          notes = ?,
+          version = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).run(
+      nextTitle,
+      finalDuration,
+      finalDuration,
+      finalDuration,
+      scores.urgency,
+      scores.importance,
+      scores.importanceTier,
+      JSON.stringify(scores.impactSignals),
+      scores.timeMode,
+      scores.urgencyPace,
+      scores.manualOverride,
+      nextDeadline,
+      nextDeadlineKind,
+      nextIsFixed ? 1 : 0,
+      nextIsConcurrent ? 1 : 0,
+      JSON.stringify(nextTags),
+      cmd.notes !== undefined ? cmd.notes : existing.notes,
+      nextVersion,
+      existing.id,
+      params.userId
+    );
+
+    if (inst) {
+      // Update active instance estimated_minutes preserving already completed minutes
+      const nextEstimated = Math.max(inst.completed_minutes, inst.completed_minutes + finalDuration);
+      db.prepare(`
+        UPDATE task_instances
+        SET estimated_minutes = ?,
+            version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(cmd.duration_minutes !== undefined ? nextEstimated : Math.max(inst.estimated_minutes, finalDuration), inst.id);
+
+      if (nextIsFixed && fixedCheck.startIso && fixedCheck.endIso) {
+        db.prepare(`
+          UPDATE schedule_blocks
+          SET status = 'superseded', updated_at = CURRENT_TIMESTAMP
+          WHERE instance_id = ? AND status IN ('planned', 'conflict')
+        `).run(inst.id);
+
+        const planVer = getLatestPlanVersion(params.userId);
+        db.prepare(`
+          INSERT INTO schedule_blocks (
+            id, user_id, plan_version, instance_id, task_id,
+            start_time, end_time, duration_minutes, part_index, total_parts,
+            is_fixed, is_committed, is_concurrent, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?, 'planned')
+        `).run(
+          `blk-${existing.id}-${inst.id}-fixed-${nextVersion}`,
+          params.userId,
+          planVer,
+          inst.id,
+          existing.id,
+          fixedCheck.startIso,
+          fixedCheck.endIso,
+          finalDuration,
+          nextIsConcurrent ? 1 : 0
+        );
+      } else if (cmd.is_fixed === false && existing.is_fixed === 1) {
+        // Unpinned: mark old fixed blocks superseded so planner reschedules cleanly
+        db.prepare(`
+          UPDATE schedule_blocks
+          SET is_fixed = 0, is_committed = 0, status = 'superseded', updated_at = CURRENT_TIMESTAMP
+          WHERE instance_id = ? AND status IN ('planned', 'conflict')
+        `).run(inst.id);
+      }
+      syncLegacyTaskProjection(params.userId, existing.id, now);
+    }
+  })();
+
+  // Optional async LLM session re-split guarded by task version (T11)
+  if (raw.use_llm_sessions && (finalDuration !== existing.duration_minutes || nextTitle !== existing.title)) {
+    try {
+      const plan = await planTaskWithLLM(params.userId, nextTitle, finalDuration, cmd.notes ?? existing.notes ?? undefined);
+      const currentTask = db.prepare('SELECT version FROM tasks WHERE id = ?').get(existing.id) as { version: number } | undefined;
+      if (currentTask && currentTask.version === nextVersion) {
+        db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND version = ?').run(
+          JSON.stringify(plan.sessions),
+          existing.id,
+          nextVersion
+        );
+      }
+    } catch {}
+  }
+
+  const replan = replanUserTasks(params.userId, { triggerSource: 'update_task' });
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(existing.id) as Task;
+  const updatedInst = inst ? (db.prepare('SELECT * FROM task_instances WHERE id = ?').get(inst.id) as TaskInstance) : null;
+
+  return {
+    success: true,
+    statusCode: 200,
+    message: updated.scheduled_start ? '任务更新成功并已同步更新排程' : `任务已更新（${updatedInst?.plan_reason || '待安排时段'}）`,
+    task: updated,
+    instance: updatedInst,
+    planVersion: replan.planVersion,
+    replan,
+  };
+}
+
+export function deleteTaskCommand(userId: number, taskId: number): { success: boolean; message: string; planVersion?: number } {
+  const existing = db.prepare('SELECT id, title FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) as
+    | { id: number; title: string }
+    | undefined;
+  if (!existing) {
+    return { success: false, message: '任务不存在' };
+  }
+
+  db.transaction(() => {
+    // Cancel pending notifications before cascade delete
+    db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND instance_id IN (SELECT id FROM task_instances WHERE task_id = ?)
+        AND status IN ('pending', 'failed')
+    `).run(userId, taskId);
+    db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(taskId, userId);
+  })();
+
+  const replan = replanUserTasks(userId, { triggerSource: 'delete_task' });
+  return {
+    success: true,
+    message: `已删除任务「${existing.title}」并更新日历排程`,
+    planVersion: replan.planVersion,
+  };
+}
+
+export function ignoreExternalCalendarInstance(userId: number, eventId: number): { success: boolean; message: string; planVersion?: number } {
+  const ev = db.prepare('SELECT * FROM external_events WHERE id = ? AND user_id = ?').get(eventId, userId) as ExternalEvent | undefined;
+  if (!ev) {
+    return { success: false, message: '未找到指定外部日程' };
+  }
+
+  db.transaction(() => {
+    if (ev.subscription_id && ev.uid) {
+      db.prepare(`
+        INSERT OR IGNORE INTO calendar_ignored_instances (
+          user_id, subscription_id, event_uid, occurrence_start, title
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(userId, ev.subscription_id, ev.uid, ev.occurrence_start || ev.start_time, ev.title);
+    }
+    db.prepare('DELETE FROM external_events WHERE id = ? AND user_id = ?').run(eventId, userId);
+  })();
+
+  const replan = replanUserTasks(userId, { triggerSource: 'ignore_external_event' });
+  return {
+    success: true,
+    message: `已本地忽略外部日程「${ev.title}」（后续同步不再复现）`,
+    planVersion: replan.planVersion,
+  };
+}
+
+export function executeQuickActionCommand(params: {
+  userId: number;
+  taskId: number;
+  action: 'start' | 'complete' | 'reopen' | 'cancel' | 'extend' | 'stop_daily';
+  extendMinutes?: number;
+  businessDate?: string;
+  targetRemainingMinutes?: number;
+  commandId?: string;
+}): {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  task?: Task;
+  planVersion?: number;
+} {
+  if (params.action === 'extend') {
+    const ext = extendTaskDuration(params.userId, params.taskId, params.extendMinutes ?? 30);
+    return {
+      success: ext.success,
+      statusCode: ext.success ? 200 : 400,
+      message: ext.message,
+      task: ext.task,
+      planVersion: getLatestPlanVersion(params.userId),
+    };
+  }
+
+  const prog = executeInstanceProgressCommand({
+    userId: params.userId,
+    taskId: params.taskId,
+    action: params.action,
+    businessDate: params.businessDate,
+    targetRemainingMinutes: params.targetRemainingMinutes,
+    commandId: params.commandId,
+  });
+
+  if (!prog.success) {
+    return {
+      success: false,
+      statusCode: prog.staleVersion ? 409 : 400,
+      message: prog.message,
+    };
+  }
+
+  let planVersion = getLatestPlanVersion(params.userId);
+  if (prog.needsReplan) {
+    const replan = replanUserTasks(params.userId, { triggerSource: `action_${params.action}` });
+    planVersion = replan.planVersion ?? planVersion;
+  }
+
+  const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(params.taskId) as Task | undefined;
+  return {
+    success: true,
+    statusCode: 200,
+    message: prog.message,
+    task: updatedTask,
+    planVersion,
+  };
+}

@@ -6,7 +6,9 @@ import { AuthenticatedRequest } from '../middleware/auth.js';
 import { UserSettings } from '../models/types.js';
 import { recordApiUsage, getUserUsageStats, clearUserUsageLogs } from '../services/llmPricing.js';
 import { getGlobalApiConfig } from '../services/globalApiConfig.js';
+import { isOfficialGlobalLlmConfigured } from '../services/llm.js';
 import { replanUserTasks } from '../services/scheduler.js';
+import { isValidTimeZone } from '../utils/timezone.js';
 
 export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -16,11 +18,7 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
   const userBalance = Number(userRow?.balance || 0);
 
   const globalConfig = getGlobalApiConfig();
-  const hasGlobalLlm = Boolean(
-    (globalConfig.api1.apiKey && globalConfig.api1.apiKey.trim().length > 3) ||
-    (globalConfig.api2.enabled && globalConfig.api2.apiKey && globalConfig.api2.apiKey.trim().length > 3) ||
-    process.env.DEEPSEEK_API_KEY
-  );
+  const hasGlobalLlm = isOfficialGlobalLlmConfigured();
 
   const globalModel = globalConfig.api1.model || 'deepseek-chat';
   const isDeepSeek = globalModel.toLowerCase().includes('deepseek');
@@ -52,34 +50,21 @@ export function getSettings(req: AuthenticatedRequest, res: Response): void {
   });
 }
 
-export function updateSettings(req: AuthenticatedRequest, res: Response): void {
-  const userId = req.user!.id;
-  const {
-    api_mode,
-    llm_endpoint,
-    llm_api_key,
-    llm_model,
-    clawbot_outbound_url,
-    clawbot_outbound_key,
-    clawbot_to_wxid,
-    work_slots,
-    task_buffer_minutes,
-    reminder_before_start_minutes,
-    reminder_before_end_minutes,
-    calendar_sync_interval_minutes,
-    advance_deadline_days,
-  } = req.body;
-
-  // Validate work_slots JSON or human-friendly string (e.g. "00:00-02:00, 13:00-18:00")
-  let workSlotsStr = work_slots;
+function parseWorkSlotsInput(work_slots: unknown): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof work_slots === 'object' && work_slots !== null) {
-    workSlotsStr = JSON.stringify(work_slots);
-  } else if (typeof work_slots === 'string') {
+    if (!Array.isArray(work_slots)) {
+      return { ok: false, error: '工作时段格式错误' };
+    }
+    return { ok: true, value: JSON.stringify(work_slots) };
+  }
+  if (typeof work_slots === 'string') {
     try {
       const parsed = JSON.parse(work_slots);
-      workSlotsStr = JSON.stringify(parsed);
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: '工作时段必须为数组' };
+      }
+      return { ok: true, value: JSON.stringify(parsed) };
     } catch {
-      // Parse human string like "00:00-02:00, 13:00-18:00"
       const parts = work_slots.split(/[,，;\n\r]+/).map((p: string) => p.trim()).filter(Boolean);
       const parsedSlots: Array<{ start: string; end: string }> = [];
       for (const part of parts) {
@@ -89,13 +74,90 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
         }
       }
       if (parsedSlots.length > 0) {
-        workSlotsStr = JSON.stringify(parsedSlots);
-      } else {
-        res.status(400).json({ error: '工作时段格式错误，需形如 00:00-02:00, 13:00-18:00' });
-        return;
+        return { ok: true, value: JSON.stringify(parsedSlots) };
       }
+      return { ok: false, error: '工作时段格式错误，需形如 00:00-02:00, 13:00-18:00' };
     }
   }
+  return { ok: false, error: '工作时段格式错误' };
+}
+
+/**
+ * 局部更新用户偏好设置（A04）：
+ * - 未显式传入的字段严格保留现有数据库值，绝不覆盖或清空未传配置
+ * - 与旧值比对后仅在影响排程的字段确实发生变化时触发重排
+ * - 支持可选 expected_updated_at 并发版本检查
+ */
+export function updateSettings(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const body = req.body || {};
+
+  const existing = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
+  if (body.expected_updated_at && existing && existing.updated_at !== body.expected_updated_at) {
+    res.status(409).json({
+      error: '设置已被其他会话更新，请刷新后重试',
+      currentUpdatedAt: existing.updated_at,
+    });
+    return;
+  }
+
+  let nextWorkSlotsStr: string | undefined;
+  if (body.work_slots !== undefined) {
+    const parsed = parseWorkSlotsInput(body.work_slots);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    nextWorkSlotsStr = parsed.value;
+  }
+
+  if (body.timezone !== undefined && !isValidTimeZone(body.timezone)) {
+    res.status(400).json({ error: '无效的 IANA 时区标识' });
+    return;
+  }
+
+  const nextApiMode =
+    body.api_mode !== undefined
+      ? body.api_mode === 'custom'
+        ? 'custom'
+        : 'official'
+      : existing?.api_mode ?? 'official';
+  const nextEndpoint = body.llm_endpoint !== undefined ? String(body.llm_endpoint) : existing?.llm_endpoint ?? 'https://api.deepseek.com/v1';
+  const nextApiKey = body.llm_api_key !== undefined ? String(body.llm_api_key) : existing?.llm_api_key ?? '';
+  const nextModel = body.llm_model !== undefined ? String(body.llm_model) : existing?.llm_model ?? 'deepseek-chat';
+  const nextOutboundUrl = body.clawbot_outbound_url !== undefined ? String(body.clawbot_outbound_url) : existing?.clawbot_outbound_url ?? '';
+  const nextOutboundKey = body.clawbot_outbound_key !== undefined ? String(body.clawbot_outbound_key) : existing?.clawbot_outbound_key ?? '';
+  const nextToWxid = body.clawbot_to_wxid !== undefined ? String(body.clawbot_to_wxid) : existing?.clawbot_to_wxid ?? '';
+  const workSlotsToSave =
+    nextWorkSlotsStr !== undefined
+      ? nextWorkSlotsStr
+      : existing?.work_slots ?? '[{"start":"09:00","end":"12:00"},{"start":"13:00","end":"18:00"},{"start":"19:00","end":"24:00"},{"start":"00:00","end":"02:00"}]';
+  const nextBuffer = body.task_buffer_minutes !== undefined ? Number(body.task_buffer_minutes) : existing?.task_buffer_minutes ?? 10;
+  const nextRemStart =
+    body.reminder_before_start_minutes !== undefined
+      ? Number(body.reminder_before_start_minutes)
+      : existing?.reminder_before_start_minutes ?? 5;
+  const nextRemEnd =
+    body.reminder_before_end_minutes !== undefined
+      ? Number(body.reminder_before_end_minutes)
+      : existing?.reminder_before_end_minutes ?? 5;
+  const nextSyncInt =
+    body.calendar_sync_interval_minutes !== undefined
+      ? Number(body.calendar_sync_interval_minutes)
+      : existing?.calendar_sync_interval_minutes ?? 60;
+  const nextAdvanceDays =
+    body.advance_deadline_days !== undefined
+      ? Number(body.advance_deadline_days)
+      : existing?.advance_deadline_days ?? 1;
+  const nextTimezone =
+    body.timezone !== undefined ? String(body.timezone).trim() : existing?.timezone ?? 'Asia/Shanghai';
+
+  const schedulingChanged =
+    !existing ||
+    existing.work_slots !== workSlotsToSave ||
+    Number(existing.task_buffer_minutes) !== nextBuffer ||
+    Number(existing.advance_deadline_days ?? 1) !== nextAdvanceDays ||
+    (existing.timezone || 'Asia/Shanghai') !== nextTimezone;
 
   db.prepare(`
     INSERT INTO user_settings (
@@ -103,43 +165,44 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       clawbot_outbound_url, clawbot_outbound_key, clawbot_to_wxid,
       work_slots, task_buffer_minutes, reminder_before_start_minutes,
       reminder_before_end_minutes, calendar_sync_interval_minutes,
-      advance_deadline_days, updated_at
+      advance_deadline_days, timezone, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET
-      api_mode = COALESCE(excluded.api_mode, user_settings.api_mode),
-      llm_endpoint = COALESCE(excluded.llm_endpoint, user_settings.llm_endpoint),
-      llm_api_key = COALESCE(excluded.llm_api_key, user_settings.llm_api_key),
-      llm_model = COALESCE(excluded.llm_model, user_settings.llm_model),
-      clawbot_outbound_url = COALESCE(excluded.clawbot_outbound_url, user_settings.clawbot_outbound_url),
-      clawbot_outbound_key = COALESCE(excluded.clawbot_outbound_key, user_settings.clawbot_outbound_key),
-      clawbot_to_wxid = COALESCE(excluded.clawbot_to_wxid, user_settings.clawbot_to_wxid),
-      work_slots = COALESCE(excluded.work_slots, user_settings.work_slots),
-      task_buffer_minutes = COALESCE(excluded.task_buffer_minutes, user_settings.task_buffer_minutes),
-      reminder_before_start_minutes = COALESCE(excluded.reminder_before_start_minutes, user_settings.reminder_before_start_minutes),
-      reminder_before_end_minutes = COALESCE(excluded.reminder_before_end_minutes, user_settings.reminder_before_end_minutes),
-      calendar_sync_interval_minutes = COALESCE(excluded.calendar_sync_interval_minutes, user_settings.calendar_sync_interval_minutes),
-      advance_deadline_days = COALESCE(excluded.advance_deadline_days, user_settings.advance_deadline_days),
+      api_mode = excluded.api_mode,
+      llm_endpoint = excluded.llm_endpoint,
+      llm_api_key = excluded.llm_api_key,
+      llm_model = excluded.llm_model,
+      clawbot_outbound_url = excluded.clawbot_outbound_url,
+      clawbot_outbound_key = excluded.clawbot_outbound_key,
+      clawbot_to_wxid = excluded.clawbot_to_wxid,
+      work_slots = excluded.work_slots,
+      task_buffer_minutes = excluded.task_buffer_minutes,
+      reminder_before_start_minutes = excluded.reminder_before_start_minutes,
+      reminder_before_end_minutes = excluded.reminder_before_end_minutes,
+      calendar_sync_interval_minutes = excluded.calendar_sync_interval_minutes,
+      advance_deadline_days = excluded.advance_deadline_days,
+      timezone = excluded.timezone,
       updated_at = CURRENT_TIMESTAMP
   `).run(
     userId,
-    api_mode ?? 'official',
-    llm_endpoint ?? 'https://api.deepseek.com/v1',
-    llm_api_key ?? '',
-    llm_model ?? 'deepseek-chat',
-    clawbot_outbound_url ?? '',
-    clawbot_outbound_key ?? '',
-    clawbot_to_wxid ?? '',
-    workSlotsStr,
-    task_buffer_minutes ?? 10,
-    reminder_before_start_minutes ?? 5,
-    reminder_before_end_minutes ?? 5,
-    calendar_sync_interval_minutes ?? 60,
-    advance_deadline_days ?? 1
+    nextApiMode,
+    nextEndpoint,
+    nextApiKey,
+    nextModel,
+    nextOutboundUrl,
+    nextOutboundKey,
+    nextToWxid,
+    workSlotsToSave,
+    nextBuffer,
+    nextRemStart,
+    nextRemEnd,
+    nextSyncInt,
+    nextAdvanceDays,
+    nextTimezone
   );
 
-  // 工作时段或排程参数变更后，立即重排非固定待办，避免旧排程残留在工作时间外
-  if (work_slots !== undefined || task_buffer_minutes !== undefined || advance_deadline_days !== undefined) {
+  if (schedulingChanged) {
     try {
       replanUserTasks(userId);
     } catch (err) {
@@ -147,7 +210,8 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     }
   }
 
-  res.json({ message: '配置已保存成功！' });
+  const updated = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings;
+  res.json({ message: '配置已保存成功！', settings: updated, replanned: schedulingChanged });
 }
 
 export function regenerateWebhookToken(req: AuthenticatedRequest, res: Response): void {
@@ -202,7 +266,7 @@ export async function testLlmApiKey(req: AuthenticatedRequest, res: Response): P
 
     res.json({
       success: true,
-      message: `DeepSeek API Key 验证有效！模型连接正常${usageNote}。`,
+      message: `API Key 验证有效！模型连接正常${usageNote}。`,
     });
   } catch (err: any) {
     const errorMsg =
@@ -232,12 +296,12 @@ export function clearLlmUsage(req: AuthenticatedRequest, res: Response): void {
   clearUserUsageLogs(userId);
   res.json({
     success: true,
-    message: 'API 用量记录已清空',
+    message: '个人用量视图已清空（系统审计流水已保留）',
   });
 }
 
 /**
- * 用户使用兑换码为账户余额充值
+ * 用户使用兑换码为账户余额充值（A06：事务内条件认领 + 核对影响行数）
  */
 export function redeemCode(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -254,42 +318,46 @@ export function redeemCode(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  const codeRow = db.prepare('SELECT * FROM redemption_codes WHERE code = ?').get(cleanCode) as any;
-  if (!codeRow) {
-    res.status(400).json({ error: '兑换码不存在，请核对后重试' });
-    return;
-  }
-
-  if (codeRow.status !== 'active') {
-    res.status(400).json({ error: '该兑换码已被使用或已作废' });
-    return;
-  }
-
-  let newBalance = 0;
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
-      UPDATE redemption_codes
-      SET status = 'used', used_by_user_id = ?, used_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(userId, codeRow.id);
-
-    db.prepare(`
-      UPDATE users
-      SET balance = ROUND(COALESCE(balance, 0) + ?, 4), updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(codeRow.amount, userId);
-
-    const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as any;
-    newBalance = Number(user?.balance || 0);
-  });
-
   try {
-    runTransaction();
+    const result = db.transaction(() => {
+      const codeRow = db.prepare('SELECT * FROM redemption_codes WHERE code = ?').get(cleanCode) as any;
+      if (!codeRow) {
+        return { error: { status: 400, message: '兑换码不存在，请核对后重试' } };
+      }
+
+      const claim = db.prepare(`
+        UPDATE redemption_codes
+        SET status = 'used', used_by_user_id = ?, used_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'active'
+      `).run(userId, codeRow.id);
+
+      if (claim.changes !== 1) {
+        return { error: { status: 400, message: '该兑换码已被使用或已作废' } };
+      }
+
+      db.prepare(`
+        UPDATE users
+        SET balance = ROUND(COALESCE(balance, 0) + ?, 4), updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(codeRow.amount, userId);
+
+      const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as any;
+      return {
+        amount: Number(codeRow.amount),
+        newBalance: Number(user?.balance || 0),
+      };
+    })();
+
+    if ('error' in result && result.error) {
+      res.status(result.error.status).json({ error: result.error.message });
+      return;
+    }
+
     res.json({
       success: true,
-      amount: codeRow.amount,
-      newBalance,
-      message: `兑换成功！已为您充值 ¥${codeRow.amount.toFixed(2)} 元，当前账户余额为 ¥${newBalance.toFixed(2)} 元。`,
+      amount: result.amount,
+      newBalance: result.newBalance,
+      message: `兑换成功！已为您充值 ¥${result.amount!.toFixed(2)} 元，当前账户余额为 ¥${result.newBalance!.toFixed(2)} 元。`,
     });
   } catch (err: any) {
     res.status(500).json({ error: '兑换处理失败，请稍后重试' });

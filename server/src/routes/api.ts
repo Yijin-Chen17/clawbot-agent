@@ -45,7 +45,20 @@ import {
   clearLlmUsage,
   redeemCode,
 } from '../controllers/settingsController.js';
-import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask, completePartTask, applyProposal } from '../controllers/taskController.js';
+import {
+  listTasks,
+  createTask,
+  updateTask,
+  deleteTask,
+  deleteAllTasks,
+  rescheduleTask,
+  quickActionTask,
+  completePartTask,
+  applyProposal,
+  exportBackup,
+  previewBackup,
+  importBackup,
+} from '../controllers/taskController.js';
 import {
   listSubscriptions,
   createSubscription,
@@ -57,6 +70,7 @@ import {
   syncAndReplanAll,
   replanAll,
   previewTodoCard,
+  ignoreExternalEvent,
 } from '../controllers/calendarController.js';
 import { handleClawbotWebhook } from '../controllers/webhookController.js';
 import { getQRCode, getStatus, unbindWeixin, sendTestMessage } from '../controllers/weixinController.js';
@@ -99,13 +113,18 @@ router.get('/weixin/status', requireAuth, getStatus);
 router.post('/weixin/unbind', requireAuth, unbindWeixin);
 router.post('/weixin/test-message', requireAuth, sendTestMessage);
 
-// Task / TODO Management
+// Task / TODO Management (static subpaths before /:id)
+router.get('/tasks/backup', requireAuth, exportBackup);
+router.post('/tasks/backup/preview', requireAuth, previewBackup);
+router.post('/tasks/backup/import', requireAuth, importBackup);
+router.post('/tasks/apply-proposal', requireAuth, applyProposal);
+router.delete('/tasks/all', requireAuth, deleteAllTasks);
+
 router.get('/tasks', requireAuth, listTasks);
 router.post('/tasks', requireAuth, createTask);
 router.put('/tasks/:id', requireAuth, updateTask);
 router.delete('/tasks/:id', requireAuth, deleteTask);
 router.post('/tasks/:id/reschedule', requireAuth, rescheduleTask);
-router.post('/tasks/apply-proposal', requireAuth, applyProposal);
 router.post('/tasks/:id/action', requireAuth, quickActionTask);
 router.post('/tasks/:id/complete-part', requireAuth, completePartTask);
 
@@ -115,6 +134,7 @@ router.put('/calendar/colors/:id', requireAuth, updateCalendarColor);
 router.post('/calendar/subscriptions', requireAuth, createSubscription);
 router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);
+router.post('/calendar/external-events/:id/ignore', requireAuth, ignoreExternalEvent);
 router.get('/calendar/events', requireAuth, getCalendarEvents);
 router.post('/calendar/sync-and-replan', requireAuth, syncAndReplanAll);
 router.post('/calendar/replan', requireAuth, replanAll);

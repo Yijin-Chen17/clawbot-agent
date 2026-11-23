@@ -7,7 +7,9 @@ import {
   checkLoginQRStatus,
   sendWeixinTextMessage,
   weixinTransitManager,
+  clearWeixinMemoryContext,
 } from '../services/weixinGateway.js';
+import { clearUserDrafts } from '../services/inboxService.js';
 
 export async function getQRCode(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
@@ -27,10 +29,10 @@ export async function getStatus(req: AuthenticatedRequest, res: Response): Promi
   const userId = req.user!.id;
   const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
 
-  // If already connected
   if (settings && settings.weixin_connected && settings.weixin_bot_token) {
     res.json({
       connected: true,
+      weixinStatus: settings.weixin_status || 'connected',
       weixinUserId: settings.weixin_user_id || '已连接',
       weixinBotId: settings.weixin_bot_id,
       status: 'confirmed',
@@ -38,17 +40,28 @@ export async function getStatus(req: AuthenticatedRequest, res: Response): Promi
     return;
   }
 
-  // Otherwise poll the current active QR session
+  if (settings?.weixin_status === 'rebind_required') {
+    res.json({
+      connected: false,
+      weixinStatus: 'rebind_required',
+      status: 'rebind_required',
+      error: '微信登录凭证已失效，请重新扫码绑定',
+    });
+    return;
+  }
+
   try {
     const qrStatus = await checkLoginQRStatus(userId);
     res.json({
       connected: qrStatus.status === 'confirmed',
+      weixinStatus: qrStatus.status === 'confirmed' ? 'connected' : 'disconnected',
       status: qrStatus.status,
       weixinUserId: qrStatus.userId,
     });
   } catch (err: any) {
     res.json({
       connected: false,
+      weixinStatus: settings?.weixin_status || 'disconnected',
       status: 'wait',
       error: err.message,
     });
@@ -58,21 +71,29 @@ export async function getStatus(req: AuthenticatedRequest, res: Response): Promi
 export function unbindWeixin(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
 
-  // Stop active worker for this user
   weixinTransitManager.stopWorker(userId);
+  clearWeixinMemoryContext(userId);
 
-  // Clear DB records
-  db.prepare(`
-    UPDATE user_settings
-    SET
-      weixin_connected = 0,
-      weixin_bot_token = '',
-      weixin_bot_id = '',
-      weixin_user_id = '',
-      weixin_sync_buf = '',
-      updated_at = CURRENT_TIMESTAMP
-    WHERE user_id = ?
-  `).run(userId);
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE user_settings
+      SET
+        weixin_connected = 0,
+        weixin_status = 'disconnected',
+        weixin_bot_token = '',
+        weixin_bot_id = '',
+        weixin_user_id = '',
+        weixin_sync_buf = '',
+        weixin_context_token = '',
+        weixin_activated = 0,
+        weixin_last_active_at = NULL,
+        clawbot_to_wxid = '',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(userId);
+
+    clearUserDrafts(userId, 'weixin_ilink');
+  })();
 
   res.json({ message: '已成功解除微信配对绑定' });
 }

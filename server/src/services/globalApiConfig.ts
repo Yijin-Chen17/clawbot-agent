@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../config/database.js';
+import { getDataDir } from '../config/env.js';
 
 export interface GlobalApiNode {
   endpoint: string;
@@ -19,15 +20,26 @@ export interface GlobalApiFullConfig {
   api1: GlobalApiNode;
   api2: GlobalApiNode;
   pricing: GlobalApiPricing;
+  configVersion: number;
   updatedAt: string;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+function getGlobalConfigFilePath(): string {
+  const dir = getDataDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return path.join(dir, 'global_api_config.json');
 }
 
-export const GLOBAL_API_CONFIG_FILE = path.join(DATA_DIR, 'global_api_config.json');
+export const GLOBAL_API_CONFIG_FILE = getGlobalConfigFilePath();
+
+export function parseNonNegativeRate(raw: unknown, fallback: number): number {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(num) || num < 0) return fallback;
+  return num;
+}
 
 /**
  * 脱敏 API Key 显示
@@ -41,127 +53,132 @@ export function maskApiKey(key: string): string {
   return '****';
 }
 
-/**
- * 从 SQLite 辅助读取一条 system_settings
- */
+function getDbSettingRaw(key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
 function getDbSetting(key: string, def: string = ''): string {
   try {
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
-    return row?.value || def;
+    const val = getDbSettingRaw(key);
+    return val !== undefined && val !== null ? val : def;
   } catch {
     return def;
   }
 }
 
-/**
- * 写入 SQLite system_settings
- */
-function setDbSetting(key: string, value: string): void {
-  try {
-    db.prepare(`
-      INSERT INTO system_settings (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).run(key, value);
-  } catch (err: any) {
-    console.error(`[GlobalApiConfig] Failed to sync ${key} to system_settings:`, err.message);
+function setDbSettingStrict(key: string, value: string): void {
+  db.prepare(`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `).run(key, value);
+}
+
+function saveConfigFileStrict(config: GlobalApiFullConfig): void {
+  const filePath = getGlobalConfigFilePath();
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
+  const tmpFile = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmpFile, JSON.stringify(config, null, 2), 'utf-8');
+  fs.renameSync(tmpFile, filePath);
+}
+
+function persistConfigToDb(config: GlobalApiFullConfig): void {
+  setDbSettingStrict('global_llm_endpoint', config.api1.endpoint);
+  setDbSettingStrict('global_llm_model', config.api1.model);
+  setDbSettingStrict('global_llm_api_key', config.api1.apiKey);
+
+  setDbSettingStrict('global_llm_backup_endpoint', config.api2.endpoint);
+  setDbSettingStrict('global_llm_backup_model', config.api2.model);
+  setDbSettingStrict('global_llm_backup_enabled', config.api2.enabled ? 'true' : 'false');
+  setDbSettingStrict('global_llm_backup_api_key', config.api2.apiKey);
+
+  setDbSettingStrict('global_llm_price_input', String(config.pricing.priceInput));
+  setDbSettingStrict('global_llm_price_output', String(config.pricing.priceOutput));
+  setDbSettingStrict('global_llm_price_cache_hit', String(config.pricing.priceCacheHit));
+  setDbSettingStrict('global_llm_config_version', String(config.configVersion));
+  setDbSettingStrict('global_llm_updated_at', config.updatedAt);
 }
 
 /**
- * 读取当前全局大模型配置（带独立持久化文件兜底保护）
+ * 读取全局大模型配置：以 SQLite system_settings（带版本号）为权威数据源，
+ * 首次迁移时兼容导入既有 global_api_config.json（A10, A11）。
  */
 export function getGlobalApiConfig(): GlobalApiFullConfig {
-  // 1. 如果独立持久化 JSON 文件存在，优先从文件加载
-  if (fs.existsSync(GLOBAL_API_CONFIG_FILE)) {
+  const existingVersionRaw = getDbSettingRaw('global_llm_config_version');
+  const filePath = getGlobalConfigFilePath();
+
+  if (existingVersionRaw === undefined && fs.existsSync(filePath)) {
+    // One-time import from legacy JSON file into authoritative SQLite store
     try {
-      const content = fs.readFileSync(GLOBAL_API_CONFIG_FILE, 'utf-8');
-      const parsed = JSON.parse(content) as GlobalApiFullConfig;
-
-      // 结构健康检查与默认值补全
-      const api1: GlobalApiNode = {
-        endpoint: parsed.api1?.endpoint || getDbSetting('global_llm_endpoint', 'https://api.deepseek.com/v1'),
-        apiKey: parsed.api1?.apiKey || getDbSetting('global_llm_api_key', process.env.DEEPSEEK_API_KEY || ''),
-        model: parsed.api1?.model || getDbSetting('global_llm_model', 'deepseek-chat'),
-      };
-
-      const api2: GlobalApiNode = {
-        endpoint: parsed.api2?.endpoint || getDbSetting('global_llm_backup_endpoint', 'https://api.deepseek.com/v1'),
-        apiKey: parsed.api2?.apiKey || getDbSetting('global_llm_backup_api_key', ''),
-        model: parsed.api2?.model || getDbSetting('global_llm_backup_model', 'deepseek-chat'),
-        enabled: parsed.api2?.enabled !== undefined ? Boolean(parsed.api2.enabled) : getDbSetting('global_llm_backup_enabled') === 'true',
-      };
-
-      const pricing: GlobalApiPricing = {
-        priceInput: parsed.pricing?.priceInput ?? (parseFloat(getDbSetting('global_llm_price_input', '2.0')) || 2.0),
-        priceOutput: parsed.pricing?.priceOutput ?? (parseFloat(getDbSetting('global_llm_price_output', '8.0')) || 8.0),
-        priceCacheHit: parsed.pricing?.priceCacheHit ?? (parseFloat(getDbSetting('global_llm_price_cache_hit', '0.5')) || 0.5),
-      };
-
-      return {
-        api1,
-        api2,
-        pricing,
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(content) as Partial<GlobalApiFullConfig>;
+      const seeded: GlobalApiFullConfig = {
+        api1: {
+          endpoint: parsed.api1?.endpoint || getDbSetting('global_llm_endpoint', 'https://api.deepseek.com/v1'),
+          apiKey: parsed.api1?.apiKey || getDbSetting('global_llm_api_key', process.env.DEEPSEEK_API_KEY || ''),
+          model: parsed.api1?.model || getDbSetting('global_llm_model', 'deepseek-chat'),
+        },
+        api2: {
+          endpoint: parsed.api2?.endpoint || getDbSetting('global_llm_backup_endpoint', 'https://api.deepseek.com/v1'),
+          apiKey: parsed.api2?.apiKey || getDbSetting('global_llm_backup_api_key', ''),
+          model: parsed.api2?.model || getDbSetting('global_llm_backup_model', 'deepseek-chat'),
+          enabled: parsed.api2?.enabled !== undefined ? Boolean(parsed.api2.enabled) : getDbSetting('global_llm_backup_enabled') === 'true',
+        },
+        pricing: {
+          priceInput: parseNonNegativeRate(parsed.pricing?.priceInput, parseNonNegativeRate(getDbSettingRaw('global_llm_price_input'), 2.0)),
+          priceOutput: parseNonNegativeRate(parsed.pricing?.priceOutput, parseNonNegativeRate(getDbSettingRaw('global_llm_price_output'), 8.0)),
+          priceCacheHit: parseNonNegativeRate(parsed.pricing?.priceCacheHit, parseNonNegativeRate(getDbSettingRaw('global_llm_price_cache_hit'), 0.5)),
+        },
+        configVersion: 1,
         updatedAt: parsed.updatedAt || new Date().toISOString(),
       };
+      db.transaction(() => persistConfigToDb(seeded))();
+      return seeded;
     } catch (err: any) {
-      console.warn('[GlobalApiConfig] Failed to parse config file, falling back to database:', err.message);
+      console.warn('[GlobalApiConfig] Failed to import legacy config file, using DB defaults:', err.message);
     }
   }
 
-  // 2. 文件不存在或损坏时，从 SQLite system_settings 初始化并生成独立文件
+  const configVersion = Math.max(1, parseInt(existingVersionRaw || '1', 10) || 1);
   const api1: GlobalApiNode = {
-    endpoint: getDbSetting('global_llm_endpoint', 'https://api.deepseek.com/v1'),
+    endpoint: getDbSetting('global_llm_endpoint', 'https://api.deepseek.com/v1') || 'https://api.deepseek.com/v1',
     apiKey: getDbSetting('global_llm_api_key', process.env.DEEPSEEK_API_KEY || ''),
-    model: getDbSetting('global_llm_model', 'deepseek-chat'),
+    model: getDbSetting('global_llm_model', 'deepseek-chat') || 'deepseek-chat',
   };
 
   const api2: GlobalApiNode = {
-    endpoint: getDbSetting('global_llm_backup_endpoint', 'https://api.deepseek.com/v1'),
+    endpoint: getDbSetting('global_llm_backup_endpoint', 'https://api.deepseek.com/v1') || 'https://api.deepseek.com/v1',
     apiKey: getDbSetting('global_llm_backup_api_key', ''),
-    model: getDbSetting('global_llm_backup_model', 'deepseek-chat'),
+    model: getDbSetting('global_llm_backup_model', 'deepseek-chat') || 'deepseek-chat',
     enabled: getDbSetting('global_llm_backup_enabled', 'false') === 'true',
   };
 
   const pricing: GlobalApiPricing = {
-    priceInput: parseFloat(getDbSetting('global_llm_price_input', '2.0')) || 2.0,
-    priceOutput: parseFloat(getDbSetting('global_llm_price_output', '8.0')) || 8.0,
-    priceCacheHit: parseFloat(getDbSetting('global_llm_price_cache_hit', '0.5')) || 0.5,
+    priceInput: parseNonNegativeRate(getDbSettingRaw('global_llm_price_input'), 2.0),
+    priceOutput: parseNonNegativeRate(getDbSettingRaw('global_llm_price_output'), 8.0),
+    priceCacheHit: parseNonNegativeRate(getDbSettingRaw('global_llm_price_cache_hit'), 0.5),
   };
 
-  const initialConfig: GlobalApiFullConfig = {
-    api1,
-    api2,
-    pricing,
-    updatedAt: new Date().toISOString(),
-  };
+  const updatedAt = getDbSetting('global_llm_updated_at', new Date().toISOString());
 
-  // 写入独立持久化文件
-  saveConfigFile(initialConfig);
-
-  return initialConfig;
-}
-
-/**
- * 原子写入独立持久化配置文件
- */
-function saveConfigFile(config: GlobalApiFullConfig): void {
-  try {
-    const tmpFile = `${GLOBAL_API_CONFIG_FILE}.tmp.${Date.now()}`;
-    fs.writeFileSync(tmpFile, JSON.stringify(config, null, 2), 'utf-8');
-    fs.renameSync(tmpFile, GLOBAL_API_CONFIG_FILE);
-  } catch (err: any) {
-    console.error('[GlobalApiConfig] Failed to save config file atomically:', err.message);
+  if (existingVersionRaw === undefined) {
+    const initial: GlobalApiFullConfig = { api1, api2, pricing, configVersion: 1, updatedAt };
+    db.transaction(() => persistConfigToDb(initial))();
     try {
-      fs.writeFileSync(GLOBAL_API_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
-    } catch (fallbackErr: any) {
-      console.error('[GlobalApiConfig] Fallback write failed:', fallbackErr.message);
-    }
+      saveConfigFileStrict(initial);
+    } catch {}
+    return initial;
   }
+
+  return { api1, api2, pricing, configVersion, updatedAt };
 }
 
 /**
- * 更新全局配置并同时写入独立持久化文件与 SQLite
+ * 事务提交全局配置至权威 SQLite 存储，再刷新只读导出副本（A10, A11）。
  */
 export function saveGlobalApiConfig(input: {
   api1?: Partial<GlobalApiNode>;
@@ -170,7 +187,6 @@ export function saveGlobalApiConfig(input: {
 }): GlobalApiFullConfig {
   const current = getGlobalApiConfig();
 
-  // 更新 API 1
   if (input.api1) {
     if (input.api1.endpoint !== undefined) {
       current.api1.endpoint = String(input.api1.endpoint).trim() || 'https://api.deepseek.com/v1';
@@ -178,7 +194,6 @@ export function saveGlobalApiConfig(input: {
     if (input.api1.model !== undefined) {
       current.api1.model = String(input.api1.model).trim() || 'deepseek-chat';
     }
-    // 密钥保护：仅当传入有效密钥且不含脱敏字符 **** 时才更新；留空或含 **** 则严格保留现有密钥
     if (
       typeof input.api1.apiKey === 'string' &&
       input.api1.apiKey.trim().length > 0 &&
@@ -188,7 +203,6 @@ export function saveGlobalApiConfig(input: {
     }
   }
 
-  // 更新 API 2 (备用节点)
   if (input.api2) {
     if (input.api2.endpoint !== undefined) {
       current.api2.endpoint = String(input.api2.endpoint).trim() || 'https://api.deepseek.com/v1';
@@ -208,41 +222,27 @@ export function saveGlobalApiConfig(input: {
     }
   }
 
-  // 更新计费价格
   if (input.pricing) {
     if (input.pricing.priceInput !== undefined) {
-      current.pricing.priceInput = Math.max(0, parseFloat(String(input.pricing.priceInput)) || 0);
+      current.pricing.priceInput = parseNonNegativeRate(input.pricing.priceInput, current.pricing.priceInput);
     }
     if (input.pricing.priceOutput !== undefined) {
-      current.pricing.priceOutput = Math.max(0, parseFloat(String(input.pricing.priceOutput)) || 0);
+      current.pricing.priceOutput = parseNonNegativeRate(input.pricing.priceOutput, current.pricing.priceOutput);
     }
     if (input.pricing.priceCacheHit !== undefined) {
-      current.pricing.priceCacheHit = Math.max(0, parseFloat(String(input.pricing.priceCacheHit)) || 0);
+      current.pricing.priceCacheHit = parseNonNegativeRate(input.pricing.priceCacheHit, current.pricing.priceCacheHit);
     }
   }
 
+  current.configVersion = (current.configVersion || 1) + 1;
   current.updatedAt = new Date().toISOString();
 
-  // 1. 保存到服务器独立持久化文件 (避免重启与更新丢配置)
-  saveConfigFile(current);
+  db.transaction(() => {
+    persistConfigToDb(current);
+  })();
 
-  // 2. 双写同步至 SQLite system_settings 供旧查询兼容
-  setDbSetting('global_llm_endpoint', current.api1.endpoint);
-  setDbSetting('global_llm_model', current.api1.model);
-  if (current.api1.apiKey) {
-    setDbSetting('global_llm_api_key', current.api1.apiKey);
-  }
-
-  setDbSetting('global_llm_backup_endpoint', current.api2.endpoint);
-  setDbSetting('global_llm_backup_model', current.api2.model);
-  setDbSetting('global_llm_backup_enabled', current.api2.enabled ? 'true' : 'false');
-  if (current.api2.apiKey) {
-    setDbSetting('global_llm_backup_api_key', current.api2.apiKey);
-  }
-
-  setDbSetting('global_llm_price_input', current.pricing.priceInput.toString());
-  setDbSetting('global_llm_price_output', current.pricing.priceOutput.toString());
-  setDbSetting('global_llm_price_cache_hit', current.pricing.priceCacheHit.toString());
+  // Refresh export mirror file strictly after commit
+  saveConfigFileStrict(current);
 
   return current;
 }

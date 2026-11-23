@@ -5,10 +5,46 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { db } from '../config/database.js';
-import { JWT_SECRET } from '../config/env.js';
+import { getDataDir, JWT_SECRET } from '../config/env.js';
 import { User } from '../models/types.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sendEmailVerificationCode, verifyEmailCode, isValidEmail, type VerificationCodeType } from '../services/emailService.js';
+import { recordAuditLog } from '../services/accountService.js';
+import { weixinTransitManager } from '../services/weixinGateway.js';
+
+function removeLocalAvatarFile(avatarUrl?: string | null): void {
+  if (!avatarUrl || !avatarUrl.startsWith('/uploads/avatars/')) return;
+  const avatarsDir = path.join(getDataDir(), 'uploads', 'avatars');
+  const filename = path.basename(avatarUrl);
+  const fullPath = path.join(avatarsDir, filename);
+  if (fs.existsSync(fullPath)) {
+    try {
+      fs.unlinkSync(fullPath);
+    } catch {}
+  }
+}
+
+export function deleteUserAccountWithCleanup(userId: number, actorUserId?: number | null): void {
+  const userRow = db.prepare('SELECT id, username, avatar_url FROM users WHERE id = ?').get(userId) as
+    | { id: number; username: string; avatar_url?: string }
+    | undefined;
+  if (!userRow) return;
+
+  try {
+    weixinTransitManager.stopWorker(userId);
+  } catch {}
+
+  db.transaction(() => {
+    // Anonymize/unlink financial redemption codes while preserving code audit history (A09)
+    db.prepare('UPDATE redemption_codes SET created_by = NULL WHERE created_by = ?').run(userId);
+    db.prepare('UPDATE redemption_codes SET used_by_user_id = NULL WHERE used_by_user_id = ?').run(userId);
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    recordAuditLog(actorUserId ?? userId, userId, 'delete_account', { username: userRow.username });
+  })();
+
+  removeLocalAvatarFile(userRow.avatar_url);
+}
 
 async function handleSendEmailCode(req: Request, res: Response, type: VerificationCodeType): Promise<void> {
   const { email, lang } = req.body;
@@ -69,16 +105,27 @@ export function resetPassword(req: Request, res: Response): void {
     return;
   }
 
-  const codeValid = verifyEmailCode(trimmedEmail, code, 'reset_password');
-  if (!codeValid) {
-    res.status(400).json({ error: isEn ? 'Invalid or expired verification code' : '邮箱验证码错误、已失效或已过期，请重新获取' });
-    return;
-  }
-
   const salt = bcrypt.genSaltSync(10);
   const newHash = bcrypt.hashSync(newPassword, salt);
 
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newHash, user.id);
+  const ok = db.transaction(() => {
+    const codeValid = verifyEmailCode(trimmedEmail, code, 'reset_password');
+    if (!codeValid) return false;
+
+    db.prepare(`
+      UPDATE users
+      SET password_hash = ?,
+          session_version = COALESCE(session_version, 1) + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newHash, user.id);
+    return true;
+  })();
+
+  if (!ok) {
+    res.status(400).json({ error: isEn ? 'Invalid or expired verification code' : '邮箱验证码错误、已失效或已过期，请重新获取' });
+    return;
+  }
 
   res.json({
     message: isEn
@@ -131,64 +178,72 @@ export function register(req: Request, res: Response): void {
   }
 
   const trimmedEmail = email.trim().toLowerCase();
-
-  const existingUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-  if (existingUsername) {
-    res.status(409).json({ error: '该账号已存在，请更换其他账号' });
-    return;
-  }
-
-  const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(trimmedEmail);
-  if (existingEmail) {
-    res.status(409).json({ error: '该邮箱已被注册，每个邮箱仅限注册一个账号' });
-    return;
-  }
-
-  const codeValid = verifyEmailCode(trimmedEmail, code, 'register');
-  if (!codeValid) {
-    res.status(400).json({ error: '邮箱验证码错误或已过期，请重新获取' });
-    return;
-  }
-
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(password, salt);
   const tokenSecret = crypto.randomBytes(24).toString('hex');
   const webhookToken = crypto.randomBytes(16).toString('hex');
 
-  // 直接审核放行 approved，无需管理员手动审核
-  const result = db.prepare(`
-    INSERT INTO users (username, email, password_hash, role, status, token_secret, nickname, avatar_url)
-    VALUES (?, ?, ?, 'user', 'approved', ?, '', '')
-  `).run(username, trimmedEmail, passwordHash, tokenSecret);
+  try {
+    const created = db.transaction(() => {
+      const existingUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+      if (existingUsername) {
+        return { error: { status: 409, message: '该账号已存在，请更换其他账号' } };
+      }
 
-  const userId = Number(result.lastInsertRowid);
+      const existingEmail = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(trimmedEmail);
+      if (existingEmail) {
+        return { error: { status: 409, message: '该邮箱已被注册，每个邮箱仅限注册一个账号' } };
+      }
 
-  // Initialize user settings
-  db.prepare(`
-    INSERT INTO user_settings (user_id, clawbot_webhook_token)
-    VALUES (?, ?)
-  `).run(userId, webhookToken);
+      const codeValid = verifyEmailCode(trimmedEmail, code, 'register');
+      if (!codeValid) {
+        return { error: { status: 400, message: '邮箱验证码错误或已过期，请重新获取' } };
+      }
 
-  const token = jwt.sign(
-    { id: userId, username, role: 'user' },
-    JWT_SECRET,
-    { expiresIn: '30d' }
-  );
+      // 邮箱验证后直接放行 approved (A01)
+      const result = db.prepare(`
+        INSERT INTO users (username, email, password_hash, role, status, token_secret, session_version, nickname, avatar_url)
+        VALUES (?, ?, ?, 'user', 'approved', ?, 1, '', '')
+      `).run(username, trimmedEmail, passwordHash, tokenSecret);
 
-  res.status(201).json({
-    message: '注册成功，欢迎使用！',
-    token,
-    user: {
-      id: userId,
-      username,
-      email: trimmedEmail,
-      nickname: '',
-      avatar_url: '',
-      role: 'user',
-      status: 'approved',
-      token_secret: tokenSecret,
-    },
-  });
+      const userId = Number(result.lastInsertRowid);
+      db.prepare(`
+        INSERT INTO user_settings (user_id, clawbot_webhook_token)
+        VALUES (?, ?)
+      `).run(userId, webhookToken);
+
+      return { userId };
+    })();
+
+    if ('error' in created && created.error) {
+      res.status(created.error.status).json({ error: created.error.message });
+      return;
+    }
+
+    const userId = created.userId!;
+    const token = jwt.sign(
+      { id: userId, username, role: 'user', sv: 1 },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.status(201).json({
+      message: '注册成功，欢迎使用！',
+      token,
+      user: {
+        id: userId,
+        username,
+        email: trimmedEmail,
+        nickname: '',
+        avatar_url: '',
+        role: 'user',
+        status: 'approved',
+        token_secret: tokenSecret,
+      },
+    });
+  } catch (err: any) {
+    res.status(409).json({ error: '注册失败，用户名或邮箱可能已被占用' });
+  }
 }
 
 export function login(req: Request, res: Response): void {
@@ -227,8 +282,9 @@ export function login(req: Request, res: Response): void {
     return;
   }
 
+  const sv = Number(user.session_version ?? 1);
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, username: user.username, role: user.role, sv },
     JWT_SECRET,
     { expiresIn: '30d' }
   );
@@ -270,9 +326,6 @@ export function getMe(req: AuthenticatedRequest, res: Response): void {
   });
 }
 
-/**
- * 修改个人信息 (支持修改昵称，账号 username 严格只读不可改)
- */
 export function updateProfile(req: AuthenticatedRequest, res: Response): void {
   if (!req.user) {
     res.status(401).json({ error: '未登录' });
@@ -304,9 +357,6 @@ export function updateProfile(req: AuthenticatedRequest, res: Response): void {
   });
 }
 
-/**
- * 上传个人头像 (严格限制文件大小 <= 2MB，仅支持常规图片格式)
- */
 export function uploadAvatar(req: AuthenticatedRequest, res: Response): void {
   if (!req.user) {
     res.status(401).json({ error: '未登录' });
@@ -319,7 +369,6 @@ export function uploadAvatar(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  // Parse Data URL: data:image/(png|jpeg|jpg|webp|gif);base64,...
   const matches = avatarData.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,(.+)$/);
   if (!matches) {
     res.status(400).json({ error: '只支持上传 PNG, JPG, JPEG, WEBP 或 GIF 格式图片' });
@@ -330,14 +379,13 @@ export function uploadAvatar(req: AuthenticatedRequest, res: Response): void {
   const base64Content = matches[2];
   const buffer = Buffer.from(base64Content, 'base64');
 
-  // 严格限制头像大小最大 2MB
   const MAX_SIZE = 2 * 1024 * 1024;
   if (buffer.length > MAX_SIZE) {
     res.status(400).json({ error: '头像图片大小不能超过 2MB，请先压缩或选择更小的图片' });
     return;
   }
 
-  const avatarsDir = path.resolve(process.cwd(), 'data/uploads/avatars');
+  const avatarsDir = path.join(getDataDir(), 'uploads', 'avatars');
   if (!fs.existsSync(avatarsDir)) {
     fs.mkdirSync(avatarsDir, { recursive: true });
   }
@@ -348,19 +396,8 @@ export function uploadAvatar(req: AuthenticatedRequest, res: Response): void {
   try {
     fs.writeFileSync(filePath, buffer);
 
-    // 删除旧的本地头像文件以节约磁盘空间
     const oldUser = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id) as { avatar_url?: string };
-    if (oldUser?.avatar_url && oldUser.avatar_url.startsWith('/uploads/avatars/')) {
-      const oldFilename = path.basename(oldUser.avatar_url);
-      const oldPath = path.join(avatarsDir, oldFilename);
-      if (fs.existsSync(oldPath)) {
-        try {
-          fs.unlinkSync(oldPath);
-        } catch {
-          // ignore unlink error
-        }
-      }
-    }
+    removeLocalAvatarFile(oldUser?.avatar_url);
 
     const publicUrl = `/uploads/avatars/${filename}`;
     db.prepare(`
@@ -378,9 +415,6 @@ export function uploadAvatar(req: AuthenticatedRequest, res: Response): void {
   }
 }
 
-/**
- * 修改密码 (服务器只保存密码哈希，用户密码不可明文保存)
- */
 export function changePassword(req: AuthenticatedRequest, res: Response): void {
   if (!req.user) {
     res.status(401).json({ error: '未登录' });
@@ -413,27 +447,36 @@ export function changePassword(req: AuthenticatedRequest, res: Response): void {
   const salt = bcrypt.genSaltSync(10);
   const newHash = bcrypt.hashSync(newPassword, salt);
 
-  db.prepare(`
-    UPDATE users
-    SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(newHash, req.user.id);
+  const newSv = db.transaction(() => {
+    db.prepare(`
+      UPDATE users
+      SET password_hash = ?,
+          session_version = COALESCE(session_version, 1) + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newHash, req.user!.id);
+    const row = db.prepare('SELECT session_version FROM users WHERE id = ?').get(req.user!.id) as { session_version: number };
+    return Number(row?.session_version || 1);
+  })();
+
+  const newToken = jwt.sign(
+    { id: req.user.id, username: req.user.username, role: req.user.role, sv: newSv },
+    JWT_SECRET,
+    { expiresIn: '30d' }
+  );
 
   res.json({
-    message: '密码修改成功！新密码哈希已安全更新。',
+    message: '密码修改成功！新密码哈希已安全更新，旧会话已全部失效。',
+    token: newToken,
   });
 }
 
-/**
- * 用户自主注销/删除账号及全部数据
- */
 export function deleteMyAccount(req: AuthenticatedRequest, res: Response): void {
   if (!req.user) {
     res.status(401).json({ error: '未登录' });
     return;
   }
 
-  // 保护初始默认 admin 账号
   if (req.user.role === 'admin' && req.user.username === 'admin') {
     res.status(400).json({ error: '默认超级管理员账号不可注销' });
     return;
@@ -457,8 +500,7 @@ export function deleteMyAccount(req: AuthenticatedRequest, res: Response): void 
     return;
   }
 
-  // 执行级联删除
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
+  deleteUserAccountWithCleanup(req.user.id, req.user.id);
 
   res.json({
     success: true,
