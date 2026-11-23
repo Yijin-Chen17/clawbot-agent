@@ -4,6 +4,7 @@ import { planTaskWithLLM } from '../services/llm.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task } from '../models/types.js';
+import { stringifyRecurrenceRule, parseRecurrenceRule } from '../utils/recurrence.js';
 import {
   scheduleTask,
   replanUserTasks,
@@ -72,6 +73,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     importance_tier,
     impact_signals,
     time_mode,
+    recurrence_rule,
     urgency_pace,
     importance_manual_override,
     score_scale,
@@ -195,11 +197,11 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
   const result = db.prepare(`
     INSERT INTO tasks (
       user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-      importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
+      importance_tier, impact_signals, time_mode, recurrence_rule, urgency_pace, importance_manual_override,
       score_scale, completed_dates,
       deadline, deadline_kind, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
@@ -210,6 +212,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     resolvedTier,
     JSON.stringify(parsedSignals),
     resolvedTimeMode,
+    resolvedTimeMode === 'daily_fixed' && recurrence_rule ? stringifyRecurrenceRule(parseRecurrenceRule(recurrence_rule)) : null,
     resolvedPace,
     manualOverrideNum,
     normalizedDeadline,
@@ -247,6 +250,7 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     importance_tier,
     impact_signals,
     time_mode,
+    recurrence_rule,
     urgency_pace,
     importance_manual_override,
     score_scale,
@@ -371,6 +375,11 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     fallbackUrgency: fallbackUrg100,
   }).urgency;
 
+  const nextRecurrenceRule =
+    recurrence_rule !== undefined
+      ? (recurrence_rule ? stringifyRecurrenceRule(parseRecurrenceRule(recurrence_rule)) : null)
+      : existing.recurrence_rule ?? null;
+
   db.prepare(`
     UPDATE tasks
     SET
@@ -381,6 +390,7 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
       importance_tier = ?,
       impact_signals = ?,
       time_mode = ?,
+      recurrence_rule = ?,
       urgency_pace = ?,
       importance_manual_override = ?,
       score_scale = 100,
@@ -403,6 +413,7 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     resolvedTier,
     JSON.stringify(nextSignals),
     nextTimeMode,
+    nextTimeMode === 'daily_fixed' ? nextRecurrenceRule : null,
     nextPace,
     nextManualOverride,
     nextDeadline,
@@ -580,7 +591,7 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
         SET completed_dates = ?, urgency = 15, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(JSON.stringify(completedDates), id);
-      res.json({ message: `每日固定任务「${task.title}」今日已打卡完成，明日自动恢复！` });
+      res.json({ message: `周期任务「${task.title}」今日已打卡完成，下一个周期自动恢复！` });
       return;
     }
 

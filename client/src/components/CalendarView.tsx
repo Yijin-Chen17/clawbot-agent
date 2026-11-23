@@ -1,6 +1,7 @@
 import { copyText } from '../utils/clipboard';
 import { TaskModal, type TaskModalSavePayload } from './TaskModal';
 import type { TaskItem as EditableTask } from '../types/task';
+import { isDateMatchingRecurrence } from '../utils/recurrence';
 import { inferTierFromScore, type ImpactSignal, type TimeMode, type UrgencyPace } from '../utils/priorityAlgorithm';
 import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -86,6 +87,7 @@ interface TaskItem {
   duration_minutes: number;
   original_duration_minutes?: number | null;
   time_mode?: string;
+  recurrence_rule?: string | null;
   importance_tier?: 'vital' | 'support' | 'minor' | null;
   impact_signals?: string | null;
   urgency_pace?: 'urgent' | 'soon' | 'later' | null;
@@ -360,6 +362,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       id: String(task.id), title: task.title, description: task.notes || '', importance, urgency,
       importanceTier: task.importance_tier || inferTierFromScore(importance), impactSignals,
       timeMode: (task.time_mode || (task.deadline ? 'deadline' : 'flexible')) as TimeMode,
+      recurrenceRule: task.recurrence_rule || null,
       urgencyPace: (task.urgency_pace || 'soon') as UrgencyPace,
       importanceManualOverride: task.importance_manual_override == null ? null : normalizeScoreTo100(task.importance_manual_override, task.score_scale),
       deadlineAt: task.deadline, deadlineKind: task.deadline_kind || 'soft', dueDate: task.deadline,
@@ -377,7 +380,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       const response = await api.put(`/tasks/${taskId}`, {
         title: data.title, notes: data.description || '', duration_minutes: data.estimatedMinutes,
         importance: data.importance, urgency: data.urgency, importance_tier: data.importanceTier,
-        impact_signals: data.impactSignals, time_mode: data.timeMode, urgency_pace: data.urgencyPace,
+        impact_signals: data.impactSignals, time_mode: data.timeMode, recurrence_rule: data.recurrenceRule, urgency_pace: data.urgencyPace,
         importance_manual_override: data.importanceManualOverride, score_scale: 100,
         deadline_kind: data.deadlineKind,
         deadline: data.dueDate ? (data.dueDate.includes('T') ? new Date(data.dueDate).toISOString() : data.dueDate) : null,
@@ -685,6 +688,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     };
 
     tasks.forEach((taskItem) => {
+      // 周期任务若当天不在其命中日内，则不在当天日程中渲染
+      if (taskItem.time_mode === 'daily_fixed' && !isDateMatchingRecurrence(date, taskItem.recurrence_rule)) {
+        return;
+      }
+
       const completedDates = parseCompletedDates(taskItem.completed_dates);
       const isCompletedForDay =
         taskItem.status === 'completed' || (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));

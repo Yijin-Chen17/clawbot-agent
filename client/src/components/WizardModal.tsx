@@ -296,7 +296,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                       : 'text-gray-600 dark:text-neutral-400'
                   }`}
                 >
-                  <Repeat className="h-3 w-3" /> {t('task.type_daily', '每日固定')}
+                  <Repeat className="h-3 w-3" /> {t('task.type_daily', '周期任务')}
                 </button>
                 <button
                   type="button"
@@ -380,11 +380,11 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                 {timeMode === 'daily_fixed' && (
                   <div className="space-y-2">
                     <p className="text-[11px] text-gray-600 dark:text-neutral-400">
-                      {t('wizard.daily_hint', '每日固定任务将根据今日日程空闲度动态评估紧迫度，完成后当日降级、次日自动恢复。')}
+                      {t('wizard.daily_hint', '周期任务将根据当日日程空闲度动态评估紧迫度，完成后当日打卡、并在下一个周期日自动恢复。')}
                     </p>
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-neutral-300 mb-1">
-                        {t('task.daily_duration', '每日耗时 (分钟)')}
+                        {t('task.daily_duration', '单次耗时 (分钟)')}
                       </label>
                       <input
                         type="number"

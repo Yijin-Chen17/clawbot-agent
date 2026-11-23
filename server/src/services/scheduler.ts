@@ -1,6 +1,7 @@
 import { deadlineMs, recurringDebt, selectCalendarBlocks, type Window } from './calendarOptimizer.js';
 import { db } from '../config/database.js';
 import { Task, UserSettings, ExternalEvent, WorkSlot } from '../models/types.js';
+import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   calculateQuadrant100,
   normalizeScoreTo100,
@@ -249,7 +250,7 @@ export interface FixedCalendarBlock {
  * 将已排程任务拆解为独立的 schedule_blocks 占用区间（避免跨日/分段任务错误锁死中间整天）
  */
 export function taskToBusyEvents(
-  task: Pick<Task, 'id' | 'title' | 'scheduled_start' | 'scheduled_end' | 'schedule_blocks' | 'time_mode' | 'is_fixed' | 'completed_dates'>,
+  task: Pick<Task, 'id' | 'title' | 'scheduled_start' | 'scheduled_end' | 'schedule_blocks' | 'time_mode' | 'recurrence_rule' | 'is_fixed' | 'completed_dates'>,
   idPrefix: string = 'task',
   horizonBaseDate?: Date,
   horizonDays: number = 0
@@ -321,6 +322,7 @@ export function taskToBusyEvents(
       targetDay.setDate(targetDay.getDate() + dayOffset);
       const dayKey = formatLocalDate(targetDay);
       if (existingDayKeys.has(dayKey) || completedDates.includes(dayKey)) continue;
+      if (!isDateMatchingRecurrence(targetDay, task.recurrence_rule)) continue;
 
       baseIntervals.forEach((iv, idx) => {
         const durationMs = iv.end.getTime() - iv.start.getTime();
@@ -434,7 +436,7 @@ export function computeTodayBusyMinutes(
   `).all(userId, startIso, endIso) as { start_time: string; end_time: string }[];
 
   const scheduledTasks = db.prepare(`
-    SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, is_fixed, is_concurrent, completed_dates
+    SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, recurrence_rule, is_fixed, is_concurrent, completed_dates
     FROM tasks
     WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
       AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
@@ -783,6 +785,7 @@ export function runSingleDaySchedule(
     if (task.status === 'completed' || targetDateStr < todayStr) return false;
     if (task.time_mode === 'daily_fixed') {
       if (targetDateStr !== todayStr) return false;
+      if (!isDateMatchingRecurrence(targetDate, task.recurrence_rule)) return false;
       try { if (JSON.parse(task.completed_dates || '[]').includes(targetDateStr)) return false; } catch {}
     }
     const quadrant = calculateQuadrant(task.importance, task.urgency, task.score_scale);
@@ -980,6 +983,13 @@ export function replanUserTasks(
     const isCompletedToday = Array.isArray(completedDates) && completedDates.includes(todayStr);
 
     if (t.time_mode === 'daily_fixed') {
+      const isMatchingToday = isDateMatchingRecurrence(now, t.recurrence_rule);
+      // 若今天不是该周期任务的触发日，降低其当天紧迫度并且不在今天强制排定
+      if (!isMatchingToday) {
+        t.urgency = 10;
+        continue;
+      }
+
       // 若跨日，将其固定时间窗或待排状态刷新到今日
       if (t.scheduled_start && t.scheduled_end && formatLocalDate(new Date(t.scheduled_start)) < todayStr) {
         if (t.is_fixed === 1) {
@@ -1696,7 +1706,7 @@ export function completeTaskPart(
         .run(JSON.stringify(dates), taskId);
     }
     return {
-      success: true, message: '已完成今天的固定任务', remainingMinutes: 0, isAllCompleted: true,
+      success: true, message: '已完成今天的周期任务', remainingMinutes: 0, isAllCompleted: true,
       task: { ...task, completed_dates: JSON.stringify(dates), urgency: 15 },
     };
   }

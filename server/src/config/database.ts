@@ -275,6 +275,9 @@ export function initDatabase() {
   if (!taskCols.includes('completed_dates')) {
     db.exec("ALTER TABLE tasks ADD COLUMN completed_dates TEXT DEFAULT '[]';");
   }
+  if (!taskCols.includes('recurrence_rule')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN recurrence_rule TEXT DEFAULT NULL;");
+  }
   if (!taskCols.includes('score_scale')) {
     db.exec('ALTER TABLE tasks ADD COLUMN score_scale INTEGER DEFAULT 100;');
     // 将历史 1~5 / 0~10 分制存量数据一次性升级归一化为 0~100 分制

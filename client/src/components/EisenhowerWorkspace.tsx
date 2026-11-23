@@ -2,6 +2,7 @@ import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
+import { isDateMatchingRecurrence } from '../utils/recurrence';
 import {
   calculateDynamicImportance,
   calculateDynamicUrgency,
@@ -291,9 +292,13 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             : formatLocalDate(new Date(t.created_at || Date.now()))
           : null;
 
+      const isMatchingToday = timeMode === 'daily_fixed'
+        ? isDateMatchingRecurrence(currentTime, t.recurrence_rule)
+        : true;
+
       const isCompletedToday =
         timeMode === 'daily_fixed'
-          ? completedDates.includes(todayStr) || t.status === 'completed'
+          ? completedDates.includes(todayStr) || t.status === 'completed' || !isMatchingToday
           : t.status === 'completed';
 
       const fallbackUrgency = normalizeScoreTo100(t.urgency, t.score_scale);
@@ -324,6 +329,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importanceTier,
         impactSignals,
         timeMode,
+        recurrenceRule: t.recurrence_rule || null,
         urgencyPace,
         importanceManualOverride: manualOverride,
         scoreScale: 100,
@@ -551,6 +557,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         importance_tier: data.importanceTier || inferTierFromScore(data.importance),
         impact_signals: data.impactSignals || [],
         time_mode: data.timeMode || (data.dueDate ? 'deadline' : 'flexible'),
+        recurrence_rule: data.recurrenceRule || null,
         urgency_pace: data.urgencyPace || 'soon',
         importance_manual_override:
           data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,

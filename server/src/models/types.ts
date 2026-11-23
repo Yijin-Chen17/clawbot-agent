@@ -100,6 +100,7 @@ export interface Task {
   importance_tier?: 'vital' | 'support' | 'minor' | null;
   impact_signals?: string | null; // JSON array of ImpactSignal
   time_mode?: 'deadline' | 'daily_fixed' | 'flexible' | null;
+  recurrence_rule?: string | null; // JSON string of RecurrenceRule { type: 'daily' | 'weekly', daysOfWeek?: number[] }
   urgency_pace?: 'urgent' | 'soon' | 'later' | null;
   importance_manual_override?: number | null;
   completed_dates?: string | null; // JSON array of YYYY-MM-DD
@@ -139,6 +140,7 @@ export interface LLMExtractionResult {
   importance_tier?: 'vital' | 'support' | 'minor' | null;
   impact_signals?: string[] | null;
   time_mode?: 'deadline' | 'daily_fixed' | 'flexible' | null;
+  recurrence_rule?: string | null; // JSON string of RecurrenceRule { type: 'daily' | 'weekly', daysOfWeek?: number[] }
   urgency_pace?: 'urgent' | 'soon' | 'later' | null;
   deadline?: string | null; // ISO 8601 string or YYYY-MM-DD
   dueDate?: string | null; // 对齐 oxoxox-oxox: YYYY-MM-DD

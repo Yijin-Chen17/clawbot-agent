@@ -86,7 +86,8 @@ JSON 格式规范：
   "importance": number | null,          // 战略重要度评分，整数 0 ~ 100（50为重要临界线，核心战略 vital 为 70~100，日常推进 support 为 45~70，琐碎杂务 minor 为 10~44，默认 60）
   "importance_tier": "vital" | "support" | "minor" | null, // 三阶战略定级：核心战略 vital / 日常推进 support / 琐碎杂务 minor
   "impact_signals": string[] | null,    // 可选影响因子：["blocks_others", "irreversible_cost", "long_term_compound", "daily_keystone"]
-  "time_mode": "deadline" | "daily_fixed" | "flexible" | null, // 时间模式：有截止期 deadline / 每日固定 daily_fixed / 弹性 flexible
+  "time_mode": "deadline" | "daily_fixed" | "flexible" | null, // 时间模式：有截止期 deadline / 周期或固定重复任务 daily_fixed / 弹性 flexible
+  "recurrence_rule": string | null,     // 当为周期任务(daily_fixed)时可选重复规则，JSON 格式，如 '{"type":"daily"}' 或 '{"type":"weekly","daysOfWeek":[1,2]}'
   "urgency": number | null,             // 紧迫度评分，整数 0 ~ 100（若用户未明说，将由截止期/日程负荷/重要度自动计算）
   "dueDate": string | null,             // 截止日期，格式严格为 "YYYY-MM-DD"（例如 "2026-11-15"）
   "deadline": string | null,            // 截止时间，结合当前时间转换为完整 ISO 8601 字符串（例如 "2026-11-15T18:00:00+08:00"）
@@ -125,7 +126,7 @@ JSON 格式规范：
    - 双线程任务 (is_concurrent: true): 当用户表明任务属于背景性、轻脑力或允许与其他日程/会议同时并行重叠（如“安排双线程任务 听英文播客1小时”、“边散步边背单词”、“可以同时进行/允许重叠”），必须提取 is_concurrent: true。默认独占专注任务为 false。
    - 双线程固定任务：如“安排双线程固定任务 明天下午3点听播客1小时” -> is_fixed: true, is_concurrent: true, fixed_start: "...15:00...", fixed_end: "...16:00...", duration_minutes: 60
    - 长时间任务，如"15天后期末考我要复习20小时" -> intent: "create_task", title: "期末考复习", duration_minutes: 1200, importance: 90, importance_tier: "vital", urgency: 30, time_mode: "deadline", dueDate: 15天后日期
-   - 每日固定例行任务，如"每天下午2点锻炼1小时" / "每天阅读30分钟" -> intent: "create_task", time_mode: "daily_fixed", importance_tier: "support", impact_signals: ["long_term_compound", "daily_keystone"]
+   - 周期/例行任务，如"每天下午2点锻炼1小时" / "每天阅读30分钟" / "每周一和周三晚上健身" -> intent: "create_task", time_mode: "daily_fixed", importance_tier: "support", impact_signals: ["long_term_compound", "daily_keystone"] (若指定每周特定时间，填入对应 recurrence_rule)
 2. 删除目标 (delete_item):
    - 用户说"删除任务 开会"、"删掉下午的复习"、"取消明天的日程" -> intent: "delete_item", delete_target: { "name": "开会" / "复习" }
 3. 修改目标 (modify_item):

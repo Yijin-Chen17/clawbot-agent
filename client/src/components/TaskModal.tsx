@@ -3,6 +3,11 @@ import type { TaskItem } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
 import { QUADRANTS_CONFIG } from '../constants/quadrants';
 import {
+  parseRecurrenceRule,
+  stringifyRecurrenceRule,
+  type RecurrenceType,
+} from '../utils/recurrence';
+import {
   calculateDynamicImportance,
   calculateDynamicUrgency,
   clampScore100,
@@ -42,6 +47,7 @@ export interface TaskModalSavePayload {
   importanceTier: ImportanceTier;
   impactSignals: ImpactSignal[];
   timeMode: TimeMode;
+  recurrenceRule?: string | null;
   urgencyPace: UrgencyPace;
   importanceManualOverride: number | null;
   useAutoUrgency?: boolean;
@@ -99,6 +105,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const [hardDeadline, setHardDeadline] = useState(false);
   const [timeMode, setTimeMode] = useState<TimeMode>('deadline');
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('daily');
+  const [recurrenceDays, setRecurrenceDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [dueDate, setDueDate] = useState(() => formatLocalDate(new Date()));
   const [dueTime, setDueTime] = useState<string>(''); // 可选具体截止时刻
   const [urgencyPace, setUrgencyPace] = useState<UrgencyPace>('soon');
@@ -134,6 +142,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
       setHardDeadline(initialTask.deadlineKind === 'hard');
       setTimeMode(initialTask.timeMode || (initialTask.dueDate ? 'deadline' : 'flexible'));
+      const parsedRule = parseRecurrenceRule(initialTask.recurrenceRule);
+      setRecurrenceType(parsedRule.type);
+      setRecurrenceDays(parsedRule.daysOfWeek || [1, 2, 3, 4, 5]);
       setUrgencyPace(initialTask.urgencyPace || 'soon');
 
       const deadline = initialTask.deadlineAt || initialTask.dueDate;
@@ -178,6 +189,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
       setHardDeadline(false);
       setTimeMode('deadline');
+      setRecurrenceType('daily');
+      setRecurrenceDays([1, 2, 3, 4, 5]);
       setUrgencyPace('soon');
       setDueTime('');
       setIsFixed(false);
@@ -305,6 +318,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       importanceTier,
       impactSignals,
       timeMode,
+      recurrenceRule: timeMode === 'daily_fixed'
+        ? stringifyRecurrenceRule({ type: recurrenceType, daysOfWeek: recurrenceDays })
+        : null,
       urgencyPace,
       importanceManualOverride: overrideEnabled ? clampScore100(manualImportance) : null,
       useAutoUrgency: true,
@@ -518,7 +534,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 }`}
               >
                 <Repeat className="h-3 w-3" />
-                <span>{t('task.type_daily', '每日固定')}</span>
+                <span>{t('task.type_daily', '周期任务')}</span>
               </button>
               <button
                 type="button"
@@ -618,17 +634,117 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               </label>
             )}
 
-            {/* 模式 B：每日固定/重复任务 */}
+            {/* 模式 B：周期任务（每日重复 / 每周特定时间） */}
             {timeMode === 'daily_fixed' && (
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 <p className="text-[11px] text-gray-600 dark:text-neutral-400 leading-relaxed">
-                  {t('task.daily_hint', '每天重复，可在高级设置中指定固定时间。')}
+                  {t('task.daily_hint', '按周期重复，可在下方选择每日或每周特定星期，并在高级设置中指定时间。')}
                 </p>
+
+                {/* 重复频率选择：每日重复 vs 每周特定时间 */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRecurrenceType('daily')}
+                    className={`py-1.5 px-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-center ${
+                      recurrenceType === 'daily'
+                        ? 'bg-blue-50 text-blue-700 border-blue-400 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-700 font-semibold'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 dark:bg-[#28292a] dark:text-neutral-400 dark:border-neutral-700'
+                    }`}
+                  >
+                    {t('task.recurrence_type_daily', '每日重复')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRecurrenceType('weekly')}
+                    className={`py-1.5 px-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-center ${
+                      recurrenceType === 'weekly'
+                        ? 'bg-blue-50 text-blue-700 border-blue-400 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-700 font-semibold'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 dark:bg-[#28292a] dark:text-neutral-400 dark:border-neutral-700'
+                    }`}
+                  >
+                    {t('task.recurrence_type_weekly', '每周特定时间')}
+                  </button>
+                </div>
+
+                {/* 每周特定天数选择器 */}
+                {recurrenceType === 'weekly' && (
+                  <div className="p-3 rounded-xl bg-white dark:bg-[#232425] border border-gray-200 dark:border-neutral-700 space-y-2.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-gray-700 dark:text-neutral-300">
+                        {t('task.recurrence_weekdays_hint', '请选择每周重复的星期：')}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setRecurrenceDays([1, 2, 3, 4, 5])}
+                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {t('task.recurrence_preset_weekdays', '工作日')}
+                        </button>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setRecurrenceDays([6, 0])}
+                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {t('task.recurrence_preset_weekends', '周末')}
+                        </button>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setRecurrenceDays([1, 2, 3, 4, 5, 6, 0])}
+                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {t('task.recurrence_preset_all', '全选')}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-1">
+                      {[
+                        { day: 1, label: t('task.weekday_mon', '周一') },
+                        { day: 2, label: t('task.weekday_tue', '周二') },
+                        { day: 3, label: t('task.weekday_wed', '周三') },
+                        { day: 4, label: t('task.weekday_thu', '周四') },
+                        { day: 5, label: t('task.weekday_fri', '周五') },
+                        { day: 6, label: t('task.weekday_sat', '周六') },
+                        { day: 0, label: t('task.weekday_sun', '周日') },
+                      ].map(({ day, label }) => {
+                        const isSelected = recurrenceDays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => {
+                              setRecurrenceDays((prev) => {
+                                if (prev.includes(day)) {
+                                  if (prev.length === 1) return prev; // 至少保留一天
+                                  return prev.filter((d) => d !== day);
+                                } else {
+                                  return [...prev, day];
+                                }
+                              });
+                            }}
+                            className={`py-1.5 px-0.5 rounded-lg text-center text-[10.5px] font-medium transition cursor-pointer border ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-2xs font-semibold'
+                                : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100 dark:bg-[#28292a] dark:text-neutral-400 dark:border-neutral-700'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1 flex items-center gap-1">
                       <Clock className="h-3 w-3 text-gray-400" />
-                      <span>{t('task.daily_duration', '每日耗时 (分钟)')}</span>
+                      <span>{t('task.daily_duration', '单次耗时 (分钟)')}</span>
                     </label>
                     <input
                       type="number"
