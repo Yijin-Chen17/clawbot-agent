@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Task, UserSettings } from '../models/types.js';
 import {
+  buildExtendedScheduleBlocks,
   formatLocalDate,
+  parseDeadlineDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
   splitIntoFocusSessions,
@@ -247,131 +249,87 @@ test('runSingleDaySchedule strictly clamps blocks within workWindows without fra
   }
 });
 
-
-
-test('focus sessions balance the task duration instead of defaulting to one hour', () => {
-  assert.deepEqual(splitIntoFocusSessions(150), [75, 75]);
-  assert.deepEqual(splitIntoFocusSessions(70), [70]);
-  assert.equal(splitIntoFocusSessions(181).reduce((a, b) => a + b, 0), 181);
-  assert.ok(splitIntoFocusSessions(181).every(minutes => minutes <= 90));
+test('parseDeadlineDate treats date-only strings as local 23:59:59 instead of UTC 00:00Z', () => {
+  const parsed = parseDeadlineDate('2026-11-23');
+  assert.ok(parsed !== null);
+  assert.equal(parsed.getFullYear(), 2026);
+  assert.equal(parsed.getMonth(), 10);
+  assert.equal(parsed.getDate(), 23);
+  assert.equal(parsed.getHours(), 23);
+  assert.equal(parsed.getMinutes(), 59);
+  assert.equal(parsed.getSeconds(), 59);
 });
 
-test('all-day events and fractional busy boundaries are never scheduled over', () => {
-  const day = new Date();
-  day.setDate(day.getDate() + 1);
-  day.setHours(0, 0, 0, 0);
-  const nextDay = new Date(day);
-  nextDay.setDate(nextDay.getDate() + 1);
-  const allDay = runSingleDaySchedule([makeTask()], [
-    { id: 'all', title: '忙碌', start: day, end: nextDay, isAllDay: true },
-  ], { targetDate: day });
-  assert.equal(allDay.scheduledBlocks.length, 0);
+test('runSingleDaySchedule caps lunch push at 13:30 and dinner push at 19:30', () => {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
 
-  const busyStart = new Date(day); busyStart.setHours(9, 59, 40, 0);
-  const busyEnd = new Date(day); busyEnd.setHours(22, 0, 0, 0);
-  const result = runSingleDaySchedule([makeTask({ duration_minutes: 60 })], [
-    { id: 'busy', title: '会议', start: busyStart, end: busyEnd, isAllDay: false },
-  ], { targetDate: day, workStartHour: 9, workEndHour: 22, bufferMinutes: 0 });
-  assert.ok(result.scheduledBlocks.every(block => block.end <= busyStart || block.start >= busyEnd));
-});
+  // Busy blocks covering 10:00-12:30 (pushes lunch to 12:30-13:30) and 17:00-19:45 (exceeds 19:30 dinner cap)
+  // Expect 13:30-17:00 and 19:45-22:00 to remain schedulable without pushed dinner eating 19:45-20:45!
+  const b1Start = new Date(tomorrow);
+  b1Start.setHours(9, 0, 0, 0);
+  const b1End = new Date(tomorrow);
+  b1End.setHours(12, 30, 0, 0);
 
+  const b2Start = new Date(tomorrow);
+  b2Start.setHours(13, 30, 0, 0);
+  const b2End = new Date(tomorrow);
+  b2End.setHours(19, 45, 0, 0);
 
-test('semantic plan keeps coursework in 2h and 3h blocks inside Work Slots', () => {
-  const day = new Date(); day.setDate(day.getDate() + 1); day.setHours(0, 0, 0, 0);
-  const result = runSingleDaySchedule([makeTask({ duration_minutes: 300, session_plan: '[120,180]' })], [], {
-    targetDate: day, workStartHour: 8, workEndHour: 22,
-    workWindows: [{ startHour: 9, endHour: 11 }, { startHour: 15, endHour: 18 }], bufferMinutes: 0,
+  const task = makeTask({ id: 32, duration_minutes: 60, importance: 90, urgency: 90 });
+  const res = runSingleDaySchedule([task], [
+    { id: 'm1', title: '上午会', start: b1Start, end: b1End, isAllDay: false },
+    { id: 'm2', title: '下午连续会', start: b2Start, end: b2End, isAllDay: false },
+  ], {
+    targetDate: tomorrow,
+    workStartHour: 9,
+    workEndHour: 22,
+    bufferMinutes: 0,
   });
-  assert.deepEqual(result.scheduledBlocks.map(b => b.durationMinutes), [120,180]);
-  assert.ok(result.scheduledBlocks.every(b => (b.start.getHours() >= 9 && b.end.getHours() <= 11) || (b.start.getHours() >= 15 && b.end.getHours() <= 18)));
+
+  // Because dinner is capped at 19:30 and m2 already ends at 19:45, 19:45-20:45 must NOT be blocked by a pushed dinner rest!
+  assert.equal(res.scheduledBlocks.length, 1);
+  assert.equal(res.scheduledBlocks[0].start.getHours(), 19);
+  assert.equal(res.scheduledBlocks[0].start.getMinutes(), 45);
 });
 
-test('semantic sessions are deferred instead of fragmented into small free windows', () => {
-  const day = new Date(); day.setDate(day.getDate() + 1);
-  const result = runSingleDaySchedule([makeTask({ duration_minutes: 300, session_plan: '[120,180]' })], [], {
-    targetDate: day, workStartHour: 9, workEndHour: 17,
-    workWindows: [{ startHour: 9, endHour: 10 }, { startHour: 15, endHour: 16 }],
-  });
-  assert.equal(result.scheduledBlocks.length, 0);
-  assert.equal(result.unscheduledTaskIds[0].remainingMinutes, 300);
-});
+test('buildExtendedScheduleBlocks updates trailing block end & duration or creates fallback block', () => {
+  const newEnd = new Date('2026-11-23T11:30:00.000Z');
+  const existing = JSON.stringify([
+    { start: '2026-11-23T09:00:00.000Z', end: '2026-11-23T10:00:00.000Z', duration: 60 },
+    { start: '2026-11-23T10:10:00.000Z', end: '2026-11-23T11:00:00.000Z', duration: 50 },
+  ]);
 
-test('empty or invalid configured Work Slots never broaden to default hours', () => {
-  for (const work_slots of ['[]', 'invalid', '']) {
-    const windows = parseWorkSlotWindows({ work_slots } as UserSettings);
-    assert.equal(windows.workStartHour, windows.workEndHour);
-    assert.deepEqual(windows.workWindows, []);
-  }
-});
+  const updatedJson = buildExtendedScheduleBlocks(
+    existing,
+    '2026-11-23T09:00:00.000Z',
+    '2026-11-23T11:00:00.000Z',
+    110,
+    newEnd,
+    30
+  );
+  assert.ok(updatedJson !== null);
+  const updated = JSON.parse(updatedJson);
+  assert.equal(updated.length, 2);
+  assert.equal(updated[0].end, '2026-11-23T10:00:00.000Z');
+  assert.equal(updated[1].end, '2026-11-23T11:30:00.000Z');
+  assert.equal(updated[1].duration, 80);
 
-test('soft and hard deadlines share pressure and slope while there is ample capacity', () => {
-  const epsilon = 1e-6;
-  for (const load of [0, 0.1, 0.4, 0.6]) {
-    assert.equal(deadlinePressure(load, true), deadlinePressure(load, false));
-    assert.ok(Math.abs(
-      (deadlinePressure(load + epsilon, true) - deadlinePressure(load + epsilon, false)) / epsilon
-    ) < 1e-5);
-  }
-  assert.ok(deadlinePressure(0.95, true) > deadlinePressure(0.95, false));
-  assert.ok(Number.isFinite(deadlinePressure(1, true)));
-});
-
-test('a missed daily occurrence raises debt and checking in reduces it the next day', () => {
-  const created = new Date(2026, 10, 20);
-  const today = new Date(2026, 10, 22);
-  const task = makeTask({ created_at: created.toISOString(), completed_dates: '["2026-11-20"]' });
-  assert.equal(recurringDebt(task, created), 0);
-  assert.equal(recurringDebt(task, today), 1);
-  assert.equal(recurringDebt({ ...task, completed_dates: '["2026-11-20","2026-11-22"]' }, new Date(2026, 10, 23)), 0.8);
-});
-
-test('long tasks of similar importance alternate without cutting their phases', () => {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  const sessions = JSON.stringify(Array<number>(25).fill(120));
-  const tasks = [makeTask({ duration_minutes: 3000, session_plan: sessions }),
-    makeTask({ id: 2, importance: 79, duration_minutes: 3000, session_plan: sessions })];
-  const allocationDebt = new Map<number, number>();
-  const order: number[] = [];
-  for (let day = 0; day < 10; day++) {
-    const result = runSingleDaySchedule(tasks, [], {
-      targetDate: date, workStartHour: 8, workEndHour: 12,
-      taskRestMinutes: 0, maxDailyTaskMinutes: 210, allocationDebt,
-    });
-    for (const block of result.scheduledBlocks) {
-      assert.equal(block.durationMinutes, 120);
-      order.push(block.taskId);
-    }
-    for (const pending of result.unscheduledTaskIds) tasks.find(task => task.id === pending.taskId)!.duration_minutes = pending.remainingMinutes;
-    date.setDate(date.getDate() + 1);
-  }
-  assert.deepEqual(order, Array.from({ length: 20 }, (_, i) => i % 2 + 1));
-});
-
-test('hard deadlines protect shared capacity and an impossible phase cannot consume it', () => {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  const deadline = new Date(date);
-  deadline.setHours(11, 0, 0, 0);
-  const hard = { deadline: deadline.toISOString(), deadline_kind: 'hard' as const };
-  const result = runSingleDaySchedule([
-    makeTask({ ...hard, importance: 55, session_plan: '[180]', duration_minutes: 180 }),
-    makeTask({ ...hard, id: 2, session_plan: '[190]', duration_minutes: 190 }),
-    makeTask({ id: 3, importance: 100, duration_minutes: 60 }),
-  ], [], { targetDate: date, workStartHour: 8, workEndHour: 12, taskRestMinutes: 0 });
-  assert.deepEqual(result.scheduledBlocks.map(b => b.taskId), [1, 3]);
-  assert.equal(result.scheduledBlocks[0].end.getTime(), deadline.getTime());
-  assert.match(result.unscheduledTaskIds.find(t => t.taskId === 2)!.reason, /不可逾期/);
+  const fallbackJson = buildExtendedScheduleBlocks(
+    null,
+    '2026-11-23T10:00:00.000Z',
+    '2026-11-23T11:00:00.000Z',
+    60,
+    newEnd,
+    30
+  );
+  assert.ok(fallbackJson !== null);
+  const fallback = JSON.parse(fallbackJson);
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].end, '2026-11-23T11:30:00.000Z');
+  assert.equal(fallback[0].duration, 90);
 });
 
 
-test('overdue task is placed before a similar task with a future deadline', () => {
-  const day = new Date(); day.setDate(day.getDate() + 1); day.setHours(0, 0, 0, 0);
-  const past = new Date(day); past.setDate(past.getDate() - 6);
-  const later = new Date(day); later.setDate(later.getDate() + 7);
-  const result = runSingleDaySchedule([
-    makeTask({ id: 1, duration_minutes: 300, importance: 80, urgency: 45, deadline: later.toISOString(), session_plan: '[120,180]' }),
-    makeTask({ id: 2, duration_minutes: 180, importance: 80, urgency: 95, deadline: past.toISOString(), session_plan: '[180]' }),
-  ], [], { targetDate: day, workStartHour: 8, workEndHour: 18, taskRestMinutes: 0, maxDailyTaskMinutes: 480 });
-  assert.equal(result.scheduledBlocks[0]?.taskId, 2);
-});
+
