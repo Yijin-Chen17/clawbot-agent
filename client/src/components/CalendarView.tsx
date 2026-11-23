@@ -1464,6 +1464,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         </div>
       </div>
 
+      <div aria-hidden="true" className="h-4 shrink-0 bg-white dark:bg-[#131314]" />
+
       {/* ===================== 对话框与模态框 ===================== */}
       {/* 1. 日历订阅与同步管理模态框 */}
       {showCalendarsModal && (
