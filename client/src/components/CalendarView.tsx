@@ -748,10 +748,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
           timedItems.push({
             kind: 'task',
-            id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
+            id: `task-${taskItem.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
             blockId: block.id,
             partIndex: block.partIndex || bIdx + 1,
-            title: `${titlePrefix}${t.title}${partSuffix}`,
+            title: `${titlePrefix}${taskItem.title}${partSuffix}`,
             start: range.start,
             end: range.end,
             allDay: false,
