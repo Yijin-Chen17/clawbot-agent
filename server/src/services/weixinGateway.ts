@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
-import { parseUserMessageWithLLM } from './llm.js';
+import { parseUserMessageWithLLM, getEffectiveLlmConfig } from './llm.js';
 import { scheduleTask, replanUserTasks, completeTaskPart, extendTaskDuration, computeTodayBusyMinutes } from './scheduler.js';
 import {
   calculateDynamicImportance,

@@ -189,18 +189,6 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     status = 'scheduled';
     scheduleMsg = '固定任务已创建并锁定时间段！';
     scheduleBlocks = JSON.stringify([{ start: finalStart, end: finalEnd, duration: Number(duration_minutes) }]);
-  } else if (auto_schedule) {
-    const plan = scheduleTask(userId, {
-      title,
-      duration_minutes: Number(duration_minutes),
-      urgency: resolvedUrgency,
-      importance: resolvedImportance,
-      deadline: normalizedDeadline,
-    });
-
-    if (plan.proposal) {
-      proposal = plan.proposal;
-    }
 
   }
 
@@ -225,6 +213,7 @@ export async function createTask(req: AuthenticatedRequest, res: Response): Prom
     resolvedPace,
     manualOverrideNum,
     normalizedDeadline,
+    deadline_kind === 'hard' ? 'hard' : 'soft',
     finalStart,
     finalEnd,
     is_fixed ? 1 : 0,
@@ -328,6 +317,11 @@ export async function updateTask(req: AuthenticatedRequest, res: Response): Prom
     deadline !== undefined
       ? normalizeDeadlineIso(deadline)
       : normalizeDeadlineIso(existing.deadline);
+  const nextDeadlineKind = deadline_kind ?? (nextDeadline ? existing.deadline_kind : 'soft');
+  if (nextDeadlineKind === 'hard' && !Number.isFinite(deadlineMs(nextDeadline))) {
+    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
+    return;
+  }
   const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
   const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
 
@@ -626,7 +620,16 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
       return;
     }
 
-    const restoredDuration = task.duration_minutes > 0 ? task.duration_minutes : (task.original_duration_minutes || 60);
+    let restoredBlocks: any[] = [];
+    try {
+      const parsed = JSON.parse(task.schedule_blocks || '[]');
+      if (Array.isArray(parsed)) restoredBlocks = parsed.map(block => ({ ...block, completed: false }));
+    } catch {}
+    const blockMinutes = restoredBlocks.reduce((sum, block) => {
+      const duration = Number(block.duration) || (new Date(block.end).getTime() - new Date(block.start).getTime()) / 60000;
+      return sum + (Number.isFinite(duration) && duration > 0 ? duration : 0);
+    }, 0);
+    const restoredDuration = task.duration_minutes > 0 ? task.duration_minutes : (task.original_duration_minutes || Math.round(blockMinutes) || 60);
     const hasValidFuturePinnedSlot =
       task.is_fixed === 1 &&
       Boolean(task.scheduled_start && task.scheduled_end) &&
@@ -635,9 +638,9 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
     if (hasValidFuturePinnedSlot) {
       db.prepare(`
         UPDATE tasks
-        SET status = 'scheduled', duration_minutes = ?, completed_dates = ?, updated_at = CURRENT_TIMESTAMP
+        SET status = 'scheduled', duration_minutes = ?, completed_dates = ?, schedule_blocks = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(restoredDuration, JSON.stringify(completedDates), id);
+      `).run(restoredDuration, JSON.stringify(completedDates), JSON.stringify(restoredBlocks), id);
     } else {
       db.prepare(`
         UPDATE tasks

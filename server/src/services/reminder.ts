@@ -4,7 +4,6 @@ import { db } from '../config/database.js';
 import { Task, UserSettings, CalendarSubscription } from '../models/types.js';
 import { templates, sendClawbotMessage } from './clawbot.js';
 import { syncSubscription } from './calendarSync.js';
-import { replanUserTasks } from './scheduler.js';
 
 export function startReminderScheduler() {
   console.log('⏰ [Scheduler] Reminder & Calendar Sync Worker started (Every 30s)');
