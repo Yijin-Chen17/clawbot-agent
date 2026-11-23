@@ -2,8 +2,70 @@ import nodemailer from 'nodemailer';
 import { db } from '../config/database.js';
 import { getAppConfig } from '../config/appConfig.js';
 
+export type VerificationCodeType = 'register' | 'reset_password';
+
 export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+const MAX_FAILED_VERIFY_ATTEMPTS = 5;
+const FAILED_VERIFY_WINDOW_MS = 10 * 60 * 1000;
+const failedVerifyTracker = new Map<string, { count: number; resetAt: number }>();
+
+export function buildVerificationEmailContent(
+  type: VerificationCodeType,
+  lang: 'zh' | 'en'
+): {
+  subject: string;
+  subtitle: string;
+  greeting: string;
+  bodyDesc: string;
+  notes: string;
+  footerText: string;
+} {
+  const isEn = lang === 'en';
+  const isReset = type === 'reset_password';
+
+  return {
+    subject: isReset
+      ? isEn
+        ? '[Clawbot] Password Reset Verification Code'
+        : '【Clawbot】重置密码验证码'
+      : isEn
+      ? '[Clawbot] Email Registration Verification Code'
+      : '【Clawbot】邮箱注册验证码',
+    subtitle: isEn
+      ? 'WeChat Intelligent Task Planning & Dynamic Scheduling Console'
+      : '微信智能日程规划与动态排程管理控制台',
+    greeting: isEn ? 'Hello!' : '您好！',
+    bodyDesc: isReset
+      ? isEn
+        ? 'You requested to reset your <strong>Clawbot Tasks</strong> login password. Please enter the following 6-digit verification code on the password reset page:'
+        : '您正在通过邮箱验证码重置 <strong>Clawbot</strong> 账号的登录密码。请在重置密码页面输入下方 6 位数字验证码：'
+      : isEn
+      ? 'You are registering an account for <strong>Clawbot Tasks</strong>. Please enter the following 6-digit verification code on the registration page to complete your account activation:'
+      : '您正在注册 <strong>Clawbot</strong> 智能时间规划系统账号。请在注册页面输入下方 6 位数字验证码完成账号激活：',
+    notes: isEn
+      ? '* This verification code is valid for 10 minutes. Please do not share it with anyone.<br/>* If this was not requested by you, please ignore this email.'
+      : '* 验证码有效期为 10 分钟。请勿将验证码泄露给他人。<br/>* 如非您本人操作，请忽略此邮件。',
+    footerText: isEn
+      ? 'Clawbot Agent · Automated WeChat Schedule Assistant'
+      : 'Clawbot Agent · 自动化微信日程协同助手',
+  };
+}
+
+export function recordVerifyFailure(key: string, nowMs: number = Date.now()): boolean {
+  const existing = failedVerifyTracker.get(key);
+  if (!existing || existing.resetAt <= nowMs) {
+    failedVerifyTracker.set(key, { count: 1, resetAt: nowMs + FAILED_VERIFY_WINDOW_MS });
+    return false;
+  }
+  existing.count += 1;
+  return existing.count >= MAX_FAILED_VERIFY_ATTEMPTS;
+}
+
+export function clearVerifyFailures(key: string): void {
+  failedVerifyTracker.delete(key);
 }
 
 /**
@@ -11,7 +73,7 @@ export function isValidEmail(email: string): boolean {
  */
 export async function sendEmailVerificationCode(
   email: string,
-  type: 'register' = 'register',
+  type: VerificationCodeType = 'register',
   lang: 'zh' | 'en' = 'zh'
 ): Promise<{ success: boolean; message: string }> {
   const trimmedEmail = email.trim().toLowerCase();
@@ -21,14 +83,32 @@ export async function sendEmailVerificationCode(
     throw new Error(isEn ? 'Please enter a valid email address' : '请输入正确的邮箱地址');
   }
 
-  // 若为注册验证码，检查该邮箱是否已被占用（一个邮箱只能注册一个账号）
+  // 若为注册验证码，检查该邮箱是否已被占用；若为重置密码，确认邮箱已绑定有效账号
   if (type === 'register') {
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(trimmedEmail);
+    const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(trimmedEmail);
     if (existing) {
       throw new Error(
         isEn
           ? 'This email is already registered. Each email can only register one account.'
           : '该邮箱已注册账号，每个邮箱仅限注册一个账号'
+      );
+    }
+  } else if (type === 'reset_password') {
+    const user = db.prepare('SELECT id, status FROM users WHERE LOWER(email) = ?').get(trimmedEmail) as
+      | { id: number; status: string }
+      | undefined;
+    if (!user) {
+      throw new Error(
+        isEn
+          ? 'No account is bound to this email address.'
+          : '该邮箱未绑定任何账号，请核对后重试'
+      );
+    }
+    if (user.status === 'banned') {
+      throw new Error(
+        isEn
+          ? 'This account has been banned and cannot reset password.'
+          : '该账号已被管理员封禁，无法重置密码'
       );
     }
   }
@@ -52,7 +132,8 @@ export async function sendEmailVerificationCode(
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10分钟有效
 
-  // 写入验证码数据库
+  // 写入验证码数据库并重置失败计数
+  clearVerifyFailures(`${type}:${trimmedEmail}`);
   db.prepare(`
     INSERT INTO email_verification_codes (email, code, type, expires_at)
     VALUES (?, ?, ?, ?)
@@ -107,27 +188,14 @@ export async function sendEmailVerificationCode(
   }
 
   // 邮件标题（不包含具体验证码，保护安全，避免在邮件列表预览或通知首页直接泄露）
-  const emailSubject = isEn
-    ? '[Clawbot] Email Registration Verification Code'
-    : '【Clawbot】邮箱注册验证码';
-
-  const emailSubtitle = isEn
-    ? 'WeChat Intelligent Task Planning & Dynamic Scheduling Console'
-    : '微信智能日程规划与动态排程管理控制台';
-
-  const greeting = isEn ? 'Hello!' : '您好！';
-
-  const bodyDesc = isEn
-    ? 'You are registering an account for <strong>Clawbot Tasks</strong>. Please enter the following 6-digit verification code on the registration page to complete your account activation:'
-    : '您正在注册 <strong>Clawbot</strong> 智能时间规划系统账号。请在注册页面输入下方 6 位数字验证码完成账号激活：';
-
-  const notes = isEn
-    ? '* This verification code is valid for 10 minutes. Please do not share it with anyone.<br/>* If this was not requested by you, please ignore this email.'
-    : '* 验证码有效期为 10 分钟。请勿将验证码泄露给他人。<br/>* 如非您本人操作，请忽略此邮件。';
-
-  const footerText = isEn
-    ? 'Clawbot Agent · Automated WeChat Schedule Assistant'
-    : 'Clawbot Agent · 自动化微信日程协同助手';
+  const {
+    subject: emailSubject,
+    subtitle: emailSubtitle,
+    greeting,
+    bodyDesc,
+    notes,
+    footerText,
+  } = buildVerificationEmailContent(type, lang);
 
   const mailOptions = {
     from: senderFrom,
@@ -182,13 +250,14 @@ export async function sendEmailVerificationCode(
 export function verifyEmailCode(
   email: string,
   code: string,
-  type: string = 'register'
+  type: VerificationCodeType = 'register'
 ): boolean {
   const trimmedEmail = email.trim().toLowerCase();
   const trimmedCode = code.trim();
 
   if (!trimmedEmail || !trimmedCode) return false;
 
+  const attemptKey = `${type}:${trimmedEmail}`;
   const record = db.prepare(`
     SELECT id, expires_at, used
     FROM email_verification_codes
@@ -197,12 +266,20 @@ export function verifyEmailCode(
     LIMIT 1
   `).get(trimmedEmail, trimmedCode, type) as any;
 
-  if (!record) return false;
+  if (!record) {
+    const locked = recordVerifyFailure(attemptKey);
+    if (locked) {
+      db.prepare('UPDATE email_verification_codes SET used = 1 WHERE email = ? AND type = ? AND used = 0')
+        .run(trimmedEmail, type);
+    }
+    return false;
+  }
 
   const isExpired = new Date(record.expires_at).getTime() < Date.now();
   if (isExpired) return false;
 
-  // 标记已使用，防止重放
+  // 标记已使用并清空重试计数，防止重放
   db.prepare('UPDATE email_verification_codes SET used = 1 WHERE id = ?').run(record.id);
+  clearVerifyFailures(attemptKey);
   return true;
 }
