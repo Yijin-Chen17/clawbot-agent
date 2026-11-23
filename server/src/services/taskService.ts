@@ -709,6 +709,8 @@ export async function updateTaskCommand(params: {
           score_scale = 100,
           deadline = ?,
           deadline_kind = ?,
+          scheduled_start = COALESCE(?, scheduled_start),
+          scheduled_end = COALESCE(?, scheduled_end),
           is_fixed = ?,
           is_concurrent = ?,
           tags = ?,
@@ -731,6 +733,8 @@ export async function updateTaskCommand(params: {
       scores.manualOverride,
       nextDeadline,
       nextDeadlineKind,
+      nextIsFixed && fixedCheck.startIso ? fixedCheck.startIso : null,
+      nextIsFixed && fixedCheck.endIso ? fixedCheck.endIso : null,
       nextIsFixed ? 1 : 0,
       nextIsConcurrent ? 1 : 0,
       JSON.stringify(nextTags),
@@ -801,6 +805,33 @@ export async function updateTaskCommand(params: {
           WHERE instance_id = ? AND status IN ('planned', 'conflict')
         `).run(inst.id);
       }
+      }
+
+      // Sync unstarted future recurring instances/blocks when recurring schedule parameters change
+      if (scores.timeMode === 'daily_fixed') {
+        const templateChanged =
+          cmd.scheduled_start !== undefined ||
+          cmd.scheduled_end !== undefined ||
+          cmd.is_fixed !== undefined ||
+          cmd.is_concurrent !== undefined ||
+          cmd.duration_minutes !== undefined ||
+          cmd.recurrence_rule !== undefined;
+        if (templateChanged) {
+          db.prepare(`
+            UPDATE task_instances
+            SET estimated_minutes = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND instance_type = 'daily' AND business_date > ? AND status = 'pending' AND completed_minutes = 0
+          `).run(finalDuration, existing.id, todayKey);
+          db.prepare(`
+            UPDATE schedule_blocks
+            SET is_fixed = 0, is_committed = 0, status = 'superseded', updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status IN ('planned', 'conflict')
+              AND instance_id IN (
+                SELECT id FROM task_instances
+                WHERE task_id = ? AND instance_type = 'daily' AND business_date > ? AND status = 'pending'
+              )
+          `).run(existing.id, existing.id, todayKey);
+        }
       }
       syncLegacyTaskProjection(params.userId, existing.id, now);
     }

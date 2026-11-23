@@ -69,7 +69,12 @@ interface CalendarEventItem {
   subscriptionName?: string;
   extendedProps?: {
     type: 'external' | 'task';
+    blockId?: string;
     taskId?: number;
+    instanceId?: number;
+    partIndex?: number;
+    totalParts?: number;
+    blockStatus?: string;
     urgency?: number;
     importance?: number;
     duration?: number;
@@ -681,7 +686,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         }
       });
 
-    // 2. Scheduled and Completed Tasks (优先展示真实 schedule_blocks；无排程记录的已完成任务按完成时间倒推)
+    // 2. Scheduled and Completed Tasks (优先展示 /calendar/events 返回的多日真实 schedule_blocks；无记录的已完成任务兜底回退)
     const parseCompletedDates = (raw?: string | null): string[] => {
       if (!raw) return [];
       try {
@@ -692,7 +697,68 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       }
     };
 
+    const taskById = new Map<number, TaskItem>();
+    tasks.forEach((taskItem) => taskById.set(taskItem.id, taskItem));
+    const renderedTaskDates = new Set<string>();
+
+    events
+      .filter((ev) => ev.extendedProps?.type === 'task')
+      .forEach((ev, idx) => {
+        const taskId = ev.extendedProps?.taskId;
+        const taskItem = taskId ? taskById.get(taskId) : undefined;
+        if (!taskItem) return;
+        if (taskItem.time_mode === 'daily_fixed' && !isDateMatchingRecurrence(date, taskItem.recurrence_rule)) {
+          return;
+        }
+        const range = segmentRange(ev.start, ev.end, windowStartIso, windowEndIso);
+        if (!range) return;
+
+        const completedDates = parseCompletedDates(taskItem.completed_dates);
+        const blockDone =
+          ev.extendedProps?.blockStatus === 'completed' ||
+          ev.extendedProps?.status === 'completed' ||
+          taskItem.status === 'completed' ||
+          (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));
+        const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
+        const totalParts = ev.extendedProps?.totalParts || 1;
+        const partIdx = ev.extendedProps?.partIndex || 1;
+        const partSuffix =
+          totalParts > 1
+            ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(partIdx)).replace('{total}', String(totalParts))})`
+            : '';
+        let titlePrefix = blockDone ? '✓ ' : '';
+        if (!blockDone) {
+          if (taskItem.is_fixed) titlePrefix += '📌 ';
+          if (taskItem.is_concurrent) titlePrefix += '⚡ ';
+        }
+
+        let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
+        if (!blockDone) {
+          if (taskItem.is_fixed && taskItem.is_concurrent) qBadge = t('calendar.badge_fixed_concurrent', '固定·双线程');
+          else if (taskItem.is_fixed) qBadge = t('calendar.badge_fixed', '固定任务');
+          else if (taskItem.is_concurrent) qBadge = t('calendar.badge_concurrent', '双线程');
+        }
+
+        const blockId = ev.extendedProps?.blockId || ev.id;
+        renderedTaskDates.add(`${taskItem.id}::${key}`);
+        timedItems.push({
+          kind: 'task',
+          id: `task-${taskItem.id}-${blockId || idx}-${blockDone ? 'done' : 'active'}`,
+          blockId,
+          partIndex: partIdx,
+          title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+          start: range.start,
+          end: range.end,
+          allDay: false,
+          color: taskCalendarColor || (blockDone ? '#10B981' : quad.color),
+          qClass: quad.key,
+          qName: qBadge,
+          task: taskItem,
+        });
+      });
+
     tasks.forEach((taskItem) => {
+      if (renderedTaskDates.has(`${taskItem.id}::${key}`)) return;
       // 周期任务若当天不在其命中日内，则不在当天日程中渲染
       if (taskItem.time_mode === 'daily_fixed' && !isDateMatchingRecurrence(date, taskItem.recurrence_rule)) {
         return;

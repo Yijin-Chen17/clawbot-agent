@@ -8,7 +8,7 @@ import type {
   TaskInstance,
 } from '../models/types.js';
 import { getUserTimezone } from './accountService.js';
-import { getAccountLocalDateKey } from '../utils/timezone.js';
+import { addDaysToDateKey, getAccountLocalDateKey } from '../utils/timezone.js';
 import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import { cancelNotificationsForBlock, cancelNotificationsForInstance } from './outboxService.js';
 
@@ -121,9 +121,14 @@ export function ensureTaskInstance(
 }
 
 /**
- * 为账户生成当日所有活跃每日任务的实例（日切或重排前调用）。
+ * 为账户生成未来规划窗口内（默认 14 天）所有活跃周期任务的日实例，
+ * 并清理规则变更后不再命中但尚未开始的旧未来实例。
  */
-export function ensureTodayDailyInstancesForUser(userId: number, now: Date = new Date()): TaskInstance[] {
+export function ensureHorizonDailyInstancesForUser(
+  userId: number,
+  now: Date = new Date(),
+  horizonDays: number = 14
+): TaskInstance[] {
   const tz = getUserTimezone(userId);
   const todayKey = getAccountLocalDateKey(now, tz);
   const dailyTemplates = db.prepare(`
@@ -135,12 +140,54 @@ export function ensureTodayDailyInstancesForUser(userId: number, now: Date = new
   `).all(userId) as Task[];
 
   const result: TaskInstance[] = [];
+  const daysCount = Math.max(1, horizonDays);
+
   for (const t of dailyTemplates) {
-    if (!isDateMatchingRecurrence(todayKey, t.recurrence_rule)) continue;
-    const inst = ensureTaskInstance(userId, t.id, todayKey, now);
-    if (inst) result.push(inst);
+    const startBound =
+      t.is_fixed === 1 && t.scheduled_start
+        ? getAccountLocalDateKey(new Date(t.scheduled_start), tz)
+        : todayKey;
+    const minDate = startBound > todayKey ? startBound : todayKey;
+
+    for (let offset = 0; offset < daysCount; offset++) {
+      const dateKey = offset === 0 ? todayKey : addDaysToDateKey(todayKey, offset);
+      if (dateKey < minDate) continue;
+      if (!isDateMatchingRecurrence(dateKey, t.recurrence_rule)) continue;
+      const inst = ensureTaskInstance(userId, t.id, dateKey, now);
+      if (inst) result.push(inst);
+    }
+
+    // Cancel future unstarted pending instances that no longer match updated recurrence rules
+    const existingPending = db.prepare(`
+      SELECT id, business_date FROM task_instances
+      WHERE task_id = ? AND user_id = ? AND instance_type = 'daily'
+        AND business_date >= ? AND status = 'pending' AND completed_minutes = 0
+    `).all(t.id, userId, todayKey) as Array<{ id: number; business_date: string }>;
+
+    for (const ep of existingPending) {
+      if (!isDateMatchingRecurrence(ep.business_date, t.recurrence_rule)) {
+        db.prepare(`
+          UPDATE task_instances
+          SET status = 'cancelled', allocated_minutes = 0, unallocated_minutes = 0,
+              cancelled_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(ep.id);
+        db.prepare(`
+          UPDATE schedule_blocks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+          WHERE instance_id = ? AND status IN ('planned', 'conflict')
+        `).run(ep.id);
+        cancelNotificationsForInstance(ep.id);
+      }
+    }
   }
   return result;
+}
+
+/**
+ * 为账户生成当日所有活跃每日任务的实例（日切或重排前调用）。
+ */
+export function ensureTodayDailyInstancesForUser(userId: number, now: Date = new Date()): TaskInstance[] {
+  return ensureHorizonDailyInstancesForUser(userId, now, 1);
 }
 
 /**
@@ -195,6 +242,11 @@ export function syncLegacyTaskProjection(userId: number, taskId: number, now: Da
     instance = db
       .prepare('SELECT * FROM task_instances WHERE task_id = ? AND business_date = ?')
       .get(taskId, todayKey) as TaskInstance | undefined;
+    if (!instance) {
+      instance = db
+        .prepare("SELECT * FROM task_instances WHERE task_id = ? AND business_date >= ? AND status != 'cancelled' ORDER BY business_date ASC LIMIT 1")
+        .get(taskId, todayKey) as TaskInstance | undefined;
+    }
     if (!instance) {
       instance = db
         .prepare('SELECT * FROM task_instances WHERE task_id = ? ORDER BY business_date DESC LIMIT 1')

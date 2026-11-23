@@ -1,5 +1,10 @@
 import type { Task } from '../models/types.js';
 import { normalizeScoreTo100 } from '../utils/priorityAlgorithm.js';
+import {
+  addDaysToDateKey,
+  getAccountLocalDateKey,
+  parseAccountDateOrIso,
+} from '../utils/timezone.js';
 
 const MINUTE = 60_000;
 const BLOCK = 120;
@@ -17,8 +22,12 @@ export type OptimizerRejectReason =
   | 'outside_work_window'
   | 'search_budget_exhausted';
 
-export function deadlineMs(value?: string | null): number {
+export function deadlineMs(value?: string | null, timezone?: string): number {
   if (!value) return Infinity;
+  if (timezone) {
+    const parsed = parseAccountDateOrIso(value, timezone);
+    return parsed && Number.isFinite(parsed.getTime()) ? parsed.getTime() : Infinity;
+  }
   const parsed = new Date(/^\d{4}-\d\d-\d\d$/.test(value) ? value + 'T23:59:59.999' : value).getTime();
   return Number.isFinite(parsed) ? parsed : Infinity;
 }
@@ -32,12 +41,25 @@ export function deadlinePressure(load: number, hard: boolean): number {
   return -Math.log1p(-load);
 }
 
-export function recurringDebt(task: Pick<Task, 'created_at' | 'completed_dates'>, today: Date): number {
+export function recurringDebt(task: Pick<Task, 'created_at' | 'completed_dates'>, today: Date, timezone?: string): number {
   let done: unknown;
   try { done = JSON.parse(task.completed_dates || '[]'); } catch {}
   const dates = new Set(Array.isArray(done) ? done : []);
   const created = new Date(task.created_at);
   if (!Number.isFinite(created.getTime())) return 0;
+
+  if (timezone) {
+    const createdKey = getAccountLocalDateKey(created, timezone);
+    let cursorKey = getAccountLocalDateKey(today, timezone);
+    let debt = 0;
+    for (let age = 0; age < 40; age++) {
+      cursorKey = addDaysToDateKey(cursorKey, -1);
+      if (cursorKey < createdKey) break;
+      if (!dates.has(cursorKey)) debt += 0.8 ** age;
+    }
+    return debt;
+  }
+
   created.setHours(0, 0, 0, 0);
   const date = new Date(today);
   date.setHours(0, 0, 0, 0);
@@ -49,6 +71,23 @@ export function recurringDebt(task: Pick<Task, 'created_at' | 'completed_dates'>
     if (!dates.has(key)) debt += 0.8 ** age;
   }
   return debt;
+}
+
+function getLocalHour(ms: number, timezone?: string): number {
+  const d = new Date(ms);
+  if (!timezone) return d.getHours();
+  try {
+    const h = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }).format(d)
+    );
+    return Number.isFinite(h) ? h : d.getHours();
+  } catch {
+    return d.getHours();
+  }
 }
 
 export interface Placement {
@@ -88,6 +127,7 @@ export function selectCalendarBlocksDetailed(
     allowSplit: boolean;
     advanceDeadlineDays?: number;
     debt?: Map<number, number>;
+    timezone?: string;
   }
 ): SelectCalendarBlocksResult {
   const rejectedReasons = new Map<number, OptimizerRejectReason>();
@@ -99,7 +139,7 @@ export function selectCalendarBlocksDetailed(
 
   const allWindows = [...windows, ...future];
   const day = windows[0].day;
-  const { cap, rest, maxChunk, minChunk, allowSplit } = options;
+  const { cap, rest, maxChunk, minChunk, allowSplit, timezone } = options;
   const advanceDays = Math.max(0, Number(options.advanceDeadlineDays ?? 0));
 
   const items = tasks.map(task => {
@@ -110,7 +150,7 @@ export function selectCalendarBlocksDetailed(
       if (Array.isArray(value) && value.every(n => Number.isInteger(n) && n > 0)) plan = value;
     } catch {}
     const importance = normalizeScoreTo100(task.importance, task.score_scale) / 100;
-    const due = deadlineMs(task.deadline);
+    const due = deadlineMs(task.deadline, timezone);
     const softTargetDue = Number.isFinite(due) && advanceDays > 0
       ? Math.max(windows[0].start, due - advanceDays * 86400_000)
       : due;
@@ -123,7 +163,7 @@ export function selectCalendarBlocksDetailed(
       softTargetDue,
       hard: task.deadline_kind === 'hard' && Number.isFinite(due),
       extra: task.urgency_pace === 'urgent' ? 1 : task.urgency_pace === 'later' ? 0 : task.urgency_pace === 'soon' ? 0.5 : 0,
-      missed: task.time_mode === 'daily_fixed' ? recurringDebt(task, new Date(day)) : 0,
+      missed: task.time_mode === 'daily_fixed' ? recurringDebt(task, new Date(day), timezone) : 0,
     };
   });
 
@@ -160,25 +200,40 @@ export function selectCalendarBlocksDetailed(
   };
 
   const hard = items.map((item, i) => item.hard ? i : -1).filter(i => i >= 0).sort((a, b) => items[a].due - items[b].due);
-  let witnessBudgetExhausted = false;
 
-  const hasWitness = (state: State, required: number[]): boolean => {
-    if (required.every(i => !state.remaining[i])) return true;
+  const checkWitness = (state: State, required: number[]): { ok: boolean; budgetExhausted: boolean } => {
+    if (required.every(i => !state.remaining[i])) return { ok: true, budgetExhausted: false };
     let demand = 0;
     for (const i of required) {
       demand += state.remaining[i];
-      if (demand > capacity(state.cursor, items[i].due, state.used)) return false;
+      if (demand > capacity(state.cursor, items[i].due, state.used)) {
+        return { ok: false, budgetExhausted: false };
+      }
     }
     const left = state.remaining.slice();
     let nodes = 0;
+    let budgetExhausted = false;
     const visit = (window: number, cursor: number, used: number): boolean => {
       if (required.every(i => !left[i])) return true;
       if (++nodes > 512) {
-        witnessBudgetExhausted = true;
+        budgetExhausted = true;
         return false;
       }
       if (window >= allWindows.length) return false;
       const w = allWindows[window];
+      if (cursor > w.end) {
+        const nextW = allWindows[window + 1];
+        return !!nextW && visit(window + 1, nextW.start, nextW.day === w.day ? used : 0);
+      }
+      // Prune early when remaining required work cannot possibly fit before earliest hard due
+      let cumLeft = 0;
+      for (const i of required) {
+        if (!left[i]) continue;
+        cumLeft += left[i];
+        if (cursor + cumLeft * MINUTE > items[i].due && cumLeft > capacity(cursor, items[i].due, used)) {
+          return false;
+        }
+      }
       for (const i of required) {
         if (!left[i]) continue;
         const minutes = phase(i, left[i]);
@@ -192,7 +247,7 @@ export function selectCalendarBlocksDetailed(
       const next = allWindows[window + 1];
       return !!next && visit(window + 1, next.start, next.day === w.day ? used : 0);
     };
-    return visit(state.window, state.cursor, state.used);
+    return { ok: visit(state.window, state.cursor, state.used), budgetExhausted };
   };
 
   const terminal = windows[windows.length - 1].end;
@@ -209,15 +264,24 @@ export function selectCalendarBlocksDetailed(
     tie: 0,
   };
 
-  const required = hasWitness(initial, hard) ? hard : hard.reduce<number[]>((accepted, i) => {
-    const next = [...accepted, i];
-    return hasWitness(initial, next) ? next : accepted;
-  }, []);
+  const initialWitness = checkWitness(initial, hard);
+  const initialBudgetExhaustedByIdx = new Map<number, boolean>();
+  const required = initialWitness.ok
+    ? hard
+    : hard.reduce<number[]>((accepted, i) => {
+        const next = [...accepted, i];
+        const wRes = checkWitness(initial, next);
+        if (!wRes.ok) {
+          initialBudgetExhaustedByIdx.set(i, wRes.budgetExhausted);
+          return accepted;
+        }
+        return next;
+      }, []);
   const rejected = new Set(hard.filter(i => !required.includes(i)));
   for (const idx of rejected) {
     rejectedReasons.set(
       tasks[idx].id,
-      witnessBudgetExhausted ? 'search_budget_exhausted' : 'hard_deadline_violation'
+      initialBudgetExhaustedByIdx.get(idx) ? 'search_budget_exhausted' : 'hard_deadline_violation'
     );
   }
 
@@ -228,7 +292,8 @@ export function selectCalendarBlocksDetailed(
     const progress = items.reduce((sum, item, i) => {
       const before = pressure(i, item.duration, terminal, s.used);
       const after = pressure(i, s.remaining[i], terminal, s.used);
-      const value = 2 * item.importance + 0.25 * item.extra + 0.15 * item.missed;
+      // Base 0.6 guarantee ensures scheduling an eligible low-importance task strictly beats idle skipping
+      const value = 0.6 + 2 * item.importance + 0.25 * item.extra + 0.15 * item.missed;
       return sum + ((s.remaining[i] - item.duration) * value +
         0.5 * (s.remaining[i] * after - item.duration * before)) / BLOCK;
     }, 0);
@@ -260,7 +325,7 @@ export function selectCalendarBlocksDetailed(
       }
       const w = windows[s.window];
       const push = (candidate: State) => {
-        if (!hasWitness(candidate, required)) return;
+        if (!checkWitness(candidate, required).ok) return;
         candidate.score = rank(candidate);
         candidate.tie = topsis(candidate);
         next.push(candidate);
@@ -289,15 +354,17 @@ export function selectCalendarBlocksDetailed(
         remaining[i] -= minutes;
         const sum = eligible.reduce((a, b) => a + b, 0);
         const debt = s.debt.map((d, j) => d + minutes * eligible[j] / sum - (i === j ? minutes : 0));
-        const cut = minutes < desired ? 0.5 + 0.5 * (1 - minutes / desired) ** 2 : 0;
+        // Mild fragment penalty scales gently so filling valid >= minChunk gaps still strictly beats leaving them empty
+        const cut = minutes < desired ? (0.08 + 0.16 * (1 - minutes / desired) ** 2) * (minutes / BLOCK) : 0;
         const overdueWaiting = items.reduce((sumW, other, j) => {
           if (j === i || !s.remaining[j] || other.hard || !Number.isFinite(other.due)) return sumW;
           const overdueDays = Math.max(0, (s.cursor - other.due) / 86400_000);
           return sumW + (overdueDays > 0 ? 0.6 * other.importance * (1 + Math.min(overdueDays / 7, 1)) : 0);
         }, 0) * minutes / BLOCK;
-        const switching = s.last >= 0 && s.last !== i ? 0.12 : 0;
-        const night = new Date(s.cursor).getHours() < 6 ? 0.15 : 0;
-        const onTime = !item.hard && end <= item.due && Number.isFinite(item.due) ? 0.2 : 0;
+        const switching = s.last >= 0 && s.last !== i ? 0.05 : 0;
+        const night = getLocalHour(s.cursor, timezone) < 6 ? 0.15 : 0;
+        // Only grant onTime bonus when this block finishes the soft-deadline task before its due timestamp
+        const onTime = !item.hard && remaining[i] === 0 && end <= item.due && Number.isFinite(item.due) ? 0.2 : 0;
         const delay = Math.max(0, s.cursor - initial.cursor) / Math.max(MINUTE, terminal - initial.cursor);
         push({
           ...s,
@@ -307,7 +374,8 @@ export function selectCalendarBlocksDetailed(
           debt,
           last: i,
           blocks: [...s.blocks, { index: i, start: s.cursor, minutes, rest: pause }],
-          cost: s.cost + cut + switching + overdueWaiting + (night - onTime + 0.08 * delay * item.importance + fairness(debt, remaining)) * minutes / BLOCK,
+          // Single-count fairness solely in rank() rather than double-counting in step cost
+          cost: s.cost + cut + switching + overdueWaiting + (night - onTime + 0.08 * delay * item.importance) * minutes / BLOCK,
         });
       }
     }
