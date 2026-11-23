@@ -30,6 +30,7 @@ import { getUserTimezone } from './accountService.js';
 import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   cancelStalePastDailyInstances,
+  ensureHorizonDailyInstancesForUser,
   ensureTaskInstance,
   ensureTodayDailyInstancesForUser,
   executeInstanceProgressCommand,
@@ -967,6 +968,7 @@ export function runSingleDaySchedule(
       allowSplit,
       advanceDeadlineDays,
       debt: options.allocationDebt,
+      timezone,
     }
   );
 
@@ -1063,7 +1065,8 @@ export function scheduleTaskGroupInHorizon(
   },
   taskAllocations: Map<number, ScheduledTaskBlock[]>,
   remainingTaskIds: Set<number>,
-  rejectReasonByTaskId?: Map<number, { code: string; text: string }>
+  rejectReasonByTaskId?: Map<number, { code: string; text: string }>,
+  occupiedDailyMinutes?: Map<string, number>
 ): void {
   if (groupTasks.length === 0) return;
 
@@ -1102,6 +1105,11 @@ export function scheduleTaskGroupInHorizon(
       targetDate.setDate(targetDate.getDate() + dayOffset);
     }
 
+    const dkForCap = config.timezone && baseKey ? addDaysToDateKey(baseKey, dayOffset) : formatLocalDate(targetDate);
+    const alreadyUsed = occupiedDailyMinutes?.get(dkForCap) || 0;
+    const baseCap = config.exactDailyCapMinutes ?? EFFECTIVE_DAILY_CAP_MINUTES;
+    const dayCap = Math.max(0, baseCap - alreadyUsed);
+
     const dayResult = runSingleDaySchedule(candidates, fixedEvents, {
       targetDate,
       timezone: config.timezone,
@@ -1112,8 +1120,8 @@ export function scheduleTaskGroupInHorizon(
       taskRestMinutes: 10,
       maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
-      exactDailyCapMinutes: config.exactDailyCapMinutes ?? EFFECTIVE_DAILY_CAP_MINUTES,
-      autoFilterQ4: true,
+      exactDailyCapMinutes: dayCap,
+      autoFilterQ4: false,
       lunchStartHour: 12.0,
       lunchEndHour: 13.0,
       dinnerStartHour: 18.0,
@@ -1155,6 +1163,303 @@ function intervalsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): b
   return aStart.getTime() < bEnd.getTime() && aEnd.getTime() > bStart.getTime();
 }
 
+function intervalFitsWindows(windows: Window[], startMs: number, endMs: number): boolean {
+  for (const w of windows) {
+    if (startMs >= w.start && endMs <= w.end) return true;
+  }
+  return false;
+}
+
+/**
+ * 为可移动周期任务（每日/每周）在未来规划窗口内挑选“全周期最多天数可用”的同一时刻槽位，
+ * 并将其统一落位在日历的相同位置；个别天若被外部日程占用则自动降级为当天最近可用空闲时段。
+ */
+function scheduleRecurringMovableGroups<
+  TRow extends TaskInstance & Task & { template_scheduled_start?: string | null }
+>(params: {
+  groups: Map<number, TRow[]>;
+  fixedBusy: FixedCalendarBlock[];
+  now: Date;
+  horizonDays: number;
+  todayKey: string;
+  timezone: string;
+  workStartHour: number;
+  workEndHour: number;
+  workWindows: WorkWindow[];
+  bufferMinutes: number;
+  advanceDeadlineDays: number;
+  releaseTimeMsToday: number;
+  usedMovableByDay: Map<string, number>;
+  remainingNeededByInstance: Map<number, number>;
+  preservedByInstance: Map<number, ScheduleBlockRecord[]>;
+  allocatedByInstance: Map<number, ScheduledTaskBlock[]>;
+  rejectReasonByInstance: Map<number, { code: string; text: string }>;
+}): void {
+  const orderedGroups = Array.from(params.groups.entries()).sort((a, b) => {
+    const tA = a[1][0];
+    const tB = b[1][0];
+    return (
+      computeTaskPriorityScore(tB, params.now, params.timezone) -
+      computeTaskPriorityScore(tA, params.now, params.timezone)
+    );
+  });
+
+  const maxContinuous = 90;
+
+  for (const [, rows] of orderedGroups) {
+    const template = rows[0];
+    const sortedRows = [...rows].sort((a, b) => a.business_date.localeCompare(b.business_date));
+
+    const horizonWindows = getHorizonWindows(params.now, params.horizonDays, params.fixedBusy, {
+      timezone: params.timezone,
+      workStartHour: params.workStartHour,
+      workEndHour: params.workEndHour,
+      workWindows: params.workWindows,
+      bufferMinutes: params.bufferMinutes,
+      releaseTimeMs: params.releaseTimeMsToday,
+    });
+
+    const dayKeyToOffset = new Map<string, number>();
+    for (let d = 0; d < params.horizonDays; d++) {
+      const dk = d === 0 ? params.todayKey : addDaysToDateKey(params.todayKey, d);
+      dayKeyToOffset.set(dk, d);
+    }
+
+    // Build candidate wall-clock start anchors (minutes from local midnight)
+    const candidateAnchors: number[] = [];
+    const seenAnchors = new Set<number>();
+    const addCandidate = (minOfDay: number) => {
+      const m = Math.max(0, Math.min(23 * 60 + 45, Math.round(minOfDay)));
+      if (!seenAnchors.has(m)) {
+        seenAnchors.add(m);
+        candidateAnchors.push(m);
+      }
+    };
+
+    // 1. Prefer previously scheduled/preserved start time-of-day for continuity
+    for (const r of sortedRows) {
+      const preserved = params.preservedByInstance.get(r.id) || [];
+      if (preserved.length > 0) {
+        const hm = getHourDecimalInTz(new Date(preserved[0].start_time), params.timezone);
+        addCandidate(Math.round(hm * 60));
+        break;
+      }
+    }
+    if (template.template_scheduled_start) {
+      const hm = getHourDecimalInTz(new Date(template.template_scheduled_start), params.timezone);
+      addCandidate(Math.round(hm * 60));
+    }
+
+    // 2. Gather candidate slots across free windows (prioritizing earliest matching day, plus step 30m)
+    const typicalDuration = Math.min(
+      maxContinuous,
+      Math.max(15, params.remainingNeededByInstance.get(sortedRows[0].id) || template.duration_minutes || 45)
+    );
+    for (const r of sortedRows) {
+      const dOffset = dayKeyToOffset.get(r.business_date);
+      if (dOffset === undefined) continue;
+      const wins = horizonWindows[dOffset] || [];
+      for (const w of wins) {
+        const startHm = getHourDecimalInTz(new Date(w.start), params.timezone);
+        const startMin = Math.round(startHm * 60);
+        const spanMin = Math.floor((w.end - w.start) / 60000);
+        for (let off = 0; off + typicalDuration <= spanMin; off += 30) {
+          addCandidate(startMin + off);
+        }
+      }
+      if (candidateAnchors.length >= 48) break;
+    }
+
+    let bestAnchor: number | null = null;
+    let bestHits = -1;
+    let bestTie = -Infinity;
+
+    for (const anchorMin of candidateAnchors) {
+      const hh = Math.floor(anchorMin / 60);
+      const mm = anchorMin % 60;
+      let hits = 0;
+
+      for (const r of sortedRows) {
+        const needed = params.remainingNeededByInstance.get(r.id) || 0;
+        if (needed <= 0) continue;
+        const dOffset = dayKeyToOffset.get(r.business_date);
+        if (dOffset === undefined) continue;
+        const wins = horizonWindows[dOffset] || [];
+        const usedDay = params.usedMovableByDay.get(r.business_date) || 0;
+        const blockDur = Math.min(maxContinuous, needed);
+        if (usedDay + blockDur > EFFECTIVE_DAILY_CAP_MINUTES) continue;
+
+        const slotStart = zonedWallClockToUtc(r.business_date, hh, mm, 0, 0, params.timezone);
+        const slotEnd = new Date(slotStart.getTime() + blockDur * 60000);
+        if (intervalFitsWindows(wins, slotStart.getTime(), slotEnd.getTime())) {
+          hits++;
+        }
+      }
+
+      const daytimeBonus = anchorMin >= 8 * 60 && anchorMin <= 22 * 60 ? 1000 : 0;
+      const tieScore = daytimeBonus - anchorMin;
+      if (hits > bestHits || (hits === bestHits && tieScore > bestTie)) {
+        bestHits = hits;
+        bestTie = tieScore;
+        bestAnchor = anchorMin;
+      }
+    }
+
+    const quadrant = calculateQuadrant(template.importance, template.urgency, template.score_scale);
+
+    for (const r of sortedRows) {
+      const needed = params.remainingNeededByInstance.get(r.id) || 0;
+      if (needed <= 0) continue;
+      const dOffset = dayKeyToOffset.get(r.business_date);
+      if (dOffset === undefined) continue;
+
+      const usedDay = params.usedMovableByDay.get(r.business_date) || 0;
+      const remainingCap = Math.max(0, EFFECTIVE_DAILY_CAP_MINUTES - usedDay);
+      if (remainingCap <= 0) {
+        params.rejectReasonByInstance.set(r.id, {
+          code: 'insufficient_capacity',
+          text: '当日自动排程容量已满，已延后等待调整',
+        });
+        continue;
+      }
+
+      const wins = horizonWindows[dOffset] || [];
+      let assignedBlocks: ScheduledTaskBlock[] = [];
+
+      // First try placing the first (or full) chunk at bestAnchor so the calendar aligns identically across days
+      if (bestAnchor !== null && bestHits > 0) {
+        const hh = Math.floor(bestAnchor / 60);
+        const mm = bestAnchor % 60;
+        const firstDur = Math.min(maxContinuous, needed, remainingCap);
+        const slotStart = zonedWallClockToUtc(r.business_date, hh, mm, 0, 0, params.timezone);
+        const slotEnd = new Date(slotStart.getTime() + firstDur * 60000);
+
+        if (firstDur > 0 && intervalFitsWindows(wins, slotStart.getTime(), slotEnd.getTime())) {
+          const zone = classifySlotEnergy(slotStart, firstDur, params.timezone);
+          assignedBlocks.push({
+            id: `sched-rec-${r.task_id}-${r.business_date}-p1`,
+            taskId: r.task_id,
+            title: r.title,
+            start: slotStart,
+            end: slotEnd,
+            durationMinutes: firstDur,
+            partIndex: 1,
+            totalParts: needed > firstDur ? 2 : 1,
+            isSplit: needed > firstDur,
+            quadrant,
+            importance: r.importance,
+            urgency: r.urgency,
+            energyZone: zone,
+            strategyLabel: getStrategyLabel(zone, quadrant, needed > firstDur),
+            breakAfterMinutes: params.bufferMinutes > 0 ? params.bufferMinutes : undefined,
+          });
+
+          const leftover = needed - firstDur;
+          if (leftover > 0 && remainingCap - firstDur >= 15) {
+            const tempBusy: FixedCalendarBlock[] = [
+              ...params.fixedBusy,
+              {
+                id: `rec-tmp-${r.id}`,
+                title: r.title,
+                start: slotStart,
+                end: slotEnd,
+                isAllDay: false,
+              },
+            ];
+            const targetDate = zonedWallClockToUtc(r.business_date, 0, 0, 0, 0, params.timezone);
+            const restDay = runSingleDaySchedule(
+              [
+                {
+                  ...template,
+                  id: r.task_id,
+                  duration_minutes: leftover,
+                  session_plan: null,
+                  is_fixed: 0,
+                  completed_dates: '[]',
+                },
+              ],
+              tempBusy,
+              {
+                targetDate,
+                timezone: params.timezone,
+                workStartHour: params.workStartHour,
+                workEndHour: params.workEndHour,
+                workWindows: params.workWindows,
+                bufferMinutes: params.bufferMinutes,
+                taskRestMinutes: 10,
+                maxContinuousMinutes: maxContinuous,
+                maxDailyTaskMinutes: 330,
+                exactDailyCapMinutes: remainingCap - firstDur,
+                autoFilterQ4: false,
+                advanceDeadlineDays: params.advanceDeadlineDays,
+                releaseTimeMs: dOffset === 0 ? params.releaseTimeMsToday : undefined,
+              }
+            );
+            assignedBlocks = [...assignedBlocks, ...restDay.scheduledBlocks];
+          }
+        }
+      }
+
+      // Fallback on this day if bestAnchor was blocked on this specific date
+      if (assignedBlocks.length === 0) {
+        const targetDate = zonedWallClockToUtc(r.business_date, 0, 0, 0, 0, params.timezone);
+        const dayRes = runSingleDaySchedule(
+          [
+            {
+              ...template,
+              id: r.task_id,
+              duration_minutes: needed,
+              is_fixed: 0,
+              completed_dates: '[]',
+            },
+          ],
+          params.fixedBusy,
+          {
+            targetDate,
+            timezone: params.timezone,
+            workStartHour: params.workStartHour,
+            workEndHour: params.workEndHour,
+            workWindows: params.workWindows,
+            bufferMinutes: params.bufferMinutes,
+            taskRestMinutes: 10,
+            maxContinuousMinutes: maxContinuous,
+            maxDailyTaskMinutes: 330,
+            exactDailyCapMinutes: remainingCap,
+            autoFilterQ4: false,
+            advanceDeadlineDays: params.advanceDeadlineDays,
+            releaseTimeMs: dOffset === 0 ? params.releaseTimeMsToday : undefined,
+          }
+        );
+        assignedBlocks = dayRes.scheduledBlocks;
+        const unsched = dayRes.unscheduledTaskIds[0];
+        if (unsched && assignedBlocks.length === 0) {
+          params.rejectReasonByInstance.set(r.id, {
+            code: unsched.reasonCode,
+            text: unsched.reason,
+          });
+        }
+      }
+
+      if (assignedBlocks.length > 0) {
+        assignedBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+        params.allocatedByInstance.set(r.id, assignedBlocks);
+        let addedMins = 0;
+        for (const blk of assignedBlocks) {
+          addedMins += blk.durationMinutes;
+          params.fixedBusy.push({
+            id: `rec-busy-${r.id}-${blk.start.getTime()}`,
+            title: `[周期] ${r.title}`,
+            start: blk.start,
+            end: blk.end,
+            isAllDay: false,
+          });
+        }
+        params.usedMovableByDay.set(r.business_date, usedDay + addedMins);
+      }
+    }
+  }
+}
+
 /**
  * 依据统一约束快照执行全局多日滚动排程，并在单个事务内原子提交新版本计划（T03, T08, T09, T10, T12, C06）。
  */
@@ -1182,8 +1487,8 @@ export function replanUserTasks(
     const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
     const horizonDays = 14;
 
-    // 1. Ensure active daily templates have today's instance & stale past daily instances are cancelled
-    ensureTodayDailyInstancesForUser(userId, now);
+    // 1. Ensure active recurring templates have 14-day horizon instances & stale past daily instances are cancelled
+    ensureHorizonDailyInstancesForUser(userId, now, horizonDays);
     cancelStalePastDailyInstances(userId, todayKey);
     const rawTasks = db.prepare(`
       SELECT * FROM tasks
@@ -1281,12 +1586,12 @@ export function replanUserTasks(
     const instanceByTaskId = new Map<number, typeof activeInstances[number]>();
     const remainingNeededByInstance = new Map<number, number>();
     const activeInstancesForPlan: typeof activeInstances = [];
+    type ActiveInstanceRow = typeof activeInstances[number];
+    const recurringMovableExclusive = new Map<number, ActiveInstanceRow[]>();
+    const recurringMovableConcurrent = new Map<number, ActiveInstanceRow[]>();
 
     for (const row of activeInstances) {
       if (row.time_mode === 'daily_fixed' && !isDateMatchingRecurrence(row.business_date, row.recurrence_rule)) {
-        continue;
-      }
-      if (row.time_mode === 'daily_fixed' && row.is_fixed !== 1 && row.business_date > todayKey) {
         continue;
       }
       activeInstancesForPlan.push(row);
@@ -1403,27 +1708,6 @@ export function replanUserTasks(
         else exclusiveFixedBusy.push(busyEntry);
       }
 
-      // Daily fixed template future projection into busy events across horizon
-      if (row.time_mode === 'daily_fixed' && row.is_fixed === 1 && row.active_template !== 0 && (protectedBlocks.length > 0 || materializedFixedByInstance.has(row.id))) {
-        const mat = materializedFixedByInstance.get(row.id);
-        const baseStartIso = protectedBlocks[0]?.start_time || mat?.[0]?.start.toISOString() || row.template_scheduled_start!;
-        const baseEndIso = protectedBlocks[protectedBlocks.length - 1]?.end_time || mat?.[0]?.end.toISOString() || row.template_scheduled_end!;
-        const baseTaskShape = {
-          id: row.task_id,
-          title: row.title,
-          scheduled_start: baseStartIso,
-          scheduled_end: baseEndIso,
-          schedule_blocks: JSON.stringify([{ start: baseStartIso, end: baseEndIso }]),
-          time_mode: row.time_mode,
-          recurrence_rule: row.recurrence_rule,
-          is_fixed: 1,
-          completed_dates: row.completed_dates,
-        };
-        const projected = taskToBusyEvents(baseTaskShape, 'daily-fixed-proj', now, horizonDays, tz).slice(1);
-        if (row.is_concurrent === 1) concurrentFixedBusy.push(...projected);
-        else exclusiveFixedBusy.push(...projected);
-      }
-
       preservedByInstance.set(row.id, protectedBlocks);
       if (conflictIds.length > 0) {
         conflictedBlockIdsByInstance.set(row.id, conflictIds);
@@ -1438,36 +1722,43 @@ export function replanUserTasks(
 
       // Fixed tasks keep their fixed blocks; only non-fixed instances with unallocated minutes get scheduled
       if (row.is_fixed !== 1 && !isForcePreserved && unallocatedToPlan > 0) {
-        // Use task_id as key in optimizer (one active instance per once task, today's instance for daily_fixed)
-        instanceByTaskId.set(row.task_id, row);
-        movableTasksToSchedule.push({
-          id: row.task_id,
-          user_id: userId,
-          title: row.title,
-          duration_minutes: unallocatedToPlan,
-          original_duration_minutes: row.original_duration_minutes || row.estimated_minutes,
-          session_plan: row.session_plan,
-          urgency: row.urgency,
-          importance: row.importance,
-          importance_tier: row.importance_tier,
-          impact_signals: row.impact_signals,
-          time_mode: row.time_mode,
-          recurrence_rule: row.recurrence_rule,
-          urgency_pace: row.urgency_pace,
-          completed_dates: row.completed_dates,
-          score_scale: 100,
-          deadline_kind: row.deadline_kind,
-          deadline: row.deadline,
-          scheduled_start: null,
-          scheduled_end: null,
-          is_fixed: 0,
-          is_concurrent: row.is_concurrent,
-          status: 'pending_slot',
-          start_reminder_sent: 0,
-          end_reminder_sent: 0,
-          created_at: row.task_created_at,
-          updated_at: row.updated_at,
-        });
+        if (row.time_mode === 'daily_fixed') {
+          const targetMap =
+            row.is_concurrent === 1 ? recurringMovableConcurrent : recurringMovableExclusive;
+          const list = targetMap.get(row.task_id) || [];
+          list.push(row);
+          targetMap.set(row.task_id, list);
+        } else {
+          instanceByTaskId.set(row.task_id, row);
+          movableTasksToSchedule.push({
+            id: row.task_id,
+            user_id: userId,
+            title: row.title,
+            duration_minutes: unallocatedToPlan,
+            original_duration_minutes: row.original_duration_minutes || row.estimated_minutes,
+            session_plan: row.session_plan,
+            urgency: row.urgency,
+            importance: row.importance,
+            importance_tier: row.importance_tier,
+            impact_signals: row.impact_signals,
+            time_mode: row.time_mode,
+            recurrence_rule: row.recurrence_rule,
+            urgency_pace: row.urgency_pace,
+            completed_dates: row.completed_dates,
+            score_scale: 100,
+            deadline_kind: row.deadline_kind,
+            deadline: row.deadline,
+            scheduled_start: null,
+            scheduled_end: null,
+            is_fixed: 0,
+            is_concurrent: row.is_concurrent,
+            status: 'pending_slot',
+            start_reminder_sent: 0,
+            end_reminder_sent: 0,
+            created_at: row.task_created_at,
+            updated_at: row.updated_at,
+          });
+        }
       }
     }
 
@@ -1482,6 +1773,61 @@ export function replanUserTasks(
       releaseTimeMsToday,
       exactDailyCapMinutes: EFFECTIVE_DAILY_CAP_MINUTES,
     };
+
+    const usedMovableExclusiveByDay = new Map<string, number>();
+    const usedMovableConcurrentByDay = new Map<string, number>();
+    for (const row of activeInstancesForPlan) {
+      if (row.is_fixed === 1) continue;
+      const preserved = preservedByInstance.get(row.id) || [];
+      for (const b of preserved) {
+        if (b.status === 'completed') continue;
+        const bk = getAccountLocalDateKey(new Date(b.start_time), tz);
+        const m = row.is_concurrent === 1 ? usedMovableConcurrentByDay : usedMovableExclusiveByDay;
+        m.set(bk, (m.get(bk) || 0) + b.duration_minutes);
+      }
+    }
+
+    const recurringAllocatedByInstance = new Map<number, ScheduledTaskBlock[]>();
+    const recurringRejectByInstance = new Map<number, { code: string; text: string }>();
+
+    scheduleRecurringMovableGroups({
+      groups: recurringMovableExclusive,
+      fixedBusy: exclusiveFixedBusy,
+      now,
+      horizonDays,
+      todayKey,
+      timezone: tz,
+      workStartHour,
+      workEndHour,
+      workWindows,
+      bufferMinutes,
+      advanceDeadlineDays,
+      releaseTimeMsToday,
+      usedMovableByDay: usedMovableExclusiveByDay,
+      remainingNeededByInstance,
+      preservedByInstance,
+      allocatedByInstance: recurringAllocatedByInstance,
+      rejectReasonByInstance: recurringRejectByInstance,
+    });
+    scheduleRecurringMovableGroups({
+      groups: recurringMovableConcurrent,
+      fixedBusy: concurrentFixedBusy,
+      now,
+      horizonDays,
+      todayKey,
+      timezone: tz,
+      workStartHour,
+      workEndHour,
+      workWindows,
+      bufferMinutes: 0,
+      advanceDeadlineDays,
+      releaseTimeMsToday,
+      usedMovableByDay: usedMovableConcurrentByDay,
+      remainingNeededByInstance,
+      preservedByInstance,
+      allocatedByInstance: recurringAllocatedByInstance,
+      rejectReasonByInstance: recurringRejectByInstance,
+    });
 
     const taskAllocations = new Map<number, ScheduledTaskBlock[]>();
     const remainingTaskIds = new Set<number>(movableTasksToSchedule.map(t => t.id));
@@ -1498,7 +1844,8 @@ export function replanUserTasks(
       horizonConfig,
       taskAllocations,
       remainingTaskIds,
-      rejectReasonByTaskId
+      rejectReasonByTaskId,
+      usedMovableExclusiveByDay
     );
     scheduleTaskGroupInHorizon(
       concurrentTasks,
@@ -1508,7 +1855,8 @@ export function replanUserTasks(
       { ...horizonConfig, bufferMinutes: 0 },
       taskAllocations,
       remainingTaskIds,
-      rejectReasonByTaskId
+      rejectReasonByTaskId,
+      usedMovableConcurrentByDay
     );
 
     const instancePlans: ProposedInstancePlan[] = [];
@@ -1527,9 +1875,18 @@ export function replanUserTasks(
         .reduce((sum, b) => sum + b.duration_minutes, 0);
       const materializedMins = materialized.reduce((sum, m) => sum + m.durationMinutes, 0);
 
-      let allocatedMovable = taskAllocations.get(row.task_id) || [];
-      const stillUnallocated = remainingTaskIds.has(row.task_id);
-      const rejectInfo = rejectReasonByTaskId.get(row.task_id);
+      let allocatedMovable =
+        row.time_mode === 'daily_fixed' && row.is_fixed !== 1
+          ? recurringAllocatedByInstance.get(row.id) || []
+          : taskAllocations.get(row.task_id) || [];
+      const stillUnallocated =
+        row.time_mode === 'daily_fixed' && row.is_fixed !== 1
+          ? remainingNeededByInstance.get(row.id)! > 0 && allocatedMovable.length === 0
+          : remainingTaskIds.has(row.task_id);
+      const rejectInfo =
+        row.time_mode === 'daily_fixed' && row.is_fixed !== 1
+          ? recurringRejectByInstance.get(row.id)
+          : rejectReasonByTaskId.get(row.task_id);
 
       // Hard deadline check: must fit 100% before deadline, otherwise drop movable blocks and keep pending
       if (row.deadline_kind === 'hard' && row.is_fixed !== 1) {
@@ -1775,7 +2132,7 @@ function simulateTaskInHorizon(
       maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
       exactDailyCapMinutes: remainingCapMinutes,
-      autoFilterQ4: true,
+      autoFilterQ4: false,
       advanceDeadlineDays,
       releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
       futureWindows: horizonWindows.slice(dayOffset + 1).flat(),

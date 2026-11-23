@@ -281,12 +281,12 @@ describe('Batch 2: Planner Commits, Preserved Blocks, Extend Safety, Proposals &
     const dayAfterTomorrow = addDaysToDateKey(tomorrowKey, 1);
 
     // Block all daytime slots on tomorrowKey and dayAfterTomorrow up to 360m via a large soft-deadline task
-    // First test: hard deadline task whose duration (500m) exceeds what fits before hard deadline (tomorrowKey 17:00)
+    // First test: hard deadline task whose duration (900m) exceeds max 2-day capacity (360+360=720m) before tomorrowKey 17:00
     const hardRes = await createTaskCommand({
       userId,
       rawInput: {
         title: '无法塞入的硬截止任务',
-        duration_minutes: 500,
+        duration_minutes: 900,
         deadline: wallClockIso(tomorrowKey, 17, 0),
         deadline_kind: 'hard',
         importance_tier: 'vital',
@@ -305,7 +305,7 @@ describe('Batch 2: Planner Commits, Preserved Blocks, Extend Safety, Proposals &
       .prepare('SELECT * FROM task_instances WHERE task_id = ?')
       .get(hardRes.task!.id) as any;
     assert.equal(hardInst.allocated_minutes, 0);
-    assert.equal(hardInst.unallocated_minutes, 500);
+    assert.equal(hardInst.unallocated_minutes, 900);
 
     // Next test: soft deadline task that partially fits before horizon cap -> allocated + unallocated = duration
     const softRes = await createTaskCommand({

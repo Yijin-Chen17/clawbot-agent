@@ -221,12 +221,16 @@ describe('Batch 1: Unified Task Write, Validation, Disambiguation, Daily Isolati
     assert.ok(nextInst);
     assert.equal(nextInst.status, 'pending');
 
-    // Stop daily template -> future non-materialized dates return null
+    // Stop daily template -> cancels future materialized instances & prevents generating further ones
     const stopRes = executeQuickActionCommand({ userId, taskId, action: 'stop_daily' });
     assert.equal(stopRes.success, true);
 
     const thirdDayKey = addDaysToDateKey(tomorrowKey, 2);
-    assert.equal(ensureTaskInstance(userId, taskId, thirdDayKey), null);
+    const thirdInst = ensureTaskInstance(userId, taskId, thirdDayKey);
+    assert.ok(!thirdInst || thirdInst.status === 'cancelled');
+
+    const farFutureKey = addDaysToDateKey(tomorrowKey, 20);
+    assert.equal(ensureTaskInstance(userId, taskId, farFutureKey), null);
   });
 
   it('applies partial settings patch preserving outbound fields & validates session_version revocation (A02, A04)', () => {

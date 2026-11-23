@@ -18,6 +18,7 @@ import { exportDedicatedIcal, getCalendarEvents, replanAll } from '../controller
 import { banUser } from '../controllers/adminController.js';
 import { replanUserTasks } from './scheduler.js';
 import { setLlmExecutorForTest } from './llm.js';
+import { getAccountLocalTimeHm } from '../utils/timezone.js';
 
 describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocation & Backup', () => {
   let cleanup: () => void;
@@ -241,5 +242,70 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
     const icsBlockedMock = createMockResponse();
     exportDedicatedIcal({ params: { token: 'secret-token.ics' } } as any, icsBlockedMock.res);
     assert.equal(icsBlockedMock.getStatus(), 403);
+  });
+
+  it('schedules all 14-day recurring movable occurrences at the same wall-clock slot with exception fallback, and schedules Q4 flexible tasks when slots are free', async () => {
+    // 1. Add movable weekly recurring task (Mon/Wed/Fri) + external blocker ONLY on Wednesday 09:00-10:00
+    const resWeekly = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes,
+        urgency, importance, importance_tier, time_mode, recurrence_rule,
+        is_fixed, is_concurrent, status, score_scale, active_template
+      ) VALUES (?, '每周一三五背单词', 45, 45, 55, 60, 'support', 'daily_fixed', '{"type":"weekly","daysOfWeek":[1,3,5]}', 0, 0, 'pending_slot', 100, 1)
+    `).run(userId);
+    const weeklyTaskId = Number(resWeekly.lastInsertRowid);
+
+    // Block Wednesday 2026-12-09 09:00-10:00
+    db.prepare(`
+      INSERT INTO external_events (user_id, title, start_time, end_time, status, transparency)
+      VALUES (?, '周三例会', ?, ?, 'CONFIRMED', 'OPAQUE')
+    `).run(userId, wallClockIso('2026-12-09', 9, 0), wallClockIso('2026-12-09', 10, 0));
+
+    // 2. Also add a low-importance Q4 flexible task (previously dropped as q4_filtered or rejected by positive switching penalty)
+    const resQ4 = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes,
+        urgency, importance, importance_tier, time_mode, urgency_pace,
+        is_fixed, is_concurrent, status, score_scale
+      ) VALUES (?, '整理收藏夹(Q4)', 30, 30, 15, 18, 'minor', 'flexible', 'later', 0, 0, 'pending_slot', 100)
+    `).run(userId);
+    const q4TaskId = Number(resQ4.lastInsertRowid);
+
+    const mondayMorning = new Date('2026-12-07T08:00:00+08:00');
+    const replan = replanUserTasks(userId, { triggerSource: 'test_14d_align', now: mondayMorning });
+    assert.equal(replan.success, true);
+
+    // 2026-12-07..2026-12-20 has 6 Mon/Wed/Fri occurrences: 12-07, 12-09, 12-11, 12-14, 12-16, 12-18
+    const weeklyBlocks = db
+      .prepare(`
+        SELECT sb.start_time, sb.end_time, ti.business_date
+        FROM schedule_blocks sb
+        JOIN task_instances ti ON ti.id = sb.instance_id
+        WHERE sb.task_id = ? AND sb.status = 'planned'
+        ORDER BY ti.business_date ASC
+      `)
+      .all(weeklyTaskId) as Array<{ start_time: string; end_time: string; business_date: string }>;
+
+    assert.equal(weeklyBlocks.length, 6);
+    assert.deepEqual(
+      weeklyBlocks.map(b => b.business_date),
+      ['2026-12-07', '2026-12-09', '2026-12-11', '2026-12-14', '2026-12-16', '2026-12-18']
+    );
+
+    // Non-conflicting days must share identical wall-clock position!
+    const normalDaysHm = weeklyBlocks
+      .filter(b => b.business_date !== '2026-12-09')
+      .map(b => getAccountLocalTimeHm(new Date(b.start_time), 'Asia/Shanghai'));
+    assert.ok(new Set(normalDaysHm).size === 1, `Expected uniform slot across normal days, got ${normalDaysHm.join(', ')}`);
+
+    // Conflict day (12-09) automatically falls back to a valid non-overlapping time
+    const wedBlock = weeklyBlocks.find(b => b.business_date === '2026-12-09')!;
+    assert.ok(new Date(wedBlock.start_time).getTime() >= new Date(wallClockIso('2026-12-09', 10, 0)).getTime());
+
+    // Q4 low-importance flexible task must NOT be left empty when calendar has free slots
+    const q4Blocks = db
+      .prepare("SELECT * FROM schedule_blocks WHERE task_id = ? AND status = 'planned'")
+      .all(q4TaskId) as any[];
+    assert.equal(q4Blocks.length, 1);
   });
 });
