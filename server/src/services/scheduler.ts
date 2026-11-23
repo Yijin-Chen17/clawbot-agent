@@ -27,6 +27,7 @@ import {
   zonedWallClockToUtc,
 } from '../utils/timezone.js';
 import { getUserTimezone } from './accountService.js';
+import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   ensureTaskInstance,
   ensureTodayDailyInstancesForUser,
@@ -456,7 +457,7 @@ export function taskToBusyEvents(
         dayKey = formatLocalDate(targetDay);
       }
       if (existingDayKeys.has(dayKey) || completedDates.includes(dayKey)) continue;
-      if (!isDateMatchingRecurrence(targetDay, task.recurrence_rule)) continue;
+      if (!isDateMatchingRecurrence(timezone ? dayKey : targetDay, task.recurrence_rule)) continue;
 
       baseIntervals.forEach((iv, idx) => {
         const durationMs = iv.end.getTime() - iv.start.getTime();

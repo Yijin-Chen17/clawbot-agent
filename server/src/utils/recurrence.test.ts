@@ -4,7 +4,6 @@ import {
   parseRecurrenceRule,
   stringifyRecurrenceRule,
   isDateMatchingRecurrence,
-  formatRecurrenceSummary,
 } from './recurrence.js';
 
 test('parseRecurrenceRule defaults to daily', () => {
