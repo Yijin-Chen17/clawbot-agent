@@ -359,7 +359,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       estimatedMinutes: task.duration_minutes, isFixed: Boolean(task.is_fixed), isConcurrent: Boolean(task.is_concurrent),
       scheduledStart: task.scheduled_start, scheduledEnd: task.scheduled_end,
       isImportant: importance >= 50, isUrgent: urgency >= 50, quadrant,
-      isCompleted: task.status === 'completed', tags: [], createdAt: task.created_at || new Date().toISOString(),
+      isCompleted: task.status === 'completed' || (task.time_mode === 'daily_fixed' && (() => { try { return JSON.parse(task.completed_dates || '[]').includes(localDateKey(new Date())); } catch { return false; } })()), tags: [], createdAt: task.created_at || new Date().toISOString(),
     };
   };
 
@@ -834,9 +834,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
-  const handleCompleteTask = async (taskId: number) => {
+  const handleCompleteTask = async (taskId: number, reopen = false) => {
     try {
-      await api.post(`/tasks/${taskId}/action`, { action: 'complete' });
+      await api.post(`/tasks/${taskId}/action`, { action: reopen ? 'reopen' : 'complete' });
       setSelectedItem(null);
       setSelectedDueTask(null);
       fetchData();
@@ -1631,7 +1631,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           initialTask={editInitialTask(editingTask)}
           onClose={() => { setEditingTask(null); setEditError(''); }}
           onSave={(data) => { void saveCalendarTask(editingTask.id, data); }}
-          onToggleComplete={() => { void handleCompleteTask(editingTask.id); }}
+          onToggleComplete={() => { void handleCompleteTask(editingTask.id, editInitialTask(editingTask).isCompleted); }}
           onDelete={() => { void handleDeleteCalendarTask(editingTask.id); }}
         />
       )}
@@ -1731,19 +1731,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   >
                     重新排程
                   </button>
-                  <button
+                  {selectedItem.qName !== '已完成' && <button
                     type="button"
                     onClick={() => handleCompletePart(selectedItem.task.id)}
                     className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
                     完成本节
-                  </button>
+                  </button>}
                   <button
                     type="button"
-                    onClick={() => handleCompleteTask(selectedItem.task.id)}
+                    onClick={() => handleCompleteTask(selectedItem.task.id, selectedItem.qName === '已完成')}
                     className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
                   >
-                    全部完成
+                    {selectedItem.qName === '已完成' ? '标记为未完成' : '全部完成'}
                   </button>
                 </div>
               </div>

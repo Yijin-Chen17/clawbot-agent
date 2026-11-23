@@ -607,16 +607,32 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
         SET completed_dates = ?, urgency = ?, status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(JSON.stringify(completedDates), nextUrgency, task.scheduled_start ? 'scheduled' : 'pending_slot', id);
+      if (!task.is_fixed) replanUserTasks(userId);
       res.json({ message: `任务「${task.title}」已恢复今日待办！` });
       return;
     }
 
-    db.prepare(`
-      UPDATE tasks
-      SET status = 'scheduled', completed_dates = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(completedDates), id);
-    res.json({ message: `任务「${task.title}」已重新标为进行中！` });
+    let blocks: { duration?: number; start?: string; end?: string; completed?: boolean }[] = [];
+    try {
+      const parsed = JSON.parse(task.schedule_blocks || '[]');
+      if (Array.isArray(parsed)) blocks = parsed.map(block => ({ ...block, completed: false }));
+    } catch {}
+    const blockMinutes = blocks.reduce((sum, block) => {
+      const duration = Number(block.duration) || (new Date(block.end || '').getTime() - new Date(block.start || '').getTime()) / 60000;
+      return sum + (Number.isFinite(duration) && duration > 0 ? duration : 0);
+    }, 0);
+    const restoredDuration = task.duration_minutes > 0 ? task.duration_minutes : (task.original_duration_minutes || Math.round(blockMinutes) || 30);
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE tasks
+        SET status = ?, completed_dates = ?, duration_minutes = ?, schedule_blocks = ?,
+            start_reminder_sent = 0, end_reminder_sent = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).run(task.is_fixed && task.scheduled_start ? 'scheduled' : 'pending_slot',
+        JSON.stringify(completedDates), restoredDuration, JSON.stringify(blocks), id, userId);
+      if (!task.is_fixed) replanUserTasks(userId);
+    })();
+    res.json({ message: `任务「${task.title}」已恢复待办并更新日历。` });
     return;
   }
 
