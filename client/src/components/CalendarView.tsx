@@ -867,17 +867,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     : ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#131314] text-gray-900 dark:text-gray-100 select-none">
       {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
       {/* 1. Google Calendar 经典顶部工具栏 */}
-      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#131314] transition-colors">
         {/* 左侧：菜单切换 + 今天按钮 + 翻周箭头 + 月份年份 */}
         <div className="flex items-center gap-2 sm:gap-3">
           {onOpenMobileMenu && (
             <button
               type="button"
               onClick={onOpenMobileMenu}
-              className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              className="md:hidden p-2 rounded-full text-gray-600 dark:text-[#c4c7c5] hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer"
               title="打开侧边菜单"
             >
               <Menu className="w-5 h-5" />
@@ -888,7 +888,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <button
             type="button"
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="hidden md:flex p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+            className="hidden md:flex p-2 rounded-full text-gray-600 dark:text-[#c4c7c5] hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer"
             title={sidebarOpen ? '收起左侧面板' : '展开左侧面板'}
           >
             {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
@@ -898,7 +898,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <button
             type="button"
             onClick={() => setWeekStart(startOfWeek(new Date()))}
-            className="px-4 py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-xs font-medium text-gray-700 dark:text-neutral-200 transition cursor-pointer"
+            className="px-4 py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-xs font-medium text-gray-700 dark:text-[#e3e3e3] transition cursor-pointer"
           >
             {t('common.today', '今天')}
           </button>
@@ -909,7 +909,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               type="button"
               onClick={() => setWeekStart((prev) => addDays(prev, -7))}
               aria-label="Previous week"
-              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -917,7 +917,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               type="button"
               onClick={() => setWeekStart((prev) => addDays(prev, 7))}
               aria-label="Next week"
-              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition cursor-pointer"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
@@ -935,7 +935,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
             title={t('calendar.replan')}
-            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-[#a8c7fa] border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span>{replanLoading ? '正在重排' : '重排全部'}</span>
@@ -944,21 +944,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <button
             onClick={() => setShowExportModal(true)}
             title={t('calendar.export_btn')}
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
           >
-            <Share2 className="w-4 h-4 text-gray-600 dark:text-neutral-300" />
+            <Share2 className="w-4 h-4 text-gray-600 dark:text-[#c4c7c5]" />
             <span className="hidden sm:inline">{t('calendar.export_btn')}</span>
           </button>
 
           <button
             onClick={() => setShowCalendarsModal(true)}
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
             title={t('calendar.manage_btn')}
           >
-            <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-[#a8c7fa]" />
             <span className="hidden sm:inline">{t('calendar.manage_btn')}</span>
             {subscriptions.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-[#a8c7fa] font-mono">
                 {subscriptions.length}
               </span>
             )}
@@ -966,7 +966,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
           <button
             onClick={() => fetchData()}
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition-colors cursor-pointer"
             title={t('calendar.refresh_btn')}
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -976,7 +976,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <button
             type="button"
             onClick={cycleTheme}
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition-colors cursor-pointer"
             title={
               themeMode === 'light'
                 ? '当前：亮色模式 (点击切换为暗色)'
@@ -1006,7 +1006,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           inert={!sidebarOpen}
         >
           <aside
-            className={`w-64 xl:w-72 h-full overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin flex flex-col bg-white dark:bg-[#1e1f20] border-r border-gray-200/80 dark:border-neutral-800 transition-transform duration-300 ease-in-out ${
+            className={`w-64 xl:w-72 h-full overflow-y-auto overflow-x-hidden p-4 space-y-5 scrollbar-thin flex flex-col bg-white dark:bg-[#131314] border-r border-gray-200/80 dark:border-[#444746] transition-transform duration-300 ease-in-out ${
               sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
             style={{
@@ -1039,7 +1039,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <button
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() - 1, 1))}
-                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-500 cursor-pointer"
                     title="上个月"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -1047,7 +1047,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <button
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() + 1, 1))}
-                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 cursor-pointer"
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-500 cursor-pointer"
                     title="下个月"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -1066,7 +1066,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               >
                 <div className="overflow-hidden">
                   {/* 星期缩写行 (周一至周日) */}
-                  <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-neutral-500 mb-1">
+                  <div className="grid grid-cols-7 text-center text-[10px] font-medium text-gray-400 dark:text-[#8e918f] mb-1">
                     <span>一</span>
                     <span>二</span>
                     <span>三</span>
@@ -1094,9 +1094,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                             isToday
                               ? 'bg-blue-600 text-white font-bold'
                               : isCurrentWeek
-                              ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-semibold'
+                              ? 'bg-blue-100 dark:bg-[#304468] text-blue-700 dark:text-[#a8c7fa] font-semibold'
                               : item.isCurrentMonth
-                              ? 'text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                              ? 'text-gray-700 dark:text-[#e3e3e3] hover:bg-gray-100 dark:hover:bg-[#282a2c]'
                               : 'text-gray-300 dark:text-neutral-600'
                           }`}
                         >
@@ -1110,7 +1110,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </div>
 
             {/* 我的日历列表 (Google Calendar 经典抽屉列表，支持多色调色盘选择修改) */}
-            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800">
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
                 <span>我的日历</span>
                 <span className="text-[10px] text-gray-400 font-normal">
@@ -1119,7 +1119,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
               <div className="space-y-1 text-xs">
                 {/* Clawbot 主待办 */}
-                <div className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 transition-colors">
+                <div className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-[#282a2c] transition-colors">
                   <div className="flex items-center gap-2.5 truncate min-w-0">
                     <CalendarColorPicker
                       color={taskCalendarColor || '#3b82f6'}
@@ -1127,7 +1127,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       onChange={(c) => void updateColor('tasks', c)}
                       onReset={() => void updateColor('tasks', null)}
                     />
-                    <span className="text-gray-700 dark:text-neutral-300 truncate font-medium select-none">
+                    <span className="text-gray-700 dark:text-[#c4c7c5] truncate font-medium select-none">
                       Clawbot 待办日程
                     </span>
                   </div>
@@ -1138,7 +1138,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   return (
                     <div
                       key={sub.id}
-                      className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-neutral-800/60 transition-colors"
+                      className="flex items-center justify-between h-8 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-[#282a2c] transition-colors"
                     >
                       <div className="flex items-center gap-2.5 truncate min-w-0">
                         <CalendarColorPicker
@@ -1147,7 +1147,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           onChange={(c) => void updateColor(sub.id, c)}
                           onReset={() => void updateColor(sub.id, null)}
                         />
-                        <span className="text-gray-700 dark:text-neutral-300 truncate select-none">{sub.name}</span>
+                        <span className="text-gray-700 dark:text-[#c4c7c5] truncate select-none">{sub.name}</span>
                       </div>
                       <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
                         {sub.event_count}
@@ -1159,7 +1159,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </div>
 
             {/* 截止待办提醒 (Due Tasks) */}
-            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800 flex-1">
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
                 <span>{t('calendar.due_title', '截止待办')}</span>
                 {overdueTasks.length > 0 && (
@@ -1196,9 +1196,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                         key={`due-${t.id}`}
                         type="button"
                         onClick={() => setSelectedDueTask(t)}
-                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer flex items-center justify-between text-xs"
+                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
                       >
-                        <span className="truncate text-gray-700 dark:text-neutral-300">{t.title}</span>
+                        <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{t.title}</span>
                         <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
                           {t.duration_minutes}m
                         </span>
@@ -1214,17 +1214,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         {/* 右侧核心：Google Calendar 经典 Week 视图网格 */}
         <div
           ref={scrollRef}
-          className="flex-1 bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
+          className="flex-1 bg-white dark:bg-[#131314] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
         >
           <div
-            className="grid min-w-[780px] bg-white dark:bg-[#1e1f20]"
+            className="grid min-w-[780px] bg-white dark:bg-[#131314]"
             style={{
               gridTemplateColumns: '56px repeat(7, minmax(0, 1fr))',
             }}
           >
             {/* ================= Row 1: Sticky Day Headers ================= */}
             {/* 时区单元格 (左上角) */}
-            <div className="sticky top-0 z-30 h-18 bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-neutral-800 flex items-end justify-end pr-2 pb-1 text-[11px] font-mono text-gray-400 dark:text-neutral-500 select-none">
+            <div className="sticky top-0 z-30 h-18 bg-white dark:bg-[#131314] border-b border-gray-200/80 dark:border-[#444746] flex items-end justify-end pr-2 pb-1 text-[11px] font-mono text-gray-400 dark:text-[#8e918f] select-none">
               GMT+8
             </div>
 
@@ -1235,14 +1235,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               return (
                 <div
                   key={`head-${d.key}`}
-                  className="sticky top-0 z-30 h-18 flex flex-col items-center justify-center border-l border-b border-gray-200/80 dark:border-neutral-800 bg-white dark:bg-[#1e1f20] select-none py-1"
+                  className="sticky top-0 z-30 h-18 flex flex-col items-center justify-center border-l border-b border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#131314] select-none py-1"
                 >
                   {/* 星期简写 (SUN / 周日) */}
                   <span
                     className={`text-[11px] uppercase tracking-wider font-medium leading-none ${
                       isToday
-                        ? 'text-blue-600 dark:text-blue-400 font-bold'
-                        : 'text-gray-500 dark:text-neutral-400'
+                        ? 'text-blue-600 dark:text-[#a8c7fa] font-bold'
+                        : 'text-gray-500 dark:text-[#c4c7c5]'
                     }`}
                   >
                     {weekDayLabels[dayOfWeek]}
@@ -1255,7 +1255,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     className={`w-10 h-10 mt-1 rounded-full flex items-center justify-center text-xl transition cursor-pointer ${
                       isToday
                         ? 'bg-blue-600 text-white font-medium shadow-xs'
-                        : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-neutral-800 font-normal'
+                        : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#282a2c] font-normal'
                     }`}
                   >
                     {d.date.getDate()}
@@ -1265,14 +1265,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             })}
 
             {/* ================= Row 2: Sticky All-Day Row ================= */}
-            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-neutral-500 font-medium">
+            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#131314] border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-[#8e918f] font-medium">
               {t('calendar.all_day', '全天')}
             </div>
 
             {dayData.map((d) => (
               <div
                 key={`allday-${d.key}`}
-                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-l border-b border-gray-200/80 dark:border-neutral-800 p-1 flex flex-col gap-1"
+                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#131314] border-l border-b border-gray-200/80 dark:border-[#444746] p-1 flex flex-col gap-1"
               >
                 {d.allDay.map((item) => (
                   <button
@@ -1291,13 +1291,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {/* 时间轴刻度栏 */}
             <div
               data-calendar-timeline
-              className="relative select-none bg-white dark:bg-[#1e1f20]"
+              className="relative select-none bg-white dark:bg-[#131314]"
               style={{ height: GRID_HEIGHT }}
             >
               {Array.from({ length: CALENDAR_HOURS }, (_, hour) => (
                 <span
                   key={`hour-label-${hour}`}
-                  className="absolute right-2 text-[10px] sm:text-[11px] text-gray-400 dark:text-neutral-500 font-normal -translate-y-1/2 pr-1"
+                  className="absolute right-2 text-[10px] sm:text-[11px] text-gray-400 dark:text-[#8e918f] font-normal -translate-y-1/2 pr-1"
                   style={{ top: hour * HOUR_HEIGHT }}
                 >
                   {formatHourLabel(hour, language)}
@@ -1313,14 +1313,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 <div
                   key={`col-${d.key}`}
                   data-calendar-timeline
-                  className="relative border-l border-gray-200/80 dark:border-neutral-800 bg-white dark:bg-[#1e1f20]"
+                  className="relative border-l border-gray-200/80 dark:border-[#444746] bg-white dark:bg-[#131314]"
                   style={{ height: GRID_HEIGHT }}
                 >
                   {/* 水平整点网格细线 */}
                   {Array.from({ length: CALENDAR_HOURS }, (_, i) => (
                     <div
                       key={`line-${i}`}
-                      className="absolute left-0 right-0 border-b border-gray-100 dark:border-neutral-800/70 pointer-events-none"
+                      className="absolute left-0 right-0 border-b border-gray-100 dark:border-[#444746] pointer-events-none"
                       style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
                     />
                   ))}
@@ -1370,7 +1370,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           width: `calc(${widthPct}% - 2px)`,
                           borderLeftColor: seg.color,
                           backgroundColor: isDark
-                            ? `color-mix(in srgb, ${seg.color} 35%, #202124)`
+                            ? `color-mix(in srgb, ${seg.color} 35%, #131314)`
                             : `color-mix(in srgb, ${seg.color} 18%, #ffffff)`,
                         }}
                       >
@@ -1432,23 +1432,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 1. 日历订阅与同步管理模态框 */}
       {showCalendarsModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
+          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <CalendarIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <CalendarIcon className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
                 <span>日历订阅与同步源</span>
               </h3>
               <button
                 onClick={() => setShowCalendarsModal(false)}
-                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {/* Clawbot 导出地址 */}
-            <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200/80 dark:border-neutral-700/80 space-y-1.5 text-xs">
-              <label className="block font-semibold text-gray-700 dark:text-neutral-300 text-[11px]">
+            <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200/80 dark:border-[#444746]/80 space-y-1.5 text-xs">
+              <label className="block font-semibold text-gray-700 dark:text-[#c4c7c5] text-[11px]">
                 Clawbot 专属待办日历 (导出到 Apple / Google / Outlook)
               </label>
               <div className="flex items-center gap-2">
@@ -1456,7 +1456,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   type="text"
                   readOnly
                   value={icalExportUrl}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-[#232425] border border-gray-200 dark:border-neutral-700 rounded-lg font-mono text-[11px] text-gray-700 dark:text-neutral-300 select-all"
+                  className="w-full px-3 py-1.5 bg-white dark:bg-[#282a2c] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] text-gray-700 dark:text-[#c4c7c5] select-all"
                 />
                 <button
                   type="button"
@@ -1480,7 +1480,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   value={newSubName}
                   onChange={(e) => setNewSubName(e.target.value)}
                   placeholder="日历名称 (例如: 公司会议)"
-                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl outline-none"
+                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none"
                   required
                 />
                 <input
@@ -1488,7 +1488,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   value={newSubUrl}
                   onChange={(e) => setNewSubUrl(e.target.value)}
                   placeholder="https://... 订阅 URL"
-                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 rounded-xl outline-none"
+                  className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none"
                   required
                 />
               </div>
@@ -1504,7 +1504,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </form>
 
             {/* 已订阅日历列表 */}
-            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-neutral-800">
+            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
               <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">已订阅日历</span>
               {subscriptions.length === 0 ? (
                 <div className="text-gray-400 text-xs py-3 text-center">暂无外部订阅源</div>
@@ -1515,7 +1515,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     return (
                       <div
                         key={s.id}
-                        className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 text-xs"
+                        className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] text-xs"
                       >
                         <div className="flex items-center gap-2.5 truncate flex-1 min-w-0">
                           <CalendarColorPicker
@@ -1564,15 +1564,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 2. 导出订阅链接模态框 */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
+          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <Share2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <Share2 className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
                 <span>导出 Clawbot 待办日历</span>
               </h3>
               <button
                 onClick={() => setShowExportModal(false)}
-                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
@@ -1580,8 +1580,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
 
             {/* HTTPS 日历订阅链接 */}
-            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 space-y-1.5 text-xs">
-              <div className="font-semibold text-gray-800 dark:text-neutral-200">
+            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
+              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
                 日历订阅链接
               </div>
               <div className="flex items-center gap-2">
@@ -1589,7 +1589,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   type="text"
                   readOnly
                   value={icalExportUrl}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 rounded-lg font-mono text-[11px] select-all"
+                  className="w-full px-3 py-1.5 bg-white dark:bg-[#131314] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all"
                 />
                 <button
                   type="button"
@@ -1603,9 +1603,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </div>
 
             {/* 静态 .ics 文件下载 */}
-            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl border border-gray-200/80 dark:border-neutral-800 flex items-center justify-between text-xs">
+            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] flex items-center justify-between text-xs">
               <div>
-                <div className="font-semibold text-gray-800 dark:text-neutral-200">
+                <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
                   下载静态 .ics 文件
                 </div>
                 <div className="text-[11px] text-gray-400">单次导入快照，不自动跟随后续更新</div>
@@ -1613,7 +1613,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               <a
                 href={downloadUrl}
                 download="clawbot-tasks.ics"
-                className="px-3 py-1.5 border border-gray-300 dark:border-neutral-700 hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-700 dark:text-neutral-200 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
+                className="px-3 py-1.5 border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>下载文件</span>
@@ -1640,7 +1640,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 3. 日程或待办详情模态框 */}
       {selectedItem && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
               <div className="space-y-1">
                 <span
@@ -1655,14 +1655,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
               <button
                 onClick={() => setSelectedItem(null)}
-                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl space-y-2 text-xs">
-              <div className="flex items-center gap-2 text-gray-600 dark:text-neutral-300">
+            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-gray-600 dark:text-[#c4c7c5]">
                 <Clock className="w-4 h-4 text-gray-400" />
                 <span>
                   {formatTime(selectedItem.start)} – {formatTime(selectedItem.end)} ({selectedItem.allDay ? '全天' : '定时'})
@@ -1670,8 +1670,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
               {selectedItem.kind === 'task' && (
                 <>
-                  <div className="text-[11px] text-gray-500 dark:text-neutral-400">
-                    四象限分类: <span className="font-semibold text-gray-700 dark:text-neutral-200">{selectedItem.qName}</span>
+                  <div className="text-[11px] text-gray-500 dark:text-[#c4c7c5]">
+                    四象限分类: <span className="font-semibold text-gray-700 dark:text-[#e3e3e3]">{selectedItem.qName}</span>
                   </div>
                   {(Boolean(selectedItem.task.is_fixed) || Boolean(selectedItem.task.is_concurrent)) && (
                     <div className="flex gap-1.5 mt-1">
@@ -1688,7 +1688,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     </div>
                   )}
                   {selectedItem.task.notes && (
-                    <div className="mt-1 pt-1 border-t border-gray-200/80 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 text-[11px] whitespace-pre-wrap">
+                    <div className="mt-1 pt-1 border-t border-gray-200/80 dark:border-[#444746] text-gray-600 dark:text-[#c4c7c5] text-[11px] whitespace-pre-wrap">
                       {selectedItem.task.notes}
                     </div>
                   )}
@@ -1709,7 +1709,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <button
                     type="button"
                     onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
-                    className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                    className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
                     编辑任务
                   </button>
@@ -1727,7 +1727,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                         setPlanning({ title: '重新排程失败', status: 'error', detail: err.response?.data?.error || '请重试' });
                       }
                     }}
-                    className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                    className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
                     重新排程
                   </button>
@@ -1755,10 +1755,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {/* 4. 截止待办详情模态框 */}
       {selectedDueTask && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-neutral-800 animate-fadeIn transition-colors">
+          <div className="bg-white dark:bg-[#131314] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
                   截止待办
                 </span>
                 <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
@@ -1767,25 +1767,25 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
               <button
                 onClick={() => setSelectedDueTask(null)}
-                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-3 bg-gray-50 dark:bg-[#252627] rounded-xl space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-gray-600 dark:text-neutral-300">
+            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl space-y-1.5 text-xs">
+              <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
                 <span>截止时间:</span>
                 <span className="font-mono font-semibold">
                   {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString() : '未设置'}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-gray-600 dark:text-neutral-300">
+              <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
                 <span>预估耗时:</span>
                 <span className="font-mono">{selectedDueTask.duration_minutes} 分钟</span>
               </div>
               {selectedDueTask.notes && (
-                <div className="pt-2 border-t border-gray-200/80 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 whitespace-pre-wrap">
+                <div className="pt-2 border-t border-gray-200/80 dark:border-[#444746] text-gray-600 dark:text-[#c4c7c5] whitespace-pre-wrap">
                   {selectedDueTask.notes}
                 </div>
               )}
@@ -1802,7 +1802,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               <button
                 type="button"
                 onClick={() => { setEditingTask(selectedDueTask); setSelectedDueTask(null); }}
-                className="px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
               >
                 编辑任务
               </button>
