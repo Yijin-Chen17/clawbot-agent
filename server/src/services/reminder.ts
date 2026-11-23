@@ -3,6 +3,7 @@ import { db } from '../config/database.js';
 import { Task, UserSettings, CalendarSubscription } from '../models/types.js';
 import { templates, sendClawbotMessage } from './clawbot.js';
 import { syncSubscription } from './calendarSync.js';
+import { replanUserTasks } from './scheduler.js';
 
 export function startReminderScheduler() {
   console.log('⏰ [Scheduler] Reminder & Calendar Sync Worker started (Every 30s)');
@@ -104,6 +105,7 @@ async function checkCalendarSync() {
   `).all() as (CalendarSubscription & { calendar_sync_interval_minutes: number })[];
 
   const now = new Date();
+  const usersToReplan = new Set<number>();
 
   for (const sub of subs) {
     const intervalMin = sub.calendar_sync_interval_minutes || 60;
@@ -113,9 +115,18 @@ async function checkCalendarSync() {
       try {
         console.log(`[CalendarSync] Auto-syncing calendar subscription #${sub.id} (${sub.name})...`);
         await syncSubscription(sub);
+        usersToReplan.add(sub.user_id);
       } catch (err: any) {
         console.error(`[CalendarSync] Auto-sync failed for #${sub.id}:`, err.message);
       }
+    }
+  }
+
+  for (const uid of usersToReplan) {
+    try {
+      replanUserTasks(uid);
+    } catch (err: any) {
+      console.error(`[CalendarSync] Replan after auto-sync failed for user #${uid}:`, err.message);
     }
   }
 }

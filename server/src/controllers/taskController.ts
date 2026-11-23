@@ -6,8 +6,10 @@ import {
   scheduleTask,
   replanUserTasks,
   completeTaskPart,
+  extendTaskDuration,
   computeTodayBusyMinutes,
   formatLocalDate,
+  normalizeDeadlineIso,
 } from '../services/scheduler.js';
 import {
   calculateDynamicImportance,
@@ -126,10 +128,12 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       ? normalizeScoreTo100(Number(urgency), score_scale)
       : 50;
 
+  const normalizedDeadline = normalizeDeadlineIso(deadline);
+
   const todayBusyMinutes = computeTodayBusyMinutes(userId);
   const resolvedUrgency = calculateDynamicUrgency({
     timeMode: resolvedTimeMode,
-    dueDate: deadline || null,
+    dueDate: normalizedDeadline,
     estimatedMinutes: Number(duration_minutes),
     importance: resolvedImportance,
     urgencyPace: resolvedPace,
@@ -156,7 +160,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       duration_minutes: Number(duration_minutes),
       urgency: resolvedUrgency,
       importance: resolvedImportance,
-      deadline: deadline || null,
+      deadline: normalizedDeadline,
     });
 
     if (plan.proposal) {
@@ -194,7 +198,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     resolvedTimeMode,
     resolvedPace,
     manualOverrideNum,
-    deadline || null,
+    normalizedDeadline,
     finalStart,
     finalEnd,
     is_fixed ? 1 : 0,
@@ -291,7 +295,10 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     resolvedTier = inferTierFromScore(nextImportance);
   }
 
-  const nextDeadline = deadline !== undefined ? deadline : existing.deadline;
+  const nextDeadline =
+    deadline !== undefined
+      ? normalizeDeadlineIso(deadline)
+      : normalizeDeadlineIso(existing.deadline);
   const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
   const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
 
@@ -566,7 +573,8 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
   }
 
   if (action === 'reopen') {
-    const todayStr = formatLocalDate(new Date());
+    const now = new Date();
+    const todayStr = formatLocalDate(now);
     const completedDates = parseJsonArray<string>(task.completed_dates).filter((d) => d !== todayStr);
 
     if (task.time_mode === 'daily_fixed') {
@@ -579,46 +587,58 @@ export function quickActionTask(req: AuthenticatedRequest, res: Response): void 
         scheduledStart: task.scheduled_start,
         scheduledEnd: task.scheduled_end,
         isCompletedToday: false,
-        dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, new Date(), task.id),
+        dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, now, task.id),
       }).urgency;
       db.prepare(`
         UPDATE tasks
         SET completed_dates = ?, urgency = ?, status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(JSON.stringify(completedDates), nextUrgency, task.scheduled_start ? 'scheduled' : 'pending_slot', id);
+      replanUserTasks(userId);
       res.json({ message: `任务「${task.title}」已恢复今日待办！` });
       return;
     }
 
-    db.prepare(`
-      UPDATE tasks
-      SET status = 'scheduled', completed_dates = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(completedDates), id);
-    res.json({ message: `任务「${task.title}」已重新标为进行中！` });
+    const restoredDuration = task.duration_minutes > 0 ? task.duration_minutes : (task.original_duration_minutes || 60);
+    const hasValidFuturePinnedSlot =
+      task.is_fixed === 1 &&
+      Boolean(task.scheduled_start && task.scheduled_end) &&
+      new Date(task.scheduled_end!).getTime() > now.getTime();
+
+    if (hasValidFuturePinnedSlot) {
+      db.prepare(`
+        UPDATE tasks
+        SET status = 'scheduled', duration_minutes = ?, completed_dates = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(restoredDuration, JSON.stringify(completedDates), id);
+    } else {
+      db.prepare(`
+        UPDATE tasks
+        SET status = 'pending_slot',
+            duration_minutes = ?,
+            completed_dates = ?,
+            scheduled_start = NULL,
+            scheduled_end = NULL,
+            schedule_blocks = NULL,
+            is_fixed = 0,
+            start_reminder_sent = 0,
+            end_reminder_sent = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(restoredDuration, JSON.stringify(completedDates), id);
+    }
+    replanUserTasks(userId);
+    res.json({ message: `任务「${task.title}」已重新打开并重排日程！` });
     return;
   }
 
   if (action === 'extend') {
-    if (!task.scheduled_end) {
-      res.status(400).json({ error: '该任务未安排时间，无法延长' });
+    const extResult = extendTaskDuration(userId, Number(id), Number(extend_minutes));
+    if (!extResult.success) {
+      res.status(400).json({ error: extResult.message });
       return;
     }
-    const currentEnd = new Date(task.scheduled_end);
-    const newEnd = new Date(currentEnd.getTime() + Number(extend_minutes) * 60 * 1000);
-    const newDuration = task.duration_minutes + Number(extend_minutes);
-
-    db.prepare(`
-      UPDATE tasks
-      SET
-        scheduled_end = ?,
-        duration_minutes = ?,
-        end_reminder_sent = 0,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(newEnd.toISOString(), newDuration, id);
-
-    res.json({ message: `任务「${task.title}」已延长 ${extend_minutes} 分钟` });
+    res.json({ message: extResult.message, task: extResult.task });
     return;
   }
 

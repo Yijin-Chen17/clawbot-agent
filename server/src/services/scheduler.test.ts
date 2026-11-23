@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Task, UserSettings } from '../models/types.js';
 import {
+  buildExtendedScheduleBlocks,
   formatLocalDate,
+  parseDeadlineDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
   taskToBusyEvents,
@@ -244,4 +246,88 @@ test('runSingleDaySchedule strictly clamps blocks within workWindows without fra
     assert.ok(b.end.getTime() <= windowEnd.getTime(), `Block ${b.end.toISOString()} exceeded work window end ${windowEnd.toISOString()}`);
   }
 });
+
+test('parseDeadlineDate treats date-only strings as local 23:59:59 instead of UTC 00:00Z', () => {
+  const parsed = parseDeadlineDate('2026-11-23');
+  assert.ok(parsed !== null);
+  assert.equal(parsed.getFullYear(), 2026);
+  assert.equal(parsed.getMonth(), 10);
+  assert.equal(parsed.getDate(), 23);
+  assert.equal(parsed.getHours(), 23);
+  assert.equal(parsed.getMinutes(), 59);
+  assert.equal(parsed.getSeconds(), 59);
+});
+
+test('runSingleDaySchedule caps lunch push at 13:30 and dinner push at 19:30', () => {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+
+  // Busy blocks covering 10:00-12:30 (pushes lunch to 12:30-13:30) and 17:00-19:45 (exceeds 19:30 dinner cap)
+  // Expect 13:30-17:00 and 19:45-22:00 to remain schedulable without pushed dinner eating 19:45-20:45!
+  const b1Start = new Date(tomorrow);
+  b1Start.setHours(9, 0, 0, 0);
+  const b1End = new Date(tomorrow);
+  b1End.setHours(12, 30, 0, 0);
+
+  const b2Start = new Date(tomorrow);
+  b2Start.setHours(13, 30, 0, 0);
+  const b2End = new Date(tomorrow);
+  b2End.setHours(19, 45, 0, 0);
+
+  const task = makeTask({ id: 32, duration_minutes: 60, importance: 90, urgency: 90 });
+  const res = runSingleDaySchedule([task], [
+    { id: 'm1', title: '上午会', start: b1Start, end: b1End, isAllDay: false },
+    { id: 'm2', title: '下午连续会', start: b2Start, end: b2End, isAllDay: false },
+  ], {
+    targetDate: tomorrow,
+    workStartHour: 9,
+    workEndHour: 22,
+    bufferMinutes: 0,
+  });
+
+  // Because dinner is capped at 19:30 and m2 already ends at 19:45, 19:45-20:45 must NOT be blocked by a pushed dinner rest!
+  assert.equal(res.scheduledBlocks.length, 1);
+  assert.equal(res.scheduledBlocks[0].start.getHours(), 19);
+  assert.equal(res.scheduledBlocks[0].start.getMinutes(), 45);
+});
+
+test('buildExtendedScheduleBlocks updates trailing block end & duration or creates fallback block', () => {
+  const newEnd = new Date('2026-11-23T11:30:00.000Z');
+  const existing = JSON.stringify([
+    { start: '2026-11-23T09:00:00.000Z', end: '2026-11-23T10:00:00.000Z', duration: 60 },
+    { start: '2026-11-23T10:10:00.000Z', end: '2026-11-23T11:00:00.000Z', duration: 50 },
+  ]);
+
+  const updatedJson = buildExtendedScheduleBlocks(
+    existing,
+    '2026-11-23T09:00:00.000Z',
+    '2026-11-23T11:00:00.000Z',
+    110,
+    newEnd,
+    30
+  );
+  assert.ok(updatedJson !== null);
+  const updated = JSON.parse(updatedJson);
+  assert.equal(updated.length, 2);
+  assert.equal(updated[0].end, '2026-11-23T10:00:00.000Z');
+  assert.equal(updated[1].end, '2026-11-23T11:30:00.000Z');
+  assert.equal(updated[1].duration, 80);
+
+  const fallbackJson = buildExtendedScheduleBlocks(
+    null,
+    '2026-11-23T10:00:00.000Z',
+    '2026-11-23T11:00:00.000Z',
+    60,
+    newEnd,
+    30
+  );
+  assert.ok(fallbackJson !== null);
+  const fallback = JSON.parse(fallbackJson);
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].end, '2026-11-23T11:30:00.000Z');
+  assert.equal(fallback[0].duration, 90);
+});
+
+
 

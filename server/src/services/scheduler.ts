@@ -112,6 +112,26 @@ export function formatLocalDate(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * 解析截止日期（纯日期 YYYY-MM-DD 按本地当天 23:59:59 语义解析，避免被 UTC 零点转成次晨 08:00）
+ */
+export function parseDeadlineDate(rawDeadline?: string | null): Date | null {
+  if (!rawDeadline) return null;
+  const trimmed = String(rawDeadline).trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-').map(Number);
+    return new Date(y, m - 1, d, 23, 59, 59);
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function normalizeDeadlineIso(rawDeadline?: string | null): string | null {
+  const parsed = parseDeadlineDate(rawDeadline);
+  return parsed ? parsed.toISOString() : null;
+}
+
 function parseClockToHour(clock: string, isEndBoundary: boolean): number | null {
   const match = String(clock || '').trim().match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
@@ -503,17 +523,15 @@ export function computeTaskPriorityScore(task: {
     baseScore += 60;
   }
 
-  if (task.deadline) {
-    const due = new Date(task.deadline);
-    if (!isNaN(due.getTime())) {
-      const diffDays = (due.getTime() - targetDate.getTime()) / (1000 * 3600 * 24);
-      if (diffDays <= 1) {
-        baseScore += 120;
-      } else if (diffDays <= 3) {
-        baseScore += 60;
-      } else if (diffDays <= 7) {
-        baseScore += 20;
-      }
+  const due = parseDeadlineDate(task.deadline);
+  if (due) {
+    const diffDays = (due.getTime() - targetDate.getTime()) / (1000 * 3600 * 24);
+    if (diffDays <= 1) {
+      baseScore += 120;
+    } else if (diffDays <= 3) {
+      baseScore += 60;
+    } else if (diffDays <= 7) {
+      baseScore += 20;
     }
   }
 
@@ -590,11 +608,13 @@ export function runSingleDaySchedule(
     }
   }
 
-  // 自适应午餐 (12:00 ~ 13:00) 与晚餐 (18:00 ~ 19:00) 保护区
+  // 自适应午餐 (12:00 ~ 13:00，最晚推迟结束至 13:30) 与晚餐 (18:00 ~ 19:00，最晚推迟结束至 19:30) 保护区
   const baseLunchStart = new Date(targetDate);
   baseLunchStart.setHours(Math.floor(lunchStartHour), Math.round((lunchStartHour % 1) * 60), 0, 0);
   const baseLunchEnd = new Date(targetDate);
   baseLunchEnd.setHours(Math.floor(lunchEndHour), Math.round((lunchEndHour % 1) * 60), 0, 0);
+  const maxLunchEnd = new Date(targetDate);
+  maxLunchEnd.setHours(13, 30, 0, 0);
 
   let actualLunchStart = new Date(baseLunchStart);
   for (const ev of dayFixedEvents) {
@@ -605,13 +625,15 @@ export function runSingleDaySchedule(
     }
   }
   const actualLunchEnd = new Date(
-    Math.min(dayEnd.getTime(), actualLunchStart.getTime() + (lunchEndHour - lunchStartHour) * 3600 * 1000)
+    Math.min(dayEnd.getTime(), maxLunchEnd.getTime(), actualLunchStart.getTime() + (lunchEndHour - lunchStartHour) * 3600 * 1000)
   );
 
   const baseDinnerStart = new Date(targetDate);
   baseDinnerStart.setHours(Math.floor(dinnerStartHour), Math.round((dinnerStartHour % 1) * 60), 0, 0);
   const baseDinnerEnd = new Date(targetDate);
   baseDinnerEnd.setHours(Math.floor(dinnerEndHour), Math.round((dinnerEndHour % 1) * 60), 0, 0);
+  const maxDinnerEnd = new Date(targetDate);
+  maxDinnerEnd.setHours(19, 30, 0, 0);
 
   let actualDinnerStart = new Date(baseDinnerStart);
   for (const ev of dayFixedEvents) {
@@ -622,7 +644,7 @@ export function runSingleDaySchedule(
     }
   }
   const actualDinnerEnd = new Date(
-    Math.min(dayEnd.getTime(), actualDinnerStart.getTime() + (dinnerEndHour - dinnerStartHour) * 3600 * 1000)
+    Math.min(dayEnd.getTime(), maxDinnerEnd.getTime(), actualDinnerStart.getTime() + (dinnerEndHour - dinnerStartHour) * 3600 * 1000)
   );
 
   const visualRestBlocks: RestBlock[] = [];
@@ -799,13 +821,11 @@ export function runSingleDaySchedule(
       }
       return targetDateStr === todayStr;
     }
-    if (t.deadline) {
-      const ddlDate = new Date(t.deadline);
-      if (!Number.isNaN(ddlDate.getTime())) {
-        const actualDdlStr = formatLocalDate(ddlDate);
-        if (targetDateStr > actualDdlStr && targetDateStr > todayStr && !rolloverTaskIds?.has(t.id)) {
-          return false;
-        }
+    const ddlDate = parseDeadlineDate(t.deadline);
+    if (ddlDate) {
+      const actualDdlStr = formatLocalDate(ddlDate);
+      if (targetDateStr > actualDdlStr && targetDateStr > todayStr && !rolloverTaskIds?.has(t.id)) {
+        return false;
       }
     }
     return true;
@@ -896,9 +916,10 @@ export function runSingleDaySchedule(
     }
 
     // 同一天内若有明确截止时间且尚未过期，强烈优先选择能在 deadline 之前结束的槽位
-    if (task.deadline) {
-      const ddlMs = new Date(task.deadline).getTime();
-      if (!Number.isNaN(ddlMs) && ddlMs >= dayStart.getTime()) {
+    const parsedDeadline = parseDeadlineDate(task.deadline);
+    if (parsedDeadline) {
+      const ddlMs = parsedDeadline.getTime();
+      if (ddlMs >= dayStart.getTime()) {
         const projectedEndMs = slot.start.getTime() + requiredSpanMinutes * 60000;
         if (projectedEndMs > ddlMs) {
           score -= 10000;
@@ -952,8 +973,9 @@ export function runSingleDaySchedule(
     // 只有总时长达到 6 小时 (360分钟) 以上且截止日还差 2 天以上的超大任务才跨天分摊；
     // 3小时 (180分钟) 这类常规任务应在当天完整规划排程！
     let taskMinutesForToday = totalTaskMinutes;
-    if (totalTaskMinutes >= 360 && task.deadline) {
-      const ddlMs = new Date(task.deadline).getTime();
+    const parsedDdlForSplit = parseDeadlineDate(task.deadline);
+    if (totalTaskMinutes >= 360 && parsedDdlForSplit) {
+      const ddlMs = parsedDdlForSplit.getTime();
       const targetMs = targetDate.getTime();
       const daysDiff = Math.max(1, Math.ceil((ddlMs - targetMs) / 86400000));
       if (daysDiff >= 2) {
@@ -1112,7 +1134,10 @@ export function runSingleDaySchedule(
 /**
  * 依据用户配置与 oxoxox 算法执行全局多日滚动智能排程
  */
-export function replanUserTasks(userId: number): {
+export function replanUserTasks(
+  userId: number,
+  options?: { preserveTaskIds?: Set<number> }
+): {
   success: boolean;
   totalTasks: number;
   scheduledCount: number;
@@ -1219,11 +1244,14 @@ export function replanUserTasks(userId: number): {
     isAllDay: Boolean(e.is_all_day),
   }));
 
-  // 1. 仅将用户显式锁定（is_fixed === 1 且具备有效时间窗）的任务视作不可移动日程；
+  // 1. 仅将用户显式锁定（is_fixed === 1 且具备有效时间窗）或本次操作显式保留的任务视作不可移动日程；
   //    其余自动排程任务均参与动态重排，以随外部日程/新增急事/时长变更自适应调整
-  const fixedTasks = activeTasks.filter(t => t.is_fixed === 1 && Boolean(t.scheduled_start && t.scheduled_end));
+  const preserveIds = options?.preserveTaskIds;
+  const isPreservedFixed = (t: Task) =>
+    (t.is_fixed === 1 || Boolean(preserveIds?.has(t.id))) && Boolean(t.scheduled_start && t.scheduled_end);
+  const fixedTasks = activeTasks.filter(isPreservedFixed);
   const nonFixedTasks = activeTasks.filter(
-    t => !(t.is_fixed === 1 && Boolean(t.scheduled_start && t.scheduled_end)) && !preservedCompletedDailyIds.has(t.id)
+    t => !isPreservedFixed(t) && !preservedCompletedDailyIds.has(t.id)
   );
 
   const taskAllocations = new Map<number, ScheduledTaskBlock[]>();
@@ -1602,10 +1630,11 @@ export function scheduleTask(
   // 条件一：新日历无法在有效时间内完成（排程失败，或安排的结束时间晚于截止时间 deadline）
   // 条件二：新日历把这个时间顶替会有较大收益（新待办紧迫/重要度显著高于某个既有任务，且顶替能大幅提前）
   let cannotFinishInTime = false;
+  const newTaskDeadline = parseDeadlineDate(task.deadline);
   if (!directPlan.success) {
     cannotFinishInTime = true;
-  } else if (task.deadline) {
-    const deadlineTime = new Date(task.deadline).getTime();
+  } else if (newTaskDeadline) {
+    const deadlineTime = newTaskDeadline.getTime();
     const directEndTime = new Date(directPlan.scheduled_end!).getTime();
     if (directEndTime > deadlineTime) {
       cannotFinishInTime = true;
@@ -1638,7 +1667,7 @@ export function scheduleTask(
 
     if (cannotFinishInTime) {
       // 无法在截止期前完成：只要该任务在截止期之前开始，就作为救急顶替候选
-      if (!task.deadline || candidateStartTime < new Date(task.deadline).getTime()) {
+      if (!newTaskDeadline || candidateStartTime < newTaskDeadline.getTime()) {
         isCandidateEligible = true;
       }
     } else if (directPlan.scheduled_start) {
@@ -1674,7 +1703,7 @@ export function scheduleTask(
     if (!simNew.success || !simNew.scheduled_start || !simNew.scheduled_end) continue;
 
     // 若新任务有截止期，新计划必须能在截止期前完成
-    if (task.deadline && new Date(simNew.scheduled_end).getTime() > new Date(task.deadline).getTime()) {
+    if (newTaskDeadline && new Date(simNew.scheduled_end).getTime() > newTaskDeadline.getTime()) {
       continue;
     }
 
@@ -1714,7 +1743,8 @@ export function scheduleTask(
     }
 
     // 检查 candidate 自身是否有截止期，若有，调整后的时间不能超过其自身截止期
-    if (candidate.deadline && new Date(simCandidate.scheduled_end).getTime() > new Date(candidate.deadline).getTime()) {
+    const candidateDeadline = parseDeadlineDate(candidate.deadline);
+    if (candidateDeadline && new Date(simCandidate.scheduled_end).getTime() > candidateDeadline.getTime()) {
       continue;
     }
 
@@ -1871,6 +1901,118 @@ export function completeTaskPart(
       : `✅ 已完成「${task.title}」（${minutesDeducted}分钟），剩余 ${remaining}分钟。`,
     remainingMinutes: remaining,
     isAllCompleted,
+    task: updated,
+  };
+}
+
+/**
+ * 同步更新 schedule_blocks 中最后一个未完成块的结束时间与时长
+ */
+export function buildExtendedScheduleBlocks(
+  rawScheduleBlocks: string | null | undefined,
+  scheduledStart: string | null | undefined,
+  scheduledEnd: string | null | undefined,
+  currentDurationMinutes: number,
+  newEnd: Date,
+  extendMinutes: number
+): string | null {
+  let blocks: any[] = [];
+  if (rawScheduleBlocks) {
+    try {
+      const parsed = typeof rawScheduleBlocks === 'string'
+        ? JSON.parse(rawScheduleBlocks)
+        : rawScheduleBlocks;
+      if (Array.isArray(parsed)) {
+        blocks = parsed.map(b => ({ ...b }));
+      }
+    } catch {}
+  }
+
+  const newEndIso = newEnd.toISOString();
+
+  if (blocks.length > 0) {
+    const lastIdx = blocks.length - 1;
+    const last = blocks[lastIdx];
+    const lastStartMs = new Date(last.start).getTime();
+    const fallbackOldDur = !Number.isNaN(lastStartMs) && scheduledEnd
+      ? Math.max(0, Math.round((new Date(scheduledEnd).getTime() - lastStartMs) / 60000))
+      : 0;
+    const prevBlockDur = typeof last.duration === 'number' && last.duration > 0
+      ? last.duration
+      : fallbackOldDur;
+    last.end = newEndIso;
+    last.duration = Math.max(1, prevBlockDur + extendMinutes);
+    return JSON.stringify(blocks);
+  }
+
+  if (scheduledStart) {
+    return JSON.stringify([
+      {
+        start: scheduledStart,
+        end: newEndIso,
+        duration: Math.max(1, currentDurationMinutes + extendMinutes),
+      },
+    ]);
+  }
+
+  return null;
+}
+
+/**
+ * 延长任务当前排程结束时间，同步更新 schedule_blocks 并重排其余非固定任务以防重叠撞车
+ */
+export function extendTaskDuration(
+  userId: number,
+  taskId: number,
+  extendMinutes: number = 30
+): {
+  success: boolean;
+  message: string;
+  newEnd?: Date;
+  newEndStr?: string;
+  task?: Task;
+} {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) as Task | undefined;
+  if (!task) {
+    return { success: false, message: '未找到指定任务' };
+  }
+  if (!task.scheduled_end) {
+    return { success: false, message: '该任务未安排时间，无法延长' };
+  }
+
+  const extMin = Number(extendMinutes) > 0 ? Number(extendMinutes) : 30;
+  const currentEnd = new Date(task.scheduled_end);
+  const newEnd = new Date(currentEnd.getTime() + extMin * 60 * 1000);
+  const newDuration = Math.max(1, (task.duration_minutes || 0) + extMin);
+  const updatedBlocks = buildExtendedScheduleBlocks(
+    task.schedule_blocks,
+    task.scheduled_start,
+    task.scheduled_end,
+    task.duration_minutes || 0,
+    newEnd,
+    extMin
+  );
+
+  db.prepare(`
+    UPDATE tasks
+    SET scheduled_end = ?,
+        duration_minutes = ?,
+        schedule_blocks = ?,
+        end_reminder_sent = 0,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).run(newEnd.toISOString(), newDuration, updatedBlocks, taskId, userId);
+
+  replanUserTasks(userId, { preserveTaskIds: new Set([taskId]) });
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Task | undefined;
+  const newEndStr = newEnd.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  return {
+    success: true,
+    message: `任务「${task.title}」已延长 ${extMin} 分钟`,
+    newEnd,
+    newEndStr,
     task: updated,
   };
 }
