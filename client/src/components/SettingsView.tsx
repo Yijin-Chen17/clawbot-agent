@@ -74,13 +74,13 @@ function parseWorkSlotsString(input: string): {
 } {
   const trimmed = input.trim();
   if (!trimmed) {
-    return { slots: [], visualSlots: [], totalMinutes: 0, error: '请输入工作时间段' };
+    return { slots: [], visualSlots: [], totalMinutes: 0, error: 'settings.enter_work_slots' };
   }
 
   // Support English comma, Chinese comma, semicolons, and newlines
   const parts = trimmed.split(/[,，;\n\r]+/).map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) {
-    return { slots: [], visualSlots: [], totalMinutes: 0, error: '请输入工作时间段' };
+    return { slots: [], visualSlots: [], totalMinutes: 0, error: 'settings.enter_work_slots' };
   }
 
   const slots: WorkSlot[] = [];
@@ -93,7 +93,7 @@ function parseWorkSlotsString(input: string): {
         slots: [],
         visualSlots: [],
         totalMinutes: 0,
-        error: `时段 "${part}" 格式不正确，请使用形如 00:00-02:00, 13:00-18:00 的格式`,
+        error: `settings.slot_format_error|${part}`,
       };
     }
 
@@ -103,10 +103,10 @@ function parseWorkSlotsString(input: string): {
     const em = parseInt(match[4], 10);
 
     if (sh < 0 || sh > 24 || sm < 0 || sm > 59) {
-      return { slots: [], visualSlots: [], totalMinutes: 0, error: `时段 "${part}" 开始时间无效` };
+      return { slots: [], visualSlots: [], totalMinutes: 0, error: `settings.slot_start_invalid|${part}` };
     }
     if (eh < 0 || eh > 24 || em < 0 || em > 59) {
-      return { slots: [], visualSlots: [], totalMinutes: 0, error: `时段 "${part}" 结束时间无效` };
+      return { slots: [], visualSlots: [], totalMinutes: 0, error: `settings.slot_end_invalid|${part}` };
     }
 
     const startFormatted = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
@@ -302,7 +302,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
   const handleTestLlmKey = async () => {
     if (!llmApiKey.trim()) {
-      alert('请先输入 DeepSeek API Key');
+      alert(t('settings.deepseek_key_prompt', '请先输入 DeepSeek API Key'));
       return;
     }
     setLlmTesting(true);
@@ -313,13 +313,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         llm_api_key: llmApiKey,
         llm_model: llmModel,
       });
-      setLlmTestResult({ success: true, msg: res.data.message || 'API Key 验证有效！' });
+      setLlmTestResult({ success: true, msg: res.data.message || t('settings.deepseek_key_valid', 'API Key 验证有效！') });
       setLlmApiKeyValid(true);
       localStorage.setItem(`clawbot_llm_valid_${userId}`, 'true');
       fetchLlmUsage();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      const msg = error.response?.data?.error || error.message || '验证失败，请检查 API Key';
+      const msg = error.response?.data?.error || error.message || t('settings.deepseek_key_invalid', '验证失败，请检查 API Key');
       setLlmTestResult({ success: false, msg });
       setLlmApiKeyValid(false);
       localStorage.removeItem(`clawbot_llm_valid_${userId}`);
@@ -330,21 +330,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
   const handleRedeemCode = async () => {
     if (!redeemCodeInput.trim()) {
-      alert('请输入有效的兑换码');
+      alert(t('settings.redeem_code_prompt', '请输入有效的兑换码'));
       return;
     }
     setRedeeming(true);
     setRedeemResult(null);
     try {
       const res = await api.post('/settings/redeem-code', { code: redeemCodeInput.trim() });
-      setRedeemResult({ success: true, msg: res.data.message || '兑换充值成功！' });
+      setRedeemResult({ success: true, msg: res.data.message || t('settings.redeem_success', '兑换充值成功！') });
       if (res.data.newBalance !== undefined) {
         setUserBalance(res.data.newBalance);
       }
       setRedeemCodeInput('');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      const msg = error.response?.data?.error || error.message || '兑换失败，请核对兑换码';
+      const msg = error.response?.data?.error || error.message || t('settings.redeem_failed', '兑换失败，请核对兑换码');
       setRedeemResult({ success: false, msg });
     } finally {
       setRedeeming(false);
@@ -403,7 +403,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       await api.delete('/settings/llm-usage');
       fetchLlmUsage();
     } catch (err: any) {
-      alert(err.response?.data?.error || '清空失败');
+      alert(err.response?.data?.error || t('settings.clear_failed', '清空失败'));
     }
   };
 
@@ -420,12 +420,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     const MAX_SIZE = 2 * 1024 * 1024; // 2MB
     if (file.size > MAX_SIZE) {
-      setAvatarError('头像图片文件不能超过 2MB，请选择更小的图片');
+      setAvatarError(t('settings.avatar_size_err', '头像图片文件不能超过 2MB，请选择更小的图片'));
       return;
     }
 
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-      setAvatarError('仅支持 JPG, PNG, WEBP, GIF 格式图片');
+      setAvatarError(t('settings.avatar_type_err', '仅支持 JPG, PNG, WEBP, GIF 格式图片'));
       return;
     }
 
@@ -439,16 +439,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         const res = await api.post('/auth/avatar', { avatarData: base64Data });
         const newUrl = res.data.avatar_url;
         updateUser({ avatar_url: newUrl });
-        setProfileSuccess('头像上传更新成功！');
+        setProfileSuccess(t('settings.avatar_updated', '头像上传更新成功！'));
         setTimeout(() => setProfileSuccess(null), 3000);
       } catch (err: any) {
-        setAvatarError(err.response?.data?.error || '头像上传失败');
+        setAvatarError(err.response?.data?.error || t('settings.avatar_upload_failed', '头像上传失败'));
       } finally {
         setAvatarUploading(false);
       }
     };
     reader.onerror = () => {
-      setAvatarError('读取文件失败');
+      setAvatarError(t('settings.read_file_failed', '读取文件失败'));
       setAvatarUploading(false);
     };
     reader.readAsDataURL(file);
@@ -461,10 +461,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     try {
       const res = await api.put('/auth/profile', { nickname });
       updateUser({ nickname: res.data.user.nickname });
-      setProfileSuccess('昵称保存修改成功！');
+      setProfileSuccess(t('settings.nickname_saved', '昵称保存修改成功！'));
       setTimeout(() => setProfileSuccess(null), 3000);
     } catch (err: any) {
-      alert(err.response?.data?.error || '修改昵称失败');
+      alert(err.response?.data?.error || t('settings.nickname_failed', '修改昵称失败'));
     } finally {
       setSavingProfile(false);
     }
@@ -474,15 +474,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!oldPassword || !newPassword) {
-      setPasswordError('请输入原密码与新密码');
+      setPasswordError(t('settings.pwd_empty', '请输入原密码与新密码'));
       return;
     }
     if (newPassword.length < 6) {
-      setPasswordError('新密码长度不能少于 6 位');
+      setPasswordError(t('settings.pwd_too_short', '新密码长度不能少于 6 位'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError('两次输入的新密码不一致');
+      setPasswordError(t('settings.pwd_not_match', '两次输入的新密码不一致'));
       return;
     }
 
@@ -492,13 +492,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     try {
       const res = await api.put('/auth/password', { oldPassword, newPassword });
-      setPasswordSuccess(res.data.message || '密码修改成功！新密码哈希已安全更新。');
+      setPasswordSuccess(res.data.message || t('settings.pwd_success', '密码修改成功！新密码哈希已安全更新。'));
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
       setTimeout(() => setPasswordSuccess(null), 4000);
     } catch (err: any) {
-      setPasswordError(err.response?.data?.error || '修改密码失败，请核验原密码');
+      setPasswordError(err.response?.data?.error || t('settings.pwd_failed', '修改密码失败，请核验原密码'));
     } finally {
       setChangingPassword(false);
     }
@@ -507,17 +507,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   // 用户自主注销账号
   const handleDeleteAccount = async () => {
     if (!deletePassword) {
-      setDeleteError('请输入当前登录密码以确认注销');
+      setDeleteError(t('settings.delete_pwd_required', '请输入当前登录密码以确认注销'));
       return;
     }
     setDeleteError(null);
     setDeletingAccount(true);
     try {
       const res = await api.delete('/auth/me', { data: { password: deletePassword } });
-      alert(res.data.message || '您的账号已注销成功');
+      alert(res.data.message || t('settings.delete_success', '您的账号已注销成功'));
       logout();
     } catch (err: any) {
-      setDeleteError(err.response?.data?.error || '注销失败，请核验密码');
+      setDeleteError(err.response?.data?.error || t('settings.delete_failed', '注销失败，请核验密码'));
     } finally {
       setDeletingAccount(false);
     }
@@ -618,13 +618,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     try {
       setQrStatus('loading');
-      setQrStatusMsg('正在向微信服务器申请登录二维码...');
+      setQrStatusMsg(t('settings.qr_requesting', '正在向微信服务器申请登录二维码...'));
       const res = await api.get('/weixin/qrcode');
       const { qrcode, qrcodeUrl, qrcode_img_content } = res.data;
       setQrCode(qrcode);
       setQrCodeImgContent(qrcodeUrl || qrcode_img_content);
       setQrStatus('wait');
-      setQrStatusMsg('请打开手机微信【扫一扫】屏幕二维码');
+      setQrStatusMsg(t('settings.qr_scan_prompt', '请打开手机微信【扫一扫】屏幕二维码'));
 
       pollTimerRef.current = setInterval(() => {
         checkQrStatus(qrcode);
@@ -632,7 +632,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
       setQrStatus('idle');
-      setQrStatusMsg('获取二维码失败: ' + (error.response?.data?.error || error.message || '网络错误'));
+      setQrStatusMsg(t('settings.qr_fetch_failed', '获取二维码失败: ') + (error.response?.data?.error || error.message || t('common.error', '网络错误')));
     }
   };
 
@@ -643,10 +643,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
       if (data.status === 'scaned') {
         setQrStatus('scaned');
-        setQrStatusMsg('已扫码！请在手机微信上点击【允许】以完成配对...');
+        setQrStatusMsg(t('settings.qr_scanned', '已扫码！请在手机微信上点击【允许】以完成配对...'));
       } else if (data.status === 'confirmed') {
         setQrStatus('confirmed');
-        setQrStatusMsg('配对成功！已连接微信助手');
+        setQrStatusMsg(t('settings.qr_paired', '配对成功！已连接微信助手'));
         setWxConnected(true);
         setWxUserId(data.weixinUserId || data.user_id || '');
         setWxNickname(data.nickname || '');
@@ -657,7 +657,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         }
       } else if (data.status === 'expired') {
         setQrStatus('expired');
-        setQrStatusMsg('二维码已过期，请点击重新获取');
+        setQrStatusMsg(t('settings.qr_expired', '二维码已过期，请点击重新获取'));
         if (pollTimerRef.current) {
           clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
@@ -669,7 +669,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   };
 
   const handleUnbindWeixin = async () => {
-    if (!confirm('确定要解除当前微信配对吗？解除后机器人将停止微信通知。')) return;
+    if (!confirm(t('settings.unbind_confirm', '确定要解除当前微信配对吗？解除后机器人将停止微信通知。'))) return;
     try {
       await api.post('/weixin/unbind');
       setWxConnected(false);
@@ -678,7 +678,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       fetchQrCode();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      alert('解绑失败: ' + (error.response?.data?.error || error.message));
+      alert(t('settings.unbind_failed', '解绑失败: ') + (error.response?.data?.error || error.message));
     }
   };
 
@@ -687,10 +687,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       setTestSending(true);
       setTestResult(null);
       const res = await api.post('/weixin/test-message');
-      setTestResult(res.data.message || '测试消息已成功推送！');
+      setTestResult(res.data.message || t('settings.test_msg_sent', '测试消息已成功推送！'));
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      setTestResult('发送失败: ' + (error.response?.data?.error || error.message));
+      setTestResult(t('settings.test_msg_failed', '发送失败: ') + (error.response?.data?.error || error.message));
     } finally {
       setTestSending(false);
     }
@@ -757,20 +757,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       if (response.data.message?.includes('初次同步失败')) alert(response.data.message);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      alert('添加失败：' + (error.response?.data?.error || error.message));
+      alert(t('calendar.add_sub_failed', '添加失败：') + (error.response?.data?.error || error.message));
     } finally {
       setAddingSub(false);
     }
   };
 
   const handleDeleteSubscription = async (id: number) => {
-    if (!confirm('确定要删除此外部日历吗？相关的事件缓存也将被移除。')) return;
+    if (!confirm(t('settings.delete_sub_confirm', '确定要删除此外部日历吗？相关的事件缓存也将被移除。'))) return;
     try {
       await api.delete(`/calendar/subscriptions/${id}`);
       fetchSubs();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      alert('删除失败：' + (error.response?.data?.error || error.message));
+      alert(t('common.error', '删除失败：') + (error.response?.data?.error || error.message));
     }
   };
 
@@ -780,7 +780,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       fetchSubs();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      alert('同步失败：' + (error.response?.data?.error || error.message));
+      alert(t('calendar.status_sync_err', '同步失败：') + (error.response?.data?.error || error.message));
     }
   };
 
@@ -788,7 +788,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     setCopyIcalError('');
     setCopiedIcal(false);
     if (!icalExportUrl) {
-      setCopyIcalError('订阅链接尚未加载，请刷新页面后重试。');
+      setCopyIcalError(t('settings.sub_link_not_loaded', '订阅链接尚未加载，请刷新页面后重试。'));
       return;
     }
     if (await copyText(icalExportUrl)) {
@@ -797,7 +797,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     } else {
       icalInputRef.current?.focus();
       icalInputRef.current?.select();
-      setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
+      setCopyIcalError(t('settings.sub_manual_copy', '无法自动复制，已选中链接，请手动复制。'));
     }
   };
 
@@ -806,14 +806,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     setCopyIcalError('');
     setCopiedWebcal(false);
     if (!webcalUrl) {
-      setCopyIcalError('订阅链接尚未加载，请刷新页面后重试。');
+      setCopyIcalError(t('settings.sub_link_not_loaded', '订阅链接尚未加载，请刷新页面后重试。'));
     } else if (await copyText(webcalUrl)) {
       setCopiedWebcal(true);
       setTimeout(() => setCopiedWebcal(false), 2000);
     } else {
       webcalInputRef.current?.focus();
       webcalInputRef.current?.select();
-      setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
+      setCopyIcalError(t('settings.sub_manual_copy', '无法自动复制，已选中链接，请手动复制。'));
     }
   };
 
@@ -822,7 +822,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       <div className="flex items-center justify-center min-h-[360px]">
         <div className="flex items-center gap-3 text-gray-500 dark:text-neutral-400 font-medium text-sm">
           <RefreshCw className="w-5 h-5 animate-spin text-blue-600 dark:text-blue-400" />
-          <span>正在读取设置...</span>
+          <span>{t('settings.loading_settings', '正在读取设置...')}</span>
         </div>
       </div>
     );
@@ -913,13 +913,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         {saving && (
           <span className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 font-medium animate-fadeIn">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            <span>{language === 'zh' ? '正在自动保存...' : 'Auto-saving...'}</span>
+            <span>{t('settings.auto_saving', '正在自动保存...')}</span>
           </span>
         )}
         {!saving && saveSuccess && (
           <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium animate-fadeIn">
             <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>{language === 'zh' ? '已自动保存' : 'Auto-saved'}</span>
+            <span>{t('settings.auto_saved', '已自动保存')}</span>
           </span>
         )}
       </div>
@@ -931,7 +931,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
       {onOpenMobileMenu && (
         <div className="md:hidden flex shrink-0 items-center gap-3 px-1 py-1">
-          <button type="button" onClick={onOpenMobileMenu} aria-label="打开侧边导航" className="flex h-10 w-10 items-center justify-center rounded-xl text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">
+          <button type="button" onClick={onOpenMobileMenu} aria-label={t('settings.open_mobile_nav', '打开侧边导航')} className="flex h-10 w-10 items-center justify-center rounded-xl text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">
             <Menu className="w-5 h-5" />
           </button>
           <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('nav.settings', '设置')}</h1>
@@ -1151,7 +1151,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   {user?.email && (
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-                        绑定邮箱 (唯一识别)
+                        {t('settings.bound_email_label', '绑定邮箱 (唯一识别)')}
                       </label>
                       <div className="relative">
                         <input
@@ -1163,7 +1163,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         <Mail className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
                       </div>
                       <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                        用于验证码接收与身份认证，每个邮箱唯一绑定一个账号
+                        {t('settings.bound_email_desc', '用于验证码接收与身份认证，每个邮箱唯一绑定一个账号')}
                       </span>
                     </div>
                   )}
@@ -1280,10 +1280,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <div>
                     <h4 className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>注销并彻底删除个人账号</span>
+                      <span>{t('settings.delete_account_title', '注销并彻底删除个人账号')}</span>
                     </h4>
                     <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
-                      永久删除您的个人档案、所有待办日程、日历订阅及 API 用量记录，此操作不可撤销。
+                      {t('settings.delete_account_desc', '永久删除您的个人档案、所有待办日程、日历订阅及 API 用量记录，此操作不可撤销。')}
                     </p>
                   </div>
                   <button
@@ -1296,7 +1296,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900 rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 self-start sm:self-center"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>注销账号</span>
+                    <span>{t('settings.delete_account_btn', '注销账号')}</span>
                   </button>
                 </div>
               </div>
@@ -1327,7 +1327,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     onChange={(e) => setLanguage(e.target.value as 'zh' | 'en')}
                     className="w-full px-3.5 py-2.5 text-xs bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer shadow-2xs font-medium"
                   >
-                    <option value="zh">简体中文 (Simplified Chinese)</option>
+                    <option value="zh">{t('settings.lang_zh', '简体中文 (Simplified Chinese)')}</option>
                     <option value="en">English (US)</option>
                   </select>
                 </div>
@@ -1572,11 +1572,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <div className="p-4 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/90 dark:border-blue-800 text-xs space-y-1.5 animate-fadeIn">
                     <div className="font-bold flex items-center gap-2 text-blue-700 dark:text-blue-300 text-xs">
                       <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping" />
-                      <span>💡 首次对接激活与 24 小时互动机制须知</span>
+                      <span>{t('settings.weixin_notice_title', '💡 首次对接激活与 24 小时互动机制须知')}</span>
                     </div>
                     <p className="leading-relaxed text-blue-800/90 dark:text-blue-300/90 text-xs">
-                      微信外部通道受平台规则约束，机器人仅能在收到您发信后的 <strong>24 小时内</strong> 主动向您下发提醒与排程卡片。<br />
-                      首次对接成功后，<strong>请立即打开手机微信向助手发送任意消息（如“查看日历”或“你好”）完成激活</strong>；建议保持每天至少向助手发一条消息以维持推送窗口。
+                      {t('settings.weixin_notice_1', '微信外部通道受平台规则约束，机器人仅能在收到您发信后的 24 小时内 主动向您下发提醒与排程卡片。')}<br />
+                      {t('settings.weixin_notice_2', '首次对接成功后，请立即打开手机微信向助手发送任意消息（如“查看日历”或“你好”）完成激活；建议保持每天至少向助手发一条消息以维持推送窗口。')}
                     </p>
                   </div>
 
@@ -1862,7 +1862,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               {/* 4. Advance Deadline Setting (DDL - N 天) */}
               <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-neutral-800">
                 <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
-                  提前完成缓冲天数
+                  {t('settings.buffer_days_title', '提前完成缓冲天数')}
                 </label>
                 <div className="max-w-xs">
                   <select
@@ -1870,10 +1870,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     onChange={(e) => setAdvanceDeadlineDays(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none cursor-pointer"
                   >
-                    <option value={0}>0 天 (截止日当天完成即可)</option>
-                    <option value={1}>1 天 (推荐：截止日前 1 天完成，预留缓冲)</option>
-                    <option value={2}>2 天 (截止日前 2 天完成)</option>
-                    <option value={3}>3 天 (截止日前 3 天完成，极端从容)</option>
+                    <option value={0}>{t('settings.buffer_days_0', '0 天 (截止日当天完成即可)')}</option>
+                    <option value={1}>{t('settings.buffer_days_1', '1 天 (推荐：截止日前 1 天完成，预留缓冲)')}</option>
+                    <option value={2}>{t('settings.buffer_days_2', '2 天 (截止日前 2 天完成)')}</option>
+                    <option value={3}>{t('settings.buffer_days_3', '3 天 (截止日前 3 天完成，极端从容)')}</option>
                   </select>
                 </div>
               </div>
@@ -1980,11 +1980,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 isLlmDone ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    {apiMode === 'official' ? '官方接口已就绪' : t('llm.valid_badge')}
+                    {apiMode === 'official' ? t('settings.official_ready', '官方接口已就绪') : t('llm.valid_badge')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60">
-                    {apiMode === 'official' ? '额度不足，请充值' : t('llm.unverified_badge')}
+                    {apiMode === 'official' ? t('settings.official_low_bal', '额度不足，请充值') : t('llm.unverified_badge')}
                   </span>
                 )
               )}
@@ -2050,7 +2050,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         <div className="text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 flex items-baseline gap-1 mt-0.5">
                           <span className="text-base font-normal">¥</span>
                           <span>{userBalance.toFixed(4)}</span>
-                          <span className="text-xs font-normal text-gray-500 dark:text-neutral-400 ml-1">元</span>
+                          <span className="text-xs font-normal text-gray-500 dark:text-neutral-400 ml-1">{t('settings.currency_yuan', '元')}</span>
                         </div>
                       </div>
 
@@ -2061,7 +2061,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           className="px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 bg-white dark:bg-[#1a1b1e] border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-950/60 font-semibold shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
                         >
                           <RefreshCw className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                          <span>刷新余额</span>
+                          <span>{t('settings.refresh_bal', '刷新余额')}</span>
                         </button>
                       </div>
                     </div>
@@ -2070,17 +2070,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     {globalLlmInfo && (
                       <div className="p-2.5 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-[11px] text-gray-600 dark:text-neutral-400 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-700 dark:text-gray-300">当前官方模型:</span>
+                          <span className="font-semibold text-gray-700 dark:text-gray-300">{t('settings.curr_official_model', '当前官方模型:')}</span>
                           <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{globalLlmInfo.model}</span>
                         </div>
                         <div>
                           {globalLlmInfo.isDeepSeek ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-[10px] font-semibold font-mono border border-blue-200 dark:border-blue-800">
-                              DeepSeek 动态峰谷计费 (闲时/周末 5折)
+                              {t('settings.deepseek_pricing', 'DeepSeek 动态峰谷计费 (闲时/周末 5折)')}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 text-[10px] font-medium font-mono">
-                              输入 ¥{globalLlmInfo.priceInput}/M · 输出 ¥{globalLlmInfo.priceOutput}/M · 缓存 ¥{globalLlmInfo.priceCacheHit}/M
+                              {t('settings.official_rates_fmt', '输入 ¥{in}/M · 输出 ¥{out}/M · 缓存 ¥{cache}/M').replace('{in}', String(globalLlmInfo.priceInput)).replace('{out}', String(globalLlmInfo.priceOutput)).replace('{cache}', String(globalLlmInfo.priceCacheHit))}
                             </span>
                           )}
                         </div>
@@ -2090,7 +2090,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     {!hasGlobalLlm && (
                       <div className="p-3 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300 flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0 text-gray-400 dark:text-neutral-500" />
-                        <span>平台尚未配置全局官方接口，请联系管理员在后台配置全局 API。</span>
+                        <span>{t('settings.no_global_api', '平台尚未配置全局官方接口，请联系管理员在后台配置全局 API。')}</span>
                       </div>
                     )}
 
@@ -2124,7 +2124,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
                         >
                           {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5 text-white/80" />}
-                          <span>{redeeming ? '兑换中...' : t('llm.official_redeem_btn')}</span>
+                          <span>{redeeming ? t('settings.redeeming', '兑换中...') : t('llm.official_redeem_btn')}</span>
                         </button>
                       </div>
 
@@ -2147,7 +2147,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 text-xs flex items-start gap-2.5 leading-relaxed">
                       <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-gray-500 dark:text-neutral-400" />
                       <div>
-                        <div className="font-semibold mb-0.5">安全风险提示</div>
+                        <div className="font-semibold mb-0.5">{t('settings.security_warning_title', '安全风险提示')}</div>
                         <div className="text-[11px] opacity-90">{t('llm.custom_risk_warning')}</div>
                       </div>
                     </div>
@@ -2183,7 +2183,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         placeholder={t('llm.api_key_placeholder')}
                         className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                       />
-                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">存储于独立隔离配置库中，供微信后台解析调用</span>
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('settings.custom_key_desc', '存储于独立隔离配置库中，供微信后台解析调用')}</span>
                     </div>
 
                     <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
@@ -2274,35 +2274,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         ¥{(llmUsageData?.summary?.totalCostCny || 0).toFixed(4)}
                       </div>
                       <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1">
-                        共 {llmUsageData?.summary?.totalRequests || 0} 次 API 调用
+                        {t('settings.total_api_calls', '共 {count} 次 API 调用').replace('{count}', String(llmUsageData?.summary?.totalRequests || 0))}
                       </div>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
                       <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
                         <Zap className="w-3.5 h-3.5" />
-                        <span>输入 Tokens (Prompt)</span>
+                        <span>{t('settings.input_tokens_prompt', '输入 Tokens (Prompt)')}</span>
                       </span>
                       <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         {(llmUsageData?.summary?.promptTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-mono flex items-center gap-1.5">
-                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">{t('settings.cache_hit_fmt', '命中 {count}').replace('{count}', (llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString())}</span>
                         <span className="text-gray-300 dark:text-neutral-600">·</span>
-                        <span>未中 {(llmUsageData?.summary?.cacheMissTokens || 0).toLocaleString()}</span>
+                        <span>{t('settings.cache_miss_fmt', '未中 {count}').replace('{count}', (llmUsageData?.summary?.cacheMissTokens || 0).toLocaleString())}</span>
                       </div>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
                       <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>输出 Tokens (Output)</span>
+                        <span>{t('settings.output_tokens_label', '输出 Tokens (Output)')}</span>
                       </span>
                       <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         {(llmUsageData?.summary?.completionTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">
-                        总消耗 {(llmUsageData?.summary?.totalTokens || 0).toLocaleString()} Tokens
+                        {t('settings.total_consumed_fmt', '总消耗 {count} Tokens').replace('{count}', (llmUsageData?.summary?.totalTokens || 0).toLocaleString())}
                       </div>
                     </div>
                   </div>
@@ -2346,15 +2346,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
-                <label className="text-xs font-medium text-gray-700 dark:text-neutral-300 block pt-2">Webcal 订阅链接</label>
+                <label className="text-xs font-medium text-gray-700 dark:text-neutral-300 block pt-2">{t('calendar.webcal_sub_link', 'Webcal 订阅链接')}</label>
                 <div className="flex items-center gap-2 max-w-2xl">
-                  <input type="text" readOnly ref={webcalInputRef} value={webcalUrl} aria-label="Webcal 订阅链接" className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all" />
+                  <input type="text" readOnly ref={webcalInputRef} value={webcalUrl} aria-label={t('calendar.webcal_sub_link', 'Webcal 订阅链接')} className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all" />
                   <button type="button" onClick={copyWebcal} className="px-4 py-2.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-800 dark:text-neutral-200 text-xs font-medium rounded-xl shrink-0 flex items-center gap-1.5 transition cursor-pointer border border-gray-200 dark:border-neutral-700">
                     {copiedWebcal ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedWebcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
-                {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-blue-400 hover:underline">在日历应用中订阅</a>}
+                {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-blue-400 hover:underline">{t('calendar.sub_in_calendar_app', '在日历应用中订阅')}</a>}
                 {copyIcalError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{copyIcalError}</p>}
               </div>
 
@@ -2462,10 +2462,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
               </div>
               <div>
                 <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
-                  确认注销删除账号？
+                  {t('settings.delete_modal_title', '确认注销删除账号？')}
                 </h3>
                 <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">
-                  ⚠️ 警告：注销后，您账号下的全部任务待办、外部日历同步、微信配置以及 API 用量数据将被彻底物理清除，且无法以任何方式找回！
+                  {t('settings.delete_modal_warning', '⚠️ 警告：注销后，您账号下的全部任务待办、外部日历同步、微信配置以及 API 用量数据将被彻底物理清除，且无法以任何方式找回！')}
                 </p>
               </div>
             </div>
@@ -2479,13 +2479,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
             <div>
               <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-                请输入当前登录密码以验证身份：
+                {t('settings.delete_modal_pwd_prompt', '请输入当前登录密码以验证身份：')}
               </label>
               <input
                 type="password"
                 value={deletePassword}
                 onChange={(e) => setDeletePassword(e.target.value)}
-                placeholder="请输入密码"
+                placeholder={t('settings.delete_modal_pwd_placeholder', '请输入密码')}
                 className="w-full px-3.5 py-2.5 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700 text-gray-900 dark:text-gray-100 rounded-xl focus:bg-white dark:focus:bg-[#1e1f20] outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition"
               />
             </div>
@@ -2505,7 +2505,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition disabled:opacity-50 cursor-pointer shadow-xs"
               >
                 {deletingAccount ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                <span>{deletingAccount ? '正在注销...' : '确认彻底注销'}</span>
+                <span>{deletingAccount ? t('settings.deleting_account', '正在注销...') : t('settings.confirm_delete_forever', '确认彻底注销')}</span>
               </button>
             </div>
           </div>

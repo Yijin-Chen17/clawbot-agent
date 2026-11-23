@@ -32,6 +32,7 @@ import {
   Layers2,
   Infinity as InfinityIcon,
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 
 export interface TaskModalSavePayload {
   title: string;
@@ -87,6 +88,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   allExistingTags = [],
   dailyBusyMinutesAhead = 0,
 }) => {
+  const { t, language } = useTheme();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [importanceTier, setImportanceTier] = useState<ImportanceTier>('support');
@@ -324,7 +326,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-neutral-800">
           <div className="flex items-center gap-2.5">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {initialTask ? '编辑待办' : '新建待办'}
+              {initialTask ? t('task.edit', '编辑待办') : t('task.new', '新建待办')}
             </h2>
           </div>
           <button
@@ -341,7 +343,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           {/* 任务名称 */}
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-              事项标题 <span className="text-rose-500">*</span>
+              {t('task.title', '事项标题')} <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
@@ -349,7 +351,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               autoFocus
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="输入事项名称..."
+              placeholder={t('task.title_placeholder', '输入事项名称...')}
               className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3.5 py-2 text-xs text-gray-900 focus:bg-white dark:focus:bg-[#28292a] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100 placeholder:text-gray-400 transition"
             />
           </div>
@@ -358,7 +360,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-800 dark:text-neutral-200">
-                重要程度
+                {t('task.importance', '重要程度')}
               </span>
               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/60">
                 {importance} / 100
@@ -382,10 +384,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                         ? activeCls
                         : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-neutral-700 dark:bg-[#28292a] dark:text-neutral-300'
                     }`}
-                    title={cfg.description}
+                    title={t(`tier.${key}.desc`, cfg.description)}
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />
-                    <span className="text-[11px] font-medium">{cfg.label}</span>
+                    <span className="text-[11px] font-medium">{t(`tier.${key}.label`, cfg.label)}</span>
                   </button>
                 );
               })}
@@ -394,7 +396,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             {/* 影响因子自动加权芯片 */}
             <div className="space-y-1.5">
               <span className="text-[11px] text-gray-500 dark:text-neutral-400 block">
-                影响因素（可选）
+                {t('task.influence_factors', '影响因素（可选）')}
               </span>
               <div className="flex flex-wrap gap-1.5 lg:flex-nowrap">
                 {IMPACT_KEYS.map((sigKey) => {
@@ -411,7 +413,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                           : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 dark:bg-[#28292a] dark:text-neutral-300 dark:border-neutral-700'
                       }`}
                     >
-                      {meta.label}
+                      {t(`signal.${sigKey}`, meta.label)}
                     </button>
                   );
                 })}
@@ -432,7 +434,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 )}
                 <SlidersHorizontal className="h-3 w-3" />
                 <span>
-                  手动调整{overrideEnabled ? `（已启用: ${manualImportance}）` : ''}
+                  {t('task.manual_adjust', '手动调整')}{overrideEnabled ? ` (${manualImportance})` : ''}
                 </span>
               </button>
 
@@ -440,7 +442,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 <div className="mt-2.5 p-2.5 rounded-lg bg-white dark:bg-[#232425] border border-gray-200 dark:border-neutral-700 space-y-2">
                   <label className="flex items-center justify-between text-[11px] cursor-pointer select-none">
                     <span className="font-medium text-gray-700 dark:text-neutral-300">
-                      自定义重要度
+                      {t('task.custom_importance', '自定义重要度')}
                     </span>
                     <input
                       type="checkbox"
@@ -486,7 +488,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-800 dark:text-neutral-200">
-                时间安排
+                {t('task.time_arrangement', '时间安排')}
               </span>
             </div>
 
@@ -502,7 +504,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 }`}
               >
                 <Calendar className="h-3 w-3" />
-                <span>截止日期</span>
+                <span>{t('task.type_deadline', '截止日期')}</span>
               </button>
               <button
                 type="button"
@@ -516,7 +518,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 }`}
               >
                 <Repeat className="h-3 w-3" />
-                <span>每日固定</span>
+                <span>{t('task.type_daily', '每日固定')}</span>
               </button>
               <button
                 type="button"
@@ -528,7 +530,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 }`}
               >
                 <InfinityIcon className="h-3 w-3" />
-                <span>弹性待排</span>
+                <span>{t('task.type_flexible', '弹性待排')}</span>
               </button>
             </div>
 
@@ -536,14 +538,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             {timeMode === 'deadline' && (
               <div className="space-y-2.5">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] text-gray-400 mr-0.5">快捷选择</span>
+                  <span className="text-[11px] text-gray-400 mr-0.5">{t('task.quick_select', '快捷选择')}</span>
                   {[
-                    { label: '今天', days: 0 },
-                    { label: '明天', days: 1 },
-                    { label: '3天后', days: 3 },
-                    { label: '1周后', days: 7 },
-                    { label: '2周后', days: 14 },
-                    { label: '1月内', days: 30 },
+                    { label: t('task.today', '今天'), days: 0 },
+                    { label: t('task.tomorrow', '明天'), days: 1 },
+                    { label: t('task.in_3_days', '3天后'), days: 3 },
+                    { label: t('task.in_1_week', '1周后'), days: 7 },
+                    { label: t('task.in_2_weeks', '2周后'), days: 14 },
+                    { label: t('task.in_1_month', '1月内'), days: 30 },
                   ].map((preset) => {
                     const target = new Date();
                     target.setDate(target.getDate() + preset.days);
@@ -551,7 +553,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     const isSelected = dueDate === presetStr;
                     return (
                       <button
-                        key={preset.label}
+                        key={preset.days}
                         type="button"
                         onClick={() => handleQuickDateOffset(preset.days)}
                         className={`text-[11px] px-2 py-0.5 rounded-lg border transition-colors cursor-pointer ${
@@ -569,7 +571,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1">
-                      截止日期 <span className="text-rose-500">*</span>
+                      {t('task.deadline_date', '截止日期')} <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="date"
@@ -581,7 +583,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   </div>
                   <div>
                     <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1">
-                      截止时刻（可选）
+                      {t('task.deadline_time', '截止时刻（可选）')}
                     </label>
                     <input
                       type="time"
@@ -593,7 +595,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   <div>
                     <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1 flex items-center gap-1">
                       <Clock className="h-3 w-3 text-gray-400" />
-                      <span>耗时(分)</span>
+                      <span>{t('task.duration', '耗时(分)')}</span>
                     </label>
                     <input
                       type="number"
@@ -610,9 +612,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             )}
 
             {timeMode === 'deadline' && (
-              <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-neutral-200">
+              <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-neutral-200 cursor-pointer">
                 <input type="checkbox" checked={hardDeadline} onChange={e => setHardDeadline(e.target.checked)} />
-                不可逾期
+                {t('task.hard_deadline', '不可逾期')}
               </label>
             )}
 
@@ -620,13 +622,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             {timeMode === 'daily_fixed' && (
               <div className="space-y-2.5">
                 <p className="text-[11px] text-gray-600 dark:text-neutral-400 leading-relaxed">
-                  每天重复，可在高级设置中指定固定时间。
+                  {t('task.daily_hint', '每天重复，可在高级设置中指定固定时间。')}
                 </p>
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1 flex items-center gap-1">
                       <Clock className="h-3 w-3 text-gray-400" />
-                      <span>每日耗时 (分钟)</span>
+                      <span>{t('task.daily_duration', '每日耗时 (分钟)')}</span>
                     </label>
                     <input
                       type="number"
@@ -640,7 +642,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   </div>
                   <div className="flex items-end pb-1">
                     <span className="text-[10.5px] text-gray-500 dark:text-neutral-400">
-                      今日已知日程占用约 {Math.round((dailyBusyMinutesAhead / 60) * 10) / 10}h
+                      {language === 'en'
+                        ? `Today schedule busy ~${Math.round((dailyBusyMinutesAhead / 60) * 10) / 10}h`
+                        : `今日已知日程占用约 ${Math.round((dailyBusyMinutesAhead / 60) * 10) / 10}h`}
                     </span>
                   </div>
                 </div>
@@ -653,9 +657,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 <div className="grid grid-cols-3 gap-2">
                   {(
                     [
-                      { key: 'urgent', label: '尽快推进' },
-                      { key: 'soon', label: '近日规划' },
-                      { key: 'later', label: '远期备忘' },
+                      { key: 'urgent', label: t('task.pace_urgent', '尽快推进') },
+                      { key: 'soon', label: t('task.pace_soon', '近日规划') },
+                      { key: 'later', label: t('task.pace_later', '远期备忘') },
                     ] as Array<{ key: UrgencyPace; label: string }>
                   ).map((p) => (
                     <button
@@ -675,7 +679,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 <div>
                   <label className="block text-[10.5px] font-medium text-gray-600 dark:text-neutral-400 mb-1 flex items-center gap-1">
                     <Clock className="h-3 w-3 text-gray-400" />
-                    <span>预计耗时 (分钟)</span>
+                    <span>{t('task.duration', '预计耗时 (分钟)')}</span>
                   </label>
                   <input
                     type="number"
@@ -695,7 +699,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${computedQuadrantMeta.themeColor.accentDot}`} />
                 <span className="font-medium text-gray-800 dark:text-neutral-200">
-                  {computedQuadrantMeta.name}
+                  {t(`quad.${computedQuadrantId}.name`, computedQuadrantMeta.name)}
                 </span>
               </div>
             </div>
@@ -704,7 +708,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           {/* 高级排程设置 (固定任务 / 双线程重叠) */}
           <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3 text-xs">
             <span className="font-semibold text-gray-700 dark:text-neutral-300 block text-[11px] uppercase tracking-wider">
-              高级设置
+              {t('task.advanced', '高级设置')}
             </span>
 
             {/* 固定任务 */}
@@ -718,14 +722,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 />
                 <Pin className="h-3.5 w-3.5 text-gray-400" aria-hidden="true" />
                 <span className="font-medium text-gray-800 dark:text-neutral-200">
-                  固定时间段（不参与自动重排）
+                  {t('task.fixed_slot', '固定时间段（不参与自动重排）')}
                 </span>
               </label>
 
               {isFixed && (
                 <div className="pl-5.5 grid grid-cols-2 gap-2.5 pt-1">
                   <div>
-                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">开始时间</span>
+                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">{t('task.start_time', '开始时间')}</span>
                     <input
                       type="time"
                       value={fixedStartTime}
@@ -734,7 +738,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     />
                   </div>
                   <div>
-                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">结束时间</span>
+                    <span className="text-[10px] text-gray-500 dark:text-neutral-400 block mb-1">{t('task.end_time', '结束时间')}</span>
                     <input
                       type="time"
                       value={fixedEndTime}
@@ -757,7 +761,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 />
                 <Layers2 className="h-3.5 w-3.5 text-gray-400" aria-hidden="true" />
                 <span className="font-medium text-gray-800 dark:text-neutral-200">
-                  允许与其他日程并行
+                  {t('task.allow_concurrent', '允许与其他日程并行')}
                 </span>
               </label>
             </div>
@@ -766,13 +770,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           {/* 备注描述 */}
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5">
-              备注（可选）
+              {t('task.notes', '备注（可选）')}
             </label>
             <textarea
               rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="添加备注细节..."
+              placeholder={t('task.notes_placeholder', '添加备注细节...')}
               className="w-full rounded-xl border border-gray-200 bg-gray-50/50 p-2.5 text-xs text-gray-900 focus:bg-white dark:focus:bg-[#28292a] focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100 placeholder:text-gray-400 transition"
             />
           </div>
@@ -781,7 +785,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-neutral-300 mb-1.5 flex items-center gap-1.5">
               <TagIcon className="h-3.5 w-3.5 text-gray-400" />
-              <span>标签</span>
+              <span>{t('task.tags', '标签')}</span>
             </label>
             <div className="flex gap-2 mb-1.5">
               <input
@@ -794,7 +798,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     handleAddTag();
                   }
                 }}
-                placeholder="输入标签并回车..."
+                placeholder={t('task.tags_placeholder', '输入标签并回车...')}
                 className="flex-1 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-1.5 text-xs text-gray-900 focus:bg-white dark:focus:bg-[#28292a] focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-[#28292a] dark:text-gray-100 transition"
               />
               <button
@@ -802,22 +806,22 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 onClick={handleAddTag}
                 className="px-3 py-1.5 rounded-xl border border-gray-200 text-xs text-gray-600 hover:bg-gray-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800 transition cursor-pointer"
               >
-                添加
+                {t('task.add_tag', '添加')}
               </button>
             </div>
 
             {allExistingTags.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-1.5">
-                {allExistingTags.map((t) => (
+                {allExistingTags.map((tTag) => (
                   <button
-                    key={t}
+                    key={tTag}
                     type="button"
                     onClick={() => {
-                      if (!tags.includes(t)) setTags([...tags, t]);
+                      if (!tags.includes(tTag)) setTags([...tags, tTag]);
                     }}
                     className="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-300 transition cursor-pointer"
                   >
-                    +{t}
+                    +{tTag}
                   </button>
                 ))}
               </div>
@@ -863,7 +867,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                       }`}
                     >
                       <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>{initialTask.isCompleted ? '标记为未完成' : '完成任务'}</span>
+                      <span>{initialTask.isCompleted ? t('task.mark_uncompleted', '标记为未完成') : t('task.mark_completed', '完成任务')}</span>
                     </button>
                   )}
                   {onDelete && (
@@ -874,7 +878,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                         onClose();
                       }}
                       className="p-1.5 rounded-xl text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                      title="删除此任务"
+                      title={t('common.delete', '删除此任务')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -889,13 +893,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-1.5 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
               >
-                取消
+                {t('common.cancel', '取消')}
               </button>
               <button
                 type="submit"
                 className="px-5 py-1.5 rounded-xl text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-all cursor-pointer"
               >
-                {initialTask ? '保存' : '创建'}
+                {initialTask ? t('common.save', '保存') : t('common.create', '创建')}
               </button>
             </div>
           </div>

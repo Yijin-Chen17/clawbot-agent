@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { useTheme } from '../context/ThemeContext';
 import { formatLocalDate } from '../types/task';
 import type { TaskItem } from '../types/task';
 import type { CalendarEvent } from '../types/calendar';
@@ -43,6 +44,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
   onToggleCompleteTask,
   onEditTask,
 }) => {
+  const { t, language } = useTheme();
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -166,13 +168,16 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
 
   // 格式化日期标题
   const formattedDate = useMemo(() => {
+    if (language === 'en') {
+      return selectedDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+    }
     const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
     const y = selectedDate.getFullYear();
     const m = selectedDate.getMonth() + 1;
     const d = selectedDate.getDate();
     const w = weekdays[selectedDate.getDay()];
     return `${y}年${m}月${d}日 ${w}`;
-  }, [selectedDate]);
+  }, [selectedDate, language]);
 
   // 严格像素级时钟比例尺（每小时 88px），保证短任务块也有充裕的文字呼吸空间
   const HOUR_HEIGHT = 88;
@@ -238,7 +243,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
             type="button"
             onClick={handlePrevDay}
             className="p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 dark:border-neutral-700 dark:bg-[#28292a] dark:hover:bg-neutral-700 text-gray-600 dark:text-neutral-300 transition-colors"
-            title="前一天"
+            title={t('daysched.prev_day', '前一天')}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -247,13 +252,13 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
             onClick={handleToday}
             className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 dark:border-neutral-700 dark:bg-[#28292a] dark:hover:bg-neutral-700 text-xs font-semibold text-gray-700 dark:text-neutral-300 transition-colors"
           >
-            今天
+            {t('daysched.today', '今天')}
           </button>
           <button
             type="button"
             onClick={handleNextDay}
             className="p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 dark:border-neutral-700 dark:bg-[#28292a] dark:hover:bg-neutral-700 text-gray-600 dark:text-neutral-300 transition-colors"
-            title="后一天"
+            title={t('daysched.next_day', '后一天')}
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -282,7 +287,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
             }`}
           >
             <Link2 className="h-3.5 w-3.5" />
-            <span>{subscriptionUrl ? '已绑定日历订阅' : '添加日历订阅链接'}</span>
+            <span>{subscriptionUrl ? t('daysched.bound_calendar', '已绑定日历订阅') : t('daysched.add_calendar', '添加日历订阅链接')}</span>
           </button>
 
           {/* 手动刷新同步 */}
@@ -292,7 +297,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
               onClick={onSyncCalendar}
               disabled={isSyncing}
               className="p-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-100 dark:border-neutral-700 dark:bg-[#28292a] dark:hover:bg-neutral-700 text-gray-600 dark:text-neutral-300 disabled:opacity-40 transition-colors"
-              title="拉取最新日历事件"
+              title={t('daysched.sync_latest', '拉取最新日历事件')}
             >
               <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
             </button>
@@ -307,10 +312,10 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                 ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-300'
                 : 'bg-gray-100 border-gray-200 text-gray-600 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-400'
             }`}
-            title="当任务耗时大于空闲段时，是否允许自动切分成多段"
+            title={t('daysched.split_tip', '当任务耗时大于空闲段时，是否允许自动切分成多段')}
           >
             <Sliders className="h-3.5 w-3.5" />
-            <span>长任务拆分: {allowSplit ? '开启' : '关闭'}</span>
+            <span>{t('daysched.split_toggle', '长任务拆分')}: {allowSplit ? (language === 'en' ? 'ON' : '开启') : (language === 'en' ? 'OFF' : '关闭')}</span>
           </button>
         </div>
       </div>
@@ -320,14 +325,14 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
         <div className="px-5 py-2 bg-rose-50 border-b border-rose-200 text-rose-700 dark:bg-rose-950/60 dark:border-rose-900 dark:text-rose-300 text-xs flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>日历同步提示: {syncError}</span>
+            <span>{language === 'en' ? 'Calendar Sync Notice: ' : '日历同步提示: '}{syncError}</span>
           </div>
           <button
             type="button"
             onClick={() => setIsUrlModalOpen(true)}
             className="underline font-semibold hover:text-rose-800 ml-4"
           >
-            检查链接
+            {language === 'en' ? 'Check Link' : '检查链接'}
           </button>
         </div>
       )}
@@ -337,7 +342,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-slate-500" />
-            <span>既定日程: {Math.round((schedulePlan.stats.totalBusyMinutes / 60) * 10) / 10}h</span>
+            <span>{t('daysched.busy_events', '既定日程')}: {Math.round((schedulePlan.stats.totalBusyMinutes / 60) * 10) / 10}h</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-amber-500" />
@@ -345,16 +350,16 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-indigo-500" />
-            <span>已排专注: {Math.round((schedulePlan.stats.totalScheduledMinutes / 60) * 10) / 10}h / 5.5h 上限</span>
+            <span>{t('daysched.scheduled_focus', '已排专注')}: {Math.round((schedulePlan.stats.totalScheduledMinutes / 60) * 10) / 10}h / {t('daysched.limit_55h', '5.5h 上限')}</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-sky-500" />
-            <span>弹性留白: {Math.round((schedulePlan.stats.totalFreeMinutes / 60) * 10) / 10}h</span>
+            <span>{t('daysched.free_buffer', '弹性留白')}: {Math.round((schedulePlan.stats.totalFreeMinutes / 60) * 10) / 10}h</span>
           </span>
         </div>
 
         <div className="text-[11px] text-slate-400">
-          按空闲时间与优先级安排
+          {t('daysched.auto_arranged', '按空闲时间与优先级安排')}
         </div>
       </div>
 
@@ -530,11 +535,11 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                           title={
                             block.isCompleted
                               ? block.isFinalCompleted
-                                ? '任务已彻底完成（点击取消）'
-                                : '当天目标已完成（点击取消）'
+                                ? (language === 'en' ? 'Task fully completed (click to cancel)' : '任务已彻底完成（点击取消）')
+                                : (language === 'en' ? 'Target for today completed (click to cancel)' : '当天目标已完成（点击取消）')
                               : block.isLastDay
-                              ? '今天是任务最后一天：勾选将直接标记任务彻底完成'
-                              : '勾选仅标记当天目标完成'
+                              ? (language === 'en' ? 'Final day: checking marks entire task complete' : '今天是任务最后一天：勾选将直接标记任务彻底完成')
+                              : (language === 'en' ? 'Checking marks today\'s target complete' : '勾选仅标记当天目标完成')
                           }
                           className={`h-4 w-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
                             block.isCompleted
@@ -559,7 +564,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                       <div className="flex items-center gap-1 shrink-0 text-[10px] font-mono">
                         {isSingleLine && block.isCompleted && (
                           <span className="px-1 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-sans font-semibold">
-                            {block.isFinalCompleted ? '已彻底完成' : '今日完成'}
+                            {block.isFinalCompleted ? t('daysched.final_completed', '已彻底完成') : t('daysched.day_completed', '今日完成')}
                           </span>
                         )}
                         <span>{formatClockTime(block.start)} - {formatClockTime(block.end)}</span>
@@ -575,12 +580,12 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                         </span>
                         {block.isCompleted ? (
                           <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 font-semibold">
-                            {block.isFinalCompleted ? '✓ 任务已彻底完成' : '✓ 当天目标已完成'}
+                            {block.isFinalCompleted ? (language === 'en' ? '✓ Fully Completed' : '✓ 任务已彻底完成') : (language === 'en' ? '✓ Today Target Completed' : '✓ 当天目标已完成')}
                           </span>
                         ) : (
                           block.isLastDay && (
                             <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-800 dark:text-rose-200 font-semibold">
-                              最后一天
+                              {t('daysched.last_day', '最后一天')}
                             </span>
                           )
                         )}
@@ -591,15 +596,15 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                         )}
                         {block.isSplit && (
                           <span className="px-1 rounded bg-black/10 dark:bg-white/10 font-mono">
-                            第 {block.partIndex}/{block.totalParts} 节
+                            {language === 'en' ? `Part ${block.partIndex}/${block.totalParts}` : `第 ${block.partIndex}/${block.totalParts} 节`}
                           </span>
                         )}
                         {block.breakAfterMinutes && (
                           <span className="px-1.5 py-0.2 rounded bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-300 font-medium">
-                            +{block.breakAfterMinutes}m 缓冲休息
+                            +{block.breakAfterMinutes}m {t('daysched.break_rest', '缓冲休息')}
                           </span>
                         )}
-                        <span>分值: ({block.urgency.toFixed(1)}, {block.importance.toFixed(1)})</span>
+                        <span>{t('daysched.scores', '分值')}: ({block.urgency.toFixed(1)}, {block.importance.toFixed(1)})</span>
                       </div>
                     )}
                   </div>
@@ -610,9 +615,9 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
               {schedulePlan.fixedEvents.length === 0 && schedulePlan.scheduledTasks.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-slate-400 pointer-events-none">
                   <CalendarCheck2 className="h-10 w-10 mb-2 stroke-[1.5] text-slate-300 dark:text-slate-600" />
-                  <p className="text-xs font-semibold">当天工作时段无会议日程与待办排程</p>
+                  <p className="text-xs font-semibold">{t('daysched.no_events_today', '当天工作时段无会议日程与待办排程')}</p>
                   <p className="text-[11px] mt-1 text-slate-400 max-w-sm">
-                    新建任务或绑定日历开始规划。
+                    {t('daysched.no_events_hint', '新建任务或绑定日历开始规划。')}
                   </p>
                 </div>
               )}
@@ -625,10 +630,10 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
           <div className="w-64 border-l border-slate-200 dark:border-slate-800 p-4 overflow-y-auto hidden lg:block bg-slate-50/30 dark:bg-slate-900/30">
             <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-amber-500" />
-              <span>未排入今日日程 ({schedulePlan.unscheduledTasks.length})</span>
+              <span>{t('daysched.unscheduled_today', '未排入今日日程')} ({schedulePlan.unscheduledTasks.length})</span>
             </h3>
             <p className="text-[10px] text-slate-400 mb-3">
-              基于精力负荷保护（5.5h 上限）、防切碎规则与 Eliminate 自动过滤策略暂缓排入：
+              {t('daysched.unscheduled_reason', '基于精力负荷保护（5.5h 上限）、防切碎规则与 Eliminate 自动过滤策略暂缓排入：')}
             </p>
             <div className="space-y-2">
               {schedulePlan.unscheduledTasks.map((item) => (
@@ -655,11 +660,11 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
               <Link2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <span>设置日历订阅链接 (WebCal / ICS)</span>
+              <span>{t('daysched.feed_settings', '设置日历订阅链接 (WebCal / ICS)')}</span>
             </h3>
 
             <p className="text-xs text-gray-500 dark:text-neutral-400 leading-relaxed">
-              输入你的外部日历（Google Calendar、Outlook、Apple 日历、飞书/钉钉等）的公共或私有 <code>.ics</code> / <code>webcal://</code> 订阅链接。
+              {t('daysched.feed_desc', '输入你的外部日历（Google Calendar、Outlook、Apple 日历等）的公共或私有 .ics / webcal:// 订阅链接')}
             </p>
 
             <form onSubmit={handleSaveUrl} className="space-y-3">
@@ -668,7 +673,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                 required
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="例如：webcal://p69-caldav.icloud.com/.../basic.ics 或 https://calendar.google.com/..."
+                placeholder="webcal://... 或 https://..."
                 className="w-full rounded-xl border border-gray-300 dark:border-neutral-700 bg-white dark:bg-[#28292a] p-2.5 text-xs text-gray-900 dark:text-gray-100 font-mono focus:border-blue-500 focus:outline-none"
               />
 
@@ -683,7 +688,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                     }}
                     className="text-xs text-rose-600 hover:underline cursor-pointer"
                   >
-                    解除当前订阅
+                    {t('daysched.unbind_feed', '解除当前订阅')}
                   </button>
                 )}
                 <div className="flex items-center gap-2 ml-auto">
@@ -692,13 +697,13 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                     onClick={() => setIsUrlModalOpen(false)}
                     className="px-4 py-1.5 rounded-full text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800 cursor-pointer"
                   >
-                    取消
+                    {t('common.cancel', '取消')}
                   </button>
                   <button
                     type="submit"
                     className="px-5 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs cursor-pointer"
                   >
-                    保存并立即拉取
+                    {t('daysched.save_fetch', '保存并立即拉取')}
                   </button>
                 </div>
               </div>

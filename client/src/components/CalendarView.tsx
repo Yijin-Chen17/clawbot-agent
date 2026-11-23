@@ -372,7 +372,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const saveCalendarTask = async (taskId: number, data: TaskModalSavePayload) => {
     setEditError('');
-    setPlanning({ title: '正在更新日程', status: 'working' });
+    setPlanning({ title: t('calendar.updating_schedule', '正在更新日程'), status: 'working' });
     try {
       const response = await api.put(`/tasks/${taskId}`, {
         title: data.title, notes: data.description || '', duration_minutes: data.estimatedMinutes,
@@ -386,11 +386,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       });
       setEditingTask(null);
       setEditError('');
-      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.message });
+      setPlanning({ title: t('calendar.schedule_updated', '日程已更新'), status: 'success', detail: response.data.message });
       await fetchData();
     } catch (error) {
       const err = error as { response?: { data?: { error?: string } } };
-      setEditError(err.response?.data?.error || '保存失败，请重试');
+      setEditError(err.response?.data?.error || t('calendar.save_failed_retry', '保存失败，请重试'));
       setPlanning(null);
     }
   };
@@ -431,7 +431,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setCopiedType(type);
       setTimeout(() => setCopiedType(null), 2000);
     } else {
-      alert(`请手动复制：\n${linkToCopy}`);
+      alert(`${t('calendar.please_copy_manual', '请手动复制：\n')}${linkToCopy}`);
     }
   };
 
@@ -684,27 +684,27 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       }
     };
 
-    tasks.forEach((t) => {
-      const completedDates = parseCompletedDates(t.completed_dates);
+    tasks.forEach((taskItem) => {
+      const completedDates = parseCompletedDates(taskItem.completed_dates);
       const isCompletedForDay =
-        t.status === 'completed' || (t.time_mode === 'daily_fixed' && completedDates.includes(key));
+        taskItem.status === 'completed' || (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));
 
       let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
 
-      if (t.schedule_blocks) {
+      if (taskItem.schedule_blocks) {
         try {
-          const parsedBlocks = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+          const parsedBlocks = typeof taskItem.schedule_blocks === 'string' ? JSON.parse(taskItem.schedule_blocks) : taskItem.schedule_blocks;
           if (Array.isArray(parsedBlocks)) {
             blocks = parsedBlocks;
           }
         } catch {}
       }
-      if (blocks.length === 0 && t.scheduled_start && t.scheduled_end) {
-        blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+      if (blocks.length === 0 && taskItem.scheduled_start && taskItem.scheduled_end) {
+        blocks = [{ start: taskItem.scheduled_start, end: taskItem.scheduled_end }];
       }
-      if (blocks.length === 0 && t.status === 'completed') {
-        const compEnd = parseDbIso(t.updated_at) || (t.deadline ? new Date(t.deadline) : new Date(t.created_at || Date.now()));
-        const durMs = (t.original_duration_minutes || t.duration_minutes || 30) * 60000;
+      if (blocks.length === 0 && taskItem.status === 'completed') {
+        const compEnd = parseDbIso(taskItem.updated_at) || (taskItem.deadline ? new Date(taskItem.deadline) : new Date(taskItem.created_at || Date.now()));
+        const durMs = (taskItem.original_duration_minutes || taskItem.duration_minutes || 30) * 60000;
         const compStart = new Date(compEnd.getTime() - durMs);
         blocks = [{ start: compStart.toISOString(), end: compEnd.toISOString() }];
       }
@@ -718,32 +718,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         );
         if (range) {
           const blockDone = isCompletedForDay || Boolean(block.completed);
-          const quad = getTaskQuadrant(t.importance, t.urgency, t.score_scale);
-          const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${block.partIndex || bIdx + 1}/${block.totalParts}节)` : '';
+          const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
+          const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(block.partIndex || bIdx + 1)).replace('{total}', String(block.totalParts))})` : '';
           let titlePrefix = blockDone ? '✓ ' : '';
           if (!blockDone) {
-            if (t.is_fixed) titlePrefix += '📌 ';
-            if (t.is_concurrent) titlePrefix += '⚡ ';
+            if (taskItem.is_fixed) titlePrefix += '📌 ';
+            if (taskItem.is_concurrent) titlePrefix += '⚡ ';
           }
 
-          let qBadge = blockDone ? '已完成' : quad.name;
+          let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
           if (!blockDone) {
-            if (t.is_fixed && t.is_concurrent) qBadge = '固定·双线程';
-            else if (t.is_fixed) qBadge = '固定任务';
-            else if (t.is_concurrent) qBadge = '双线程';
+            if (taskItem.is_fixed && taskItem.is_concurrent) qBadge = t('calendar.badge_fixed_concurrent', '固定·双线程');
+            else if (taskItem.is_fixed) qBadge = t('calendar.badge_fixed', '固定任务');
+            else if (taskItem.is_concurrent) qBadge = t('calendar.badge_concurrent', '双线程');
           }
 
           timedItems.push({
             kind: 'task',
-            id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
-            title: `${titlePrefix}${t.title}${partSuffix}`,
+            id: `task-${taskItem.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
+            title: `${titlePrefix}${taskItem.title}${partSuffix}`,
             start: range.start,
             end: range.end,
             allDay: false,
             color: taskCalendarColor || (blockDone ? '#10B981' : quad.color),
             qClass: quad.key,
             qName: qBadge,
-            task: t,
+            task: taskItem,
           });
         }
       });
@@ -847,7 +847,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       if (id === 'tasks') setTaskCalendarColor(color);
       else setSubscriptions(current => current.map(sub => sub.id === id ? { ...sub, color } : sub));
     } catch {
-      alert('保存日历颜色失败，请重试');
+      alert(t('calendar.save_color_failed', '保存日历颜色失败，请重试'));
     }
   };
 
@@ -867,19 +867,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       if (response.data.message?.includes('初次同步失败')) alert(response.data.message);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '添加订阅失败');
+      alert(error.response?.data?.error || t('calendar.add_sub_failed', '添加订阅失败'));
     } finally {
       setSubmittingSub(false);
     }
   };
 
   const handleDeleteSubscription = async (id: number) => {
-    if (!confirm('确定删除该外部日历吗？关联事件将一并移除。')) return;
+    if (!confirm(t('calendar.delete_sub_confirm', '确定删除该外部日历吗？关联事件将一并移除。'))) return;
     try {
       await api.delete(`/calendar/subscriptions/${id}`);
       fetchData();
     } catch {
-      alert('删除失败');
+      alert(t('common.error', '删除失败'));
     }
   };
 
@@ -888,7 +888,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       await api.post(`/calendar/subscriptions/${id}/sync`);
       fetchData();
     } catch {
-      alert('同步失败');
+      alert(t('calendar.status_sync_err', '同步失败'));
     }
   };
 
@@ -897,13 +897,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const handleSyncAndReplanAll = async () => {
     setReplanLoading(true);
-    setPlanning({ title: '正在重排全部日程', status: 'working' });
+    setPlanning({ title: t('calendar.replan_all_loading', '正在重排全部日程'), status: 'working' });
     try {
       const response = await api.post('/calendar/replan');
-      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.summary });
+      setPlanning({ title: t('calendar.schedule_updated', '日程已更新'), status: 'success', detail: response.data.summary });
       await fetchData();
     } catch (e: any) {
-      setPlanning({ title: '排程失败', status: 'error', detail: e.response?.data?.error || e.message });
+      setPlanning({ title: t('calendar.replan_failed', '排程失败'), status: 'error', detail: e.response?.data?.error || e.message });
     } finally {
       setReplanLoading(false);
     }
@@ -917,7 +917,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setSelectedDueTask(null);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || '操作失败');
+      alert(err.response?.data?.error || t('common.error', '操作失败'));
     }
   };
 
@@ -928,19 +928,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setSelectedDueTask(null);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || '操作失败');
+      alert(err.response?.data?.error || t('common.error', '操作失败'));
     }
   };
 
   const handleDeleteCalendarTask = async (taskId: number) => {
-    if (!confirm('确定删除该待办任务吗？')) return;
+    if (!confirm(t('calendar.confirm_delete_task', '确定删除该待办任务吗？'))) return;
     try {
       await api.delete(`/tasks/${taskId}`);
       setSelectedItem(null);
       setSelectedDueTask(null);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || '删除失败');
+      alert(err.response?.data?.error || t('common.error', '删除失败'));
     }
   };
 
@@ -965,7 +965,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               type="button"
               onClick={onOpenMobileMenu}
               className="md:hidden p-2 rounded-full text-gray-600 dark:text-[#c4c7c5] hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer"
-              title="打开侧边菜单"
+              title={t('calendar.open_sidebar', '打开侧边菜单')}
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -976,7 +976,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             type="button"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="hidden md:flex p-2 rounded-full text-gray-600 dark:text-[#c4c7c5] hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer"
-            title={sidebarOpen ? '收起左侧面板' : '展开左侧面板'}
+            title={sidebarOpen ? t('calendar.collapse_left_panel', '收起左侧面板') : t('calendar.expand_left_panel', '展开左侧面板')}
           >
             {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
           </button>
@@ -1033,7 +1033,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           <div
             className="inline-flex items-center rounded-full border border-gray-300 dark:border-[#444746] p-0.5 bg-gray-50/70 dark:bg-[#282a2c]"
             role="group"
-            aria-label="日历视图切换"
+            aria-label={t('calendar.view_switcher_aria', '日历视图切换')}
           >
             <button
               type="button"
@@ -1065,7 +1065,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-[#a8c7fa] border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{replanLoading ? '正在重排' : '重排全部'}</span>
+            <span className="hidden sm:inline">{replanLoading ? t('calendar.replan_loading', '正在重排') : t('calendar.replan_all', '重排全部')}</span>
           </button>
 
           <button
@@ -1106,10 +1106,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-600 dark:text-[#c4c7c5] transition-colors cursor-pointer"
             title={
               themeMode === 'light'
-                ? '当前：亮色模式 (点击切换为暗色)'
+                ? t('calendar.theme_light', '当前：亮色模式 (点击切换为暗色)')
                 : themeMode === 'dark'
-                ? '当前：暗色模式 (点击切换为跟随系统)'
-                : '当前：跟随系统 (点击切换为亮色)'
+                ? t('calendar.theme_dark', '当前：暗色模式 (点击切换为跟随系统)')
+                : t('calendar.theme_system', '当前：跟随系统 (点击切换为亮色)')
             }
           >
             {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
@@ -1147,10 +1147,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   type="button"
                   onClick={() => setMiniCalendarCollapsed((prev) => !prev)}
                   className="flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer select-none group"
-                  title={miniCalendarCollapsed ? '展开迷你月历' : '折叠迷你月历'}
+                  title={miniCalendarCollapsed ? t('calendar.expand_mini', '展开迷你月历') : t('calendar.collapse_mini', '折叠迷你月历')}
                 >
                   <span>
-                    {miniMonthDate.getFullYear()}年 {miniMonthDate.getMonth() + 1}月
+                    {language.startsWith('en') ? miniMonthDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : `${miniMonthDate.getFullYear()}年 ${miniMonthDate.getMonth() + 1}月`}
                   </span>
                   <ChevronDown
                     className={`w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500 transition-transform duration-300 ease-in-out ${
@@ -1167,7 +1167,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() - 1, 1))}
                     className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-500 cursor-pointer"
-                    title="上个月"
+                    title={t('calendar.prev_month', '上个月')}
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
@@ -1175,7 +1175,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     type="button"
                     onClick={() => setMiniMonthDate(new Date(miniMonthDate.getFullYear(), miniMonthDate.getMonth() + 1, 1))}
                     className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-500 cursor-pointer"
-                    title="下个月"
+                    title={t('calendar.next_month', '下个月')}
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
@@ -1238,9 +1238,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {/* 我的日历列表 (Google Calendar 经典抽屉列表，支持多色调色盘选择修改) */}
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
-                <span>我的日历</span>
+                <span>{t('calendar.my_calendars', '我的日历')}</span>
                 <span className="text-[10px] text-gray-400 font-normal">
-                  {subscriptions.length + 1} 个源
+                  {t('calendar.sources_count', '{count} 个源').replace('{count}', String(subscriptions.length + 1))}
                 </span>
               </div>
               <div className="space-y-1 text-xs">
@@ -1249,12 +1249,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <div className="flex items-center gap-2.5 truncate min-w-0">
                     <CalendarColorPicker
                       color={taskCalendarColor || '#3b82f6'}
-                      name="Clawbot 待办日程"
+                      name={t('calendar.clawbot_schedule_title', 'Clawbot 待办日程')}
                       onChange={(c) => void updateColor('tasks', c)}
                       onReset={() => void updateColor('tasks', null)}
                     />
                     <span className="text-gray-700 dark:text-[#c4c7c5] truncate font-medium select-none">
-                      Clawbot 待办日程
+                      {t('calendar.clawbot_schedule_title', 'Clawbot 待办日程')}
                     </span>
                   </div>
                 </div>
@@ -1284,30 +1284,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
             </div>
 
-            {/* 截止待办提醒 (Due Tasks) */}
+            {/* {t('calendar.due_task_modal_title', '截止待办')}提醒 (Due Tasks) */}
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
                 <span>{t('calendar.due_title', '截止待办')}</span>
                 {overdueTasks.length > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
-                    逾期 {overdueTasks.length}
+                    {t('calendar.overdue_count', '逾期 {count}').replace('{count}', String(overdueTasks.length))}
                   </span>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                {overdueTasks.slice(0, 4).map((t) => (
+                {overdueTasks.slice(0, 4).map((item) => (
                   <button
-                    key={`overdue-${t.id}`}
+                    key={`overdue-${item.id}`}
                     type="button"
-                    onClick={() => setSelectedDueTask(t)}
+                    onClick={() => setSelectedDueTask(item)}
                     className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
                   >
                     <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
-                      {t.title}
+                      {item.title}
                     </div>
                     <div className="text-[10px] text-rose-500 font-mono mt-0.5">
-                      {t.deadline ? new Date(t.deadline).toLocaleDateString() : '已逾期'} · {t.duration_minutes}m
+                      {item.deadline ? new Date(item.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.overdue_label', '已逾期')} · {item.duration_minutes}m
                     </div>
                   </button>
                 ))}
@@ -1315,18 +1315,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 {dueGroups.slice(0, 3).map((group) => (
                   <div key={`due-grp-${group.key}`} className="space-y-1">
                     <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
-                      {group.date.getMonth() + 1}月{group.date.getDate()}日 ({weekDayLabels[(group.date.getDay() + 6) % 7]})
+                      {language.startsWith('en') ? group.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : `${group.date.getMonth() + 1}月${group.date.getDate()}日 (${weekDayLabels[(group.date.getDay() + 6) % 7]})`}
                     </div>
-                    {group.due.slice(0, 3).map((t) => (
+                    {group.due.slice(0, 3).map((item) => (
                       <button
-                        key={`due-${t.id}`}
+                        key={`due-${item.id}`}
                         type="button"
-                        onClick={() => setSelectedDueTask(t)}
+                        onClick={() => setSelectedDueTask(item)}
                         className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
                       >
-                        <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{t.title}</span>
+                        <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{item.title}</span>
                         <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
-                          {t.duration_minutes}m
+                          {item.duration_minutes}m
                         </span>
                       </button>
                     ))}
@@ -1382,7 +1382,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           selectDate(d.date);
                           setViewMode('week');
                         }}
-                        title="切换到该周视图"
+                        title={t('calendar.switch_to_week_view', '切换到该周视图')}
                         className={`h-6 min-w-6 px-1.5 rounded-full flex items-center justify-center text-xs transition cursor-pointer ${
                           isToday
                             ? 'bg-blue-600 text-white font-bold shadow-2xs'
@@ -1401,9 +1401,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       {d.due.length > 0 && (
                         <span
                           className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 font-medium"
-                          title={`当天截止待办 ${d.due.length} 项`}
+                          title={t('calendar.due_tasks_day_title', '当天截止待办 {count} 项').replace('{count}', String(d.due.length))}
                         >
-                          截止 {d.due.length}
+                          {t('calendar.due_label_count', '截止 {count}').replace('{count}', String(d.due.length))}
                         </span>
                       )}
                     </div>
@@ -1417,7 +1417,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           onClick={() => openCalendarItem(seg)}
                           title={
                             seg.allDay
-                              ? `${seg.title} (全天)`
+                              ? `${seg.title} (${t('calendar.all_day', '全天')})`
                               : `${seg.title} (${formatTime(seg.start)} - ${formatTime(seg.end)})`
                           }
                           className="w-full text-left px-1.5 py-0.5 rounded-[4px] text-[11px] leading-tight truncate flex items-center gap-1 transition cursor-pointer hover:brightness-95"
@@ -1448,7 +1448,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           onClick={() => setOverflowDayKey(d.key)}
                           className="text-left px-1.5 py-0.5 rounded text-[10px] font-medium text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 transition cursor-pointer"
                         >
-                          +{extraCount} 更多
+                          {t('calendar.more_events', '+{count} 更多').replace('{count}', String(extraCount))}
                         </button>
                       )}
                     </div>
@@ -1660,7 +1660,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                                 className="text-[9px] truncate mt-0.5 opacity-70 font-medium"
                                 style={{ color: isDark ? '#d1d5db' : '#6b7280' }}
                               >
-                                {isTask ? seg.qName : seg.event.subscriptionName || '外部日程'}
+                                {isTask ? seg.qName : seg.event.subscriptionName || t('calendar.external_event', '外部日程')}
                               </div>
                             )}
                           </>
@@ -1690,7 +1690,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <CalendarIcon className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
-                <span>日历订阅与同步源</span>
+                <span>{t('calendar.calendars_modal_title', '日历订阅与同步源')}</span>
               </h3>
               <button
                 onClick={() => setShowCalendarsModal(false)}
@@ -1703,7 +1703,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {/* Clawbot 导出地址 */}
             <div className="p-3 bg-gray-50 dark:bg-[#28292a] rounded-xl border border-gray-200/80 dark:border-[#444746]/80 space-y-1.5 text-xs">
               <label className="block font-semibold text-gray-700 dark:text-[#c4c7c5] text-[11px]">
-                Clawbot 专属待办日历 (导出到 Apple / Google / Outlook)
+                {t('calendar.clawbot_export_desc', 'Clawbot 专属待办日历 (导出到 Apple / Google / Outlook)')}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -1718,7 +1718,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg shrink-0 flex items-center gap-1 transition cursor-pointer"
                 >
                   {copiedType === 'calendars-modal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'calendars-modal' ? '已复制' : '复制'}</span>
+                  <span>{copiedType === 'calendars-modal' ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
                 </button>
               </div>
             </div>
@@ -1726,14 +1726,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             {/* 添加外部 iCal 订阅 */}
             <form onSubmit={handleAddSubscription} className="space-y-2 pt-1 text-xs">
               <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">
-                + 导入外部 iCal 订阅
+                {t('calendar.import_external_ical', '+ 导入外部 iCal 订阅')}
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <input
                   type="text"
                   value={newSubName}
                   onChange={(e) => setNewSubName(e.target.value)}
-                  placeholder="日历名称 (例如: 公司会议)"
+                  placeholder={t('calendar.cal_name_placeholder', '日历名称 (例如: 公司会议)')}
                   className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none"
                   required
                 />
@@ -1742,7 +1742,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   inputMode="url"
                   value={newSubUrl}
                   onChange={(e) => setNewSubUrl(e.target.value)}
-                  placeholder="webcal:// 或 https:// 订阅链接"
+                  placeholder={t('calendar.sub_url_placeholder', 'webcal:// 或 https:// 订阅链接')}
                   className="px-3 py-2 bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none"
                   required
                 />
@@ -1753,16 +1753,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   disabled={submittingSub}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-xl transition cursor-pointer shadow-xs"
                 >
-                  {submittingSub ? '添加中...' : '确认添加订阅'}
+                  {submittingSub ? t('calendar.adding', '添加中...') : t('calendar.add_btn', '确认添加订阅')}
                 </button>
               </div>
             </form>
 
             {/* 已订阅日历列表 */}
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
-              <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">已订阅日历</span>
+              <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">{t('calendar.subscribed_list_title', '已订阅日历')}</span>
               {subscriptions.length === 0 ? (
-                <div className="text-gray-400 text-xs py-3 text-center">暂无外部订阅源</div>
+                <div className="text-gray-400 text-xs py-3 text-center">{t('calendar.no_external_sources', '暂无外部订阅源')}</div>
               ) : (
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
                   {subscriptions.map((s, idx) => {
@@ -1784,7 +1784,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                               {s.name}
                             </span>
                             <div className="text-[10px] text-gray-400 truncate font-mono">
-                              {s.event_count} 个事件 · {s.sync_status === 'ok' ? '已同步' : '同步异常'}
+                              {t('calendar.events_synced', '{count} 个事件 · {status}').replace('{count}', String(s.event_count)).replace('{status}', s.sync_status === 'ok' ? t('calendar.status_synced', '已同步') : t('calendar.status_sync_err', '同步异常'))}
                             </div>
                           </div>
                         </div>
@@ -1793,7 +1793,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                             type="button"
                             onClick={() => handleSyncSubscription(s.id)}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded-lg transition cursor-pointer"
-                            title="立即同步"
+                            title={t('calendar.sync_now', '立即同步')}
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
                           </button>
@@ -1801,7 +1801,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                             type="button"
                             onClick={() => handleDeleteSubscription(s.id)}
                             className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
-                            title="删除订阅"
+                            title={t('calendar.delete_sub', '删除订阅')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1823,7 +1823,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Share2 className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
-                <span>导出 Clawbot 待办日历</span>
+                <span>{t('calendar.export_modal_title', '导出 Clawbot 待办日历')}</span>
               </h3>
               <button
                 onClick={() => setShowExportModal(false)}
@@ -1834,10 +1834,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </div>
 
 
-            {/* HTTPS 日历订阅链接 */}
+            {/* HTTPS {t('calendar.http_sub_link', '日历订阅链接')} */}
             <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
               <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
-                日历订阅链接
+                {t('calendar.http_sub_link', '日历订阅链接')}
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -1852,30 +1852,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer"
                 >
                   {copiedType === 'http' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'http' ? '已复制' : '复制'}</span>
+                  <span>{copiedType === 'http' ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
                 </button>
               </div>
             </div>
 
             <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
-              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">Webcal 订阅链接</div>
+              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">{t('calendar.webcal_sub_link', 'Webcal 订阅链接')}</div>
               <div className="flex items-center gap-2">
-                <input type="text" readOnly value={webcalUrl} aria-label="Webcal 订阅链接" className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all" />
+                <input type="text" readOnly value={webcalUrl} aria-label={t('calendar.webcal_sub_link', 'Webcal 订阅链接')} className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all" />
                 <button type="button" onClick={() => handleCopyLink(webcalUrl, 'webcal')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer">
                   {copiedType === 'webcal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'webcal' ? '已复制' : '复制'}</span>
+                  <span>{copiedType === 'webcal' ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
                 </button>
               </div>
-              {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-[#a8c7fa] hover:underline">在日历应用中订阅</a>}
+              {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-[#a8c7fa] hover:underline">{t('calendar.sub_in_calendar_app', '在日历应用中订阅')}</a>}
             </div>
 
             {/* 静态 .ics 文件下载 */}
             <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] flex items-center justify-between text-xs">
               <div>
                 <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
-                  下载静态 .ics 文件
+                  {t('calendar.download_ics', '下载静态 .ics 文件')}
                 </div>
-                <div className="text-[11px] text-gray-400">单次导入快照，不自动跟随后续更新</div>
+                <div className="text-[11px] text-gray-400">{t('calendar.ics_desc', '单次导入快照，不自动跟随后续更新')}</div>
               </div>
               <a
                 href={downloadUrl}
@@ -1883,7 +1883,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 className="px-3 py-1.5 border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>下载文件</span>
+                <span>{t('calendar.download_file', '下载文件')}</span>
               </a>
             </div>
 
@@ -1914,7 +1914,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold text-white uppercase tracking-wider"
                   style={{ backgroundColor: selectedItem.color }}
                 >
-                  {selectedItem.kind === 'task' ? `Clawbot · ${selectedItem.qName}` : '外部订阅日程'}
+                  {selectedItem.kind === 'task' ? `Clawbot · ${selectedItem.qName}` : t('calendar.external_subscribed_event', '外部订阅日程')}
                 </span>
                 <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
                   {selectedItem.title}
@@ -1932,24 +1932,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               <div className="flex items-center gap-2 text-gray-600 dark:text-[#c4c7c5]">
                 <Clock className="w-4 h-4 text-gray-400" />
                 <span>
-                  {formatTime(selectedItem.start)} – {formatTime(selectedItem.end)} ({selectedItem.allDay ? '全天' : '定时'})
+                  {formatTime(selectedItem.start)} – {formatTime(selectedItem.end)} ({selectedItem.allDay ? t('calendar.all_day', '全天') : t('calendar.timed', '定时')})
                 </span>
               </div>
               {selectedItem.kind === 'task' && (
                 <>
                   <div className="text-[11px] text-gray-500 dark:text-[#c4c7c5]">
-                    四象限分类: <span className="font-semibold text-gray-700 dark:text-[#e3e3e3]">{selectedItem.qName}</span>
+                    {t('calendar.quad_label', '四象限分类:')} <span className="font-semibold text-gray-700 dark:text-[#e3e3e3]">{selectedItem.qName}</span>
                   </div>
                   {(Boolean(selectedItem.task.is_fixed) || Boolean(selectedItem.task.is_concurrent)) && (
                     <div className="flex gap-1.5 mt-1">
                       {Boolean(selectedItem.task.is_fixed) && (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
-                          📌 固定时间任务
+                          {t('calendar.fixed_task_label', '📌 固定时间任务')}
                         </span>
                       )}
                       {Boolean(selectedItem.task.is_concurrent) && (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
-                          ⚡ 双线程任务
+                          {t('calendar.concurrent_task_label', '⚡ 双线程任务')}
                         </span>
                       )}
                     </div>
@@ -1970,7 +1970,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
                   className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
                 >
-                  删除事项
+                  {t('calendar.delete_item', '删除事项')}
                 </button>
                 <div className="flex flex-wrap justify-end gap-2">
                   <button
@@ -1978,39 +1978,39 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                     onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
                     className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
-                    编辑任务
+                    {t('calendar.edit_item', '编辑任务')}
                   </button>
                   <button
                     type="button"
                     onClick={async () => {
-                      setPlanning({ title: '正在重新安排任务', status: 'working' });
+                      setPlanning({ title: t('calendar.replan_task_loading', '正在重新安排任务'), status: 'working' });
                       try {
                         const response = await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
                         setSelectedItem(null);
-                        setPlanning({ title: '任务已重新安排', status: 'success', detail: response.data.message });
+                        setPlanning({ title: t('calendar.replan_task_success', '任务已重新安排'), status: 'success', detail: response.data.message });
                         await fetchData();
                       } catch (error) {
                         const err = error as { response?: { data?: { error?: string } } };
-                        setPlanning({ title: '重新排程失败', status: 'error', detail: err.response?.data?.error || '请重试' });
+                        setPlanning({ title: t('calendar.replan_task_fail', '重新排程失败'), status: 'error', detail: err.response?.data?.error || t('calendar.retry_text', '请重试') });
                       }
                     }}
                     className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
-                    重新排程
+                    {t('calendar.replan_task_btn', '重新排程')}
                   </button>
                   {selectedItem.qName !== '已完成' && <button
                     type="button"
                     onClick={() => handleCompletePart(selectedItem.task.id)}
                     className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
-                    完成本节
+                    {t('calendar.complete_part', '完成本节')}
                   </button>}
                   <button
                     type="button"
                     onClick={() => handleCompleteTask(selectedItem.task.id, selectedItem.qName === '已完成')}
                     className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
                   >
-                    {selectedItem.qName === '已完成' ? '标记为未完成' : '全部完成'}
+                    {selectedItem.qName === '已完成' ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
                   </button>
                 </div>
               </div>
@@ -2019,14 +2019,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         </div>
       )}
 
-      {/* 4. 截止待办详情模态框 */}
+      {/* 4. {t('calendar.due_task_modal_title', '截止待办')}详情模态框 */}
       {selectedDueTask && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
-                  截止待办
+                  {t('calendar.due_task_modal_title', '截止待办')}
                 </span>
                 <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
                   {selectedDueTask.title}
@@ -2042,14 +2042,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
             <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl space-y-1.5 text-xs">
               <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
-                <span>截止时间:</span>
+                <span>{t('calendar.deadline_label', '截止时间:')}</span>
                 <span className="font-mono font-semibold">
-                  {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString() : '未设置'}
+                  {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.not_set', '未设置')}
                 </span>
               </div>
               <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
-                <span>预估耗时:</span>
-                <span className="font-mono">{selectedDueTask.duration_minutes} 分钟</span>
+                <span>{t('calendar.est_duration', '预估耗时:')}</span>
+                <span className="font-mono">{selectedDueTask.duration_minutes} {t('calendar.mins_unit', '分钟')}</span>
               </div>
               {selectedDueTask.notes && (
                 <div className="pt-2 border-t border-gray-200/80 dark:border-[#444746] text-gray-600 dark:text-[#c4c7c5] whitespace-pre-wrap">
@@ -2064,21 +2064,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 onClick={() => handleDeleteCalendarTask(selectedDueTask.id)}
                 className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
               >
-                删除事项
+                {t('calendar.delete_item', '删除事项')}
               </button>
               <button
                 type="button"
                 onClick={() => { setEditingTask(selectedDueTask); setSelectedDueTask(null); }}
                 className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
               >
-                编辑任务
+                {t('calendar.edit_item', '编辑任务')}
               </button>
               <button
                 type="button"
                 onClick={() => handleCompleteTask(selectedDueTask.id)}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
               >
-                完成事项
+                {t('calendar.complete_item', '完成事项')}
               </button>
             </div>
           </div>
@@ -2091,10 +2091,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
-                  当日全部安排
+                  {t('calendar.day_all_events', '当日全部安排')}
                 </span>
                 <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
-                  {overflowDayData.date.getFullYear()}年{overflowDayData.date.getMonth() + 1}月{overflowDayData.date.getDate()}日
+                  {language.startsWith('en')
+                    ? overflowDayData.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : `${overflowDayData.date.getFullYear()}年${overflowDayData.date.getMonth() + 1}月${overflowDayData.date.getDate()}日`}
                 </h3>
               </div>
               <button
@@ -2130,7 +2132,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 >
                   <span className="font-medium truncate">{seg.title}</span>
                   <span className="text-[10px] font-mono opacity-80 shrink-0">
-                    {seg.allDay ? '全天' : `${formatTime(seg.start)}–${formatTime(seg.end)}`}
+                    {seg.allDay ? t('calendar.all_day', '全天') : `${formatTime(seg.start)}–${formatTime(seg.end)}`}
                   </span>
                 </button>
               ))}
@@ -2147,7 +2149,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 }}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
               >
-                切换至周视图查看时间轴
+                {t('calendar.switch_to_week_timeline', '切换至周视图查看时间轴')}
               </button>
             </div>
           </div>

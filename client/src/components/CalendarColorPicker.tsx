@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useTheme } from '../context/ThemeContext';
 import { Check, X, RotateCcw, Palette } from 'lucide-react';
 
 export const PRESET_CALENDAR_COLORS = [
-  { hex: '#2563EB', name: '经典蓝' },
-  { hex: '#10B981', name: '翡翠绿' },
-  { hex: '#F59E0B', name: '琥珀黄' },
-  { hex: '#EF4444', name: '番茄红' },
-  { hex: '#8E24AA', name: '葡萄紫' },
+  { hex: '#2563EB', key: 'calendar.color_blue', name: '经典蓝' },
+  { hex: '#10B981', key: 'calendar.color_green', name: '翡翠绿' },
+  { hex: '#F59E0B', key: 'calendar.color_amber', name: '琥珀黄' },
+  { hex: '#EF4444', key: 'calendar.color_red', name: '番茄红' },
+  { hex: '#8E24AA', key: 'calendar.color_purple', name: '葡萄紫' },
 ];
 
 interface CalendarColorPickerProps {
@@ -25,6 +26,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
   onReset,
   children,
 }) => {
+  const { t } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
   const [customHex, setCustomHex] = useState(color);
   const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -160,7 +162,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
           {/* Palette Color Grid (5 cols x 4 rows) */}
           <div>
             <div className="text-[10px] font-semibold text-gray-400 dark:text-neutral-500 uppercase tracking-wider mb-2">
-              预设颜色
+              {t('calendar.preset_colors', '预设颜色')}
             </div>
             <div className="grid grid-cols-5 gap-2 justify-items-center">
               {PRESET_CALENDAR_COLORS.map((preset) => {
@@ -172,7 +174,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
                     onClick={() => handleSelectPreset(preset.hex)}
                     className="w-6.5 h-6.5 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-120 hover:shadow-md ring-1 ring-black/5 dark:ring-white/10 relative group"
                     style={{ backgroundColor: preset.hex }}
-                    title={preset.name}
+                    title={t(preset.key, preset.name)}
                   >
                     {isSelected && (
                       <Check className="w-3.5 h-3.5 text-white drop-shadow stroke-[2.5]" />
@@ -186,13 +188,13 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
           {/* Custom Color Input */}
           <div className="pt-2 border-t border-gray-100 dark:border-neutral-800 space-y-2">
             <div className="text-[10px] font-semibold text-gray-400 dark:text-neutral-500 uppercase tracking-wider">
-              自定义颜色
+              {t('calendar.custom_color', '自定义颜色')}
             </div>
             <form onSubmit={handleApplyCustom} className="flex items-center gap-2">
               <label
                 className="w-7 h-7 rounded-lg overflow-hidden shrink-0 cursor-pointer border border-gray-200 dark:border-neutral-700 flex items-center justify-center hover:scale-105 transition shadow-2xs relative"
                 style={{ backgroundColor: customHex }}
-                title="选择自定义颜色"
+                title={t('calendar.custom_color', '选择自定义颜色')}
               >
                 <input
                   type="color"
@@ -215,7 +217,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
                 disabled={!/^#[0-9a-fA-F]{6}$/.test(customHex)}
                 className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-[11px] font-medium transition cursor-pointer shrink-0"
               >
-                确定
+                {t('calendar.confirm_color', '确定')}
               </button>
             </form>
           </div>
@@ -232,7 +234,7 @@ export const CalendarColorPicker: React.FC<CalendarColorPickerProps> = ({
                 className="w-full flex items-center justify-center gap-1.5 py-1 text-gray-500 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-neutral-800/60 rounded-lg transition text-[11px] cursor-pointer"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>恢复默认颜色</span>
+                <span>{t('calendar.reset_color', '恢复默认颜色')}</span>
               </button>
             </div>
           )}

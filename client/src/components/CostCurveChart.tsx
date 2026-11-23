@@ -352,7 +352,7 @@ export const CostCurveChart: React.FC<CostCurveChartProps> = ({ data, loading })
               >
                 <div className="text-[11px] font-bold text-gray-300 flex items-center justify-between gap-3 border-b border-gray-800 pb-1">
                   <span>{activePoint.point.date || activePoint.point.label}</span>
-                  <span className="text-gray-300 font-medium">{activePoint.point.requests} 次调用</span>
+                  <span className="text-gray-300 font-medium">{activePoint.point.requests} {t('common.calls', '次调用')}</span>
                 </div>
                 <div className="text-white font-bold text-sm">
                   ¥{activePoint.point.cost_cny.toFixed(4)}

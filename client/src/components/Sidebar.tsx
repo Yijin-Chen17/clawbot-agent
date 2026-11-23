@@ -63,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { key: 'q2', label: 'Schedule', icon: Star, color: 'text-blue-500' },
     { key: 'q3', label: 'Delegate', icon: Clock, color: 'text-amber-500' },
     { key: 'q4', label: 'Eliminate', icon: Layers, color: 'text-gray-400 dark:text-neutral-500' },
-    { key: 'completed', label: t('nav.completed', '已完成事项'), icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
+    { key: 'completed', label: t('nav.completed_tasks', '已完成事项'), icon: Archive, color: 'text-gray-400 dark:text-neutral-500' },
   ];
 
   const handleSelectView = (viewId: string) => {
@@ -198,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setTasksExpanded((prev) => !prev);
                 }}
                 className="p-0.5 text-gray-400 hover:text-gray-600 dark:text-neutral-500 dark:hover:text-neutral-300 rounded transition cursor-pointer"
-                title={tasksExpanded ? '折叠分类' : '展开分类'}
+                title={tasksExpanded ? t('nav.collapse_cat', '折叠分类') : t('nav.expand_cat', '展开分类')}
               >
                 {tasksExpanded ? (
                   <ChevronDown className="w-3.5 h-3.5" />
@@ -311,14 +311,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
               : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
           }`}
-          title="账号与系统设置"
+          title={t('nav.account_settings', '设置与偏好')}
         >
           {/* 左：头像 + 昵称 */}
           <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2 text-left">
             {user?.avatar_url ? (
               <img
                 src={user.avatar_url}
-                alt="头像"
+                alt={t('account.avatar', '个人头像')}
                 className="w-7 h-7 rounded-full object-cover shrink-0 ring-1 ring-gray-200 dark:ring-neutral-700 shadow-2xs"
               />
             ) : (

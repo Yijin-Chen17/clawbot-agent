@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useTheme } from '../context/ThemeContext';
 import { CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
 export interface PlanningState {
@@ -9,6 +10,7 @@ export interface PlanningState {
 }
 
 export const PlanningProgress: React.FC<{ state: PlanningState; onClose: () => void }> = ({ state, onClose }) => {
+  const { t } = useTheme();
   const startedAt = useRef(Date.now());
   const [displayState, setDisplayState] = useState(state);
   const [slow, setSlow] = useState(false);
@@ -45,15 +47,15 @@ export const PlanningProgress: React.FC<{ state: PlanningState; onClose: () => v
         </div>
         <div className="min-w-0">
           <h2 className="text-base font-semibold">{displayState.title}</h2>
-          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-neutral-400">{displayState.status === 'working' ? (slow ? '计算仍在进行，请稍候' : '正在计算，请稍候') : displayState.detail}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-neutral-400">{displayState.status === 'working' ? (slow ? t('plan.still_computing', '计算仍在进行，请稍候') : t('plan.computing', '正在计算，请稍候')) : displayState.detail}</p>
         </div>
       </div>
       {displayState.status === 'working' && (
         <div className="mt-6 space-y-3 rounded-2xl bg-slate-50 dark:bg-neutral-800/60 px-4 py-4 text-xs text-slate-600 dark:text-neutral-300">
           {[
-            '读取可用时间与已有日程',
-            '比较任务优先级、截止压力与分段',
-            displayState.single ? '寻找合适的空闲时段' : '计算全部任务的安排并保存',
+            t('plan.step1', '读取可用时间与已有日程'),
+            t('plan.step2', '比较任务优先级、截止压力与分段'),
+            displayState.single ? t('plan.step3_single', '寻找合适的空闲时段') : t('plan.step3_all', '计算全部任务的安排并保存'),
           ].map((label, index) => (
             <div key={label} className="flex items-center gap-2.5">
               {completedSteps > index ? (
@@ -64,10 +66,10 @@ export const PlanningProgress: React.FC<{ state: PlanningState; onClose: () => v
               <span>{label}</span>
             </div>
           ))}
-          <p className="text-[11px] text-slate-400 dark:text-neutral-500">计算完成后显示确认</p>
+          <p className="text-[11px] text-slate-400 dark:text-neutral-500">{t('plan.confirm_hint', '计算完成后显示确认')}</p>
         </div>
       )}
-      {displayState.status !== 'working' && <button type="button" onClick={onClose} className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700">完成</button>}
+      {displayState.status !== 'working' && <button type="button" onClick={onClose} className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700">{t('common.done', '完成')}</button>}
     </div>
   </div>
   );
