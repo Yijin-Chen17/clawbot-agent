@@ -10,6 +10,15 @@ import {
   type UrgencyPace,
 } from '../utils/priorityAlgorithm.js';
 import { normalizeAccountDeadlineIso, parseAccountDateOrIso } from '../utils/timezone.js';
+import { parseRecurrenceRule, stringifyRecurrenceRule } from '../utils/recurrence.js';
+
+export function normalizeRecurrenceRuleForMode(rawRule: unknown, timeMode?: string | null): string | null {
+  if (timeMode !== 'daily_fixed') return null;
+  if (rawRule === undefined || rawRule === null || rawRule === '') {
+    return stringifyRecurrenceRule({ type: 'daily' });
+  }
+  return stringifyRecurrenceRule(parseRecurrenceRule(typeof rawRule === 'string' ? rawRule : JSON.stringify(rawRule)));
+}
 
 export function parseTagsArray(raw: unknown): string[] {
   if (Array.isArray(raw)) {
@@ -58,6 +67,7 @@ export const createTaskCommandSchema = z.object({
   importance_manual_override: z.number().finite().min(0).max(100).nullable().optional(),
   score_scale: z.number().int().optional(),
   time_mode: z.enum(['deadline', 'daily_fixed', 'flexible']).nullable().optional(),
+  recurrence_rule: z.any().nullable().optional(),
   urgency_pace: z.enum(['urgent', 'soon', 'later']).nullable().optional(),
   deadline: z.string().nullable().optional(),
   deadline_kind: z.enum(['hard', 'soft']).nullable().optional(),
@@ -84,6 +94,7 @@ export const updateTaskCommandSchema = z.object({
   importance_manual_override: z.number().finite().min(0).max(100).nullable().optional(),
   score_scale: z.number().int().optional(),
   time_mode: z.enum(['deadline', 'daily_fixed', 'flexible']).optional(),
+  recurrence_rule: z.any().nullable().optional(),
   urgency_pace: z.enum(['urgent', 'soon', 'later']).optional(),
   deadline: z.string().nullable().optional(),
   deadline_kind: z.enum(['hard', 'soft']).optional(),

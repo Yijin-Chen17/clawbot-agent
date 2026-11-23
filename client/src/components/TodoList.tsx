@@ -164,7 +164,9 @@ export const TodoList: React.FC = () => {
 
   const handleToggleComplete = (task: Task) => {
     if (task.status === 'completed') {
-      handleReschedule(task.id);
+      api.post(`/tasks/${task.id}/action`, { action: 'reopen' })
+        .then(() => fetchTasks())
+        .catch(() => alert(language === 'en' ? 'Reopen failed' : '恢复待办失败'));
     } else {
       handleAction(task.id, 'complete');
     }

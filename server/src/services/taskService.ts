@@ -1,7 +1,8 @@
 import { db } from '../config/database.js';
 import type { ExternalEvent, Task, TaskInstance, UserSettings } from '../models/types.js';
 import { getUserTimezone } from './accountService.js';
-import { getAccountDayBoundsUtc, getAccountLocalDateKey, parseAccountDateOrIso } from '../utils/timezone.js';
+import { addDaysToDateKey, getAccountDayBoundsUtc, getAccountLocalDateKey, parseAccountDateOrIso } from '../utils/timezone.js';
+import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   ensureTaskInstance,
   executeInstanceProgressCommand,
@@ -21,12 +22,34 @@ import { createScheduleProposal } from './proposalService.js';
 import {
   createTaskCommandSchema,
   normalizeCommandDeadline,
+  normalizeRecurrenceRuleForMode,
   parseImpactSignalsArray,
   parseTagsArray,
   resolveTaskPriorityScores,
   updateTaskCommandSchema,
   validateFixedInterval,
 } from './taskCommandSchema.js';
+
+function resolveInitialBusinessDate(
+  timeMode: string,
+  recurrenceRule: string | null,
+  fixedStartIso: string | null,
+  now: Date,
+  tz: string
+): string {
+  if (fixedStartIso) {
+    return getAccountLocalDateKey(new Date(fixedStartIso), tz);
+  }
+  const todayKey = getAccountLocalDateKey(now, tz);
+  if (timeMode !== 'daily_fixed') return todayKey;
+  for (let offset = 0; offset < 7; offset++) {
+    const candidate = offset === 0 ? todayKey : addDaysToDateKey(todayKey, offset);
+    if (isDateMatchingRecurrence(candidate, recurrenceRule)) {
+      return candidate;
+    }
+  }
+  return todayKey;
+}
 
 export type TargetResolution =
   | { status: 'found_task'; task: Task; instance?: TaskInstance | null }
@@ -244,6 +267,7 @@ export async function createTaskCommand(params: {
         : null,
     score_scale: raw.score_scale ?? 100,
     time_mode: raw.time_mode ?? null,
+    recurrence_rule: raw.recurrence_rule ?? null,
     urgency_pace: raw.urgency_pace ?? null,
     deadline: raw.deadline ?? null,
     deadline_kind: raw.deadline_kind ?? null,
@@ -418,6 +442,8 @@ export async function createTaskCommand(params: {
     }
   }
 
+  const recurrenceRuleJson = normalizeRecurrenceRuleForMode(cmd.recurrence_rule, scores.timeMode);
+
   // 6. Atomic DB insert of task + task_instance (+ fixed block if fixed)
   let newTaskId = 0;
   let newInstanceId = 0;
@@ -432,11 +458,11 @@ export async function createTaskCommand(params: {
     const res = db.prepare(`
       INSERT INTO tasks (
         user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-        importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
+        importance_tier, impact_signals, time_mode, recurrence_rule, urgency_pace, importance_manual_override,
         score_scale, completed_dates, deadline, deadline_kind,
         scheduled_start, scheduled_end, is_fixed, is_concurrent, tags, status,
         schedule_blocks, session_plan, notes, version, active_template, source_fingerprint
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
     `).run(
       params.userId,
       cmd.title,
@@ -447,6 +473,7 @@ export async function createTaskCommand(params: {
       scores.importanceTier,
       JSON.stringify(scores.impactSignals),
       scores.timeMode,
+      recurrenceRuleJson,
       scores.urgencyPace,
       scores.manualOverride,
       normalizedDeadline,
@@ -464,7 +491,8 @@ export async function createTaskCommand(params: {
     );
 
     newTaskId = Number(res.lastInsertRowid);
-    const inst = ensureTaskInstance(params.userId, newTaskId, getAccountLocalDateKey(now, tz), now)!;
+    const initialBizDate = resolveInitialBusinessDate(scores.timeMode, recurrenceRuleJson, fixedCheck.startIso, now, tz);
+    const inst = ensureTaskInstance(params.userId, newTaskId, initialBizDate, now)!;
     newInstanceId = inst.id;
 
     if (cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso) {
@@ -556,6 +584,7 @@ export async function updateTaskCommand(params: {
   }
   if (raw.score_scale !== undefined) normalizedInput.score_scale = raw.score_scale;
   if (raw.time_mode !== undefined) normalizedInput.time_mode = raw.time_mode;
+  if (raw.recurrence_rule !== undefined) normalizedInput.recurrence_rule = raw.recurrence_rule;
   if (raw.urgency_pace !== undefined) normalizedInput.urgency_pace = raw.urgency_pace;
   if (raw.deadline !== undefined) normalizedInput.deadline = raw.deadline;
   if (raw.deadline_kind !== undefined) normalizedInput.deadline_kind = raw.deadline_kind;
@@ -655,6 +684,10 @@ export async function updateTaskCommand(params: {
   });
 
   const nextVersion = (existing.version || 1) + 1;
+  const nextRecurrenceRule =
+    cmd.recurrence_rule !== undefined
+      ? normalizeRecurrenceRuleForMode(cmd.recurrence_rule, scores.timeMode)
+      : normalizeRecurrenceRuleForMode(existing.recurrence_rule, scores.timeMode);
 
   db.transaction(() => {
     db.prepare(`
@@ -670,6 +703,7 @@ export async function updateTaskCommand(params: {
           importance_tier = ?,
           impact_signals = ?,
           time_mode = ?,
+          recurrence_rule = ?,
           urgency_pace = ?,
           importance_manual_override = ?,
           score_scale = 100,
@@ -692,6 +726,7 @@ export async function updateTaskCommand(params: {
       scores.importanceTier,
       JSON.stringify(scores.impactSignals),
       scores.timeMode,
+      nextRecurrenceRule,
       scores.urgencyPace,
       scores.manualOverride,
       nextDeadline,
@@ -706,7 +741,24 @@ export async function updateTaskCommand(params: {
     );
 
     if (inst) {
-      // Update active instance estimated_minutes preserving already completed minutes
+      if (
+        scores.timeMode === 'daily_fixed' &&
+        !isDateMatchingRecurrence(todayKey, nextRecurrenceRule) &&
+        inst.status === 'pending' &&
+        inst.completed_minutes === 0
+      ) {
+        db.prepare(`
+          UPDATE task_instances
+          SET status = 'cancelled', allocated_minutes = 0, unallocated_minutes = 0, version = version + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(inst.id);
+        db.prepare(`
+          UPDATE schedule_blocks
+          SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+          WHERE instance_id = ? AND status IN ('planned', 'conflict')
+        `).run(inst.id);
+      } else {
+        // Update active instance estimated_minutes preserving already completed minutes
       const nextEstimated = Math.max(inst.completed_minutes, inst.completed_minutes + finalDuration);
       db.prepare(`
         UPDATE task_instances
@@ -748,6 +800,7 @@ export async function updateTaskCommand(params: {
           SET is_fixed = 0, is_committed = 0, status = 'superseded', updated_at = CURRENT_TIMESTAMP
           WHERE instance_id = ? AND status IN ('planned', 'conflict')
         `).run(inst.id);
+      }
       }
       syncLegacyTaskProjection(params.userId, existing.id, now);
     }

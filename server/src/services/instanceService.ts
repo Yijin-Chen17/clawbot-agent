@@ -9,6 +9,7 @@ import type {
 } from '../models/types.js';
 import { getUserTimezone } from './accountService.js';
 import { getAccountLocalDateKey } from '../utils/timezone.js';
+import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import { cancelNotificationsForBlock, cancelNotificationsForInstance } from './outboxService.js';
 
 function parseJsonArray<T = any>(raw: unknown): T[] {
@@ -135,10 +136,46 @@ export function ensureTodayDailyInstancesForUser(userId: number, now: Date = new
 
   const result: TaskInstance[] = [];
   for (const t of dailyTemplates) {
+    if (!isDateMatchingRecurrence(todayKey, t.recurrence_rule)) continue;
     const inst = ensureTaskInstance(userId, t.id, todayKey, now);
     if (inst) result.push(inst);
   }
   return result;
+}
+
+/**
+ * 将已经过去的未完成每日实例归档取消，防止阻挡今日滚动排程或重复占位。
+ */
+export function cancelStalePastDailyInstances(userId: number, todayKey: string): void {
+  const staleRows = db.prepare(`
+    SELECT id FROM task_instances
+    WHERE user_id = ?
+      AND instance_type = 'daily'
+      AND business_date < ?
+      AND status IN ('pending', 'in_progress')
+  `).all(userId, todayKey) as Array<{ id: number }>;
+
+  if (staleRows.length === 0) return;
+  db.transaction(() => {
+    for (const r of staleRows) {
+      db.prepare(`
+        UPDATE task_instances
+        SET status = 'cancelled',
+            allocated_minutes = 0,
+            unallocated_minutes = 0,
+            cancelled_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(r.id);
+      db.prepare(`
+        UPDATE schedule_blocks
+        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+        WHERE instance_id = ? AND status IN ('planned', 'in_progress', 'conflict')
+      `).run(r.id);
+      cancelNotificationsForInstance(r.id);
+    }
+  })();
 }
 
 /**

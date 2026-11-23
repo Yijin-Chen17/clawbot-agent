@@ -563,6 +563,10 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
     if (mod.is_concurrent !== undefined && mod.is_concurrent !== null) updatePayload.is_concurrent = mod.is_concurrent;
     if (mod.tags) updatePayload.tags = mod.tags;
     if (mod.notes !== undefined) updatePayload.notes = mod.notes;
+    if (parsed.time_mode) updatePayload.time_mode = parsed.time_mode;
+    if (parsed.recurrence_rule !== undefined && parsed.recurrence_rule !== null) {
+      updatePayload.recurrence_rule = parsed.recurrence_rule;
+    }
     if (mod.new_start) {
       updatePayload.scheduled_start = mod.new_start;
       updatePayload.is_fixed = true;
@@ -649,6 +653,7 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       deadline,
       deadline_kind: deadlineKind,
       time_mode: timeMode,
+      recurrence_rule: parsed.recurrence_rule ?? prevDraft.recurrence_rule ?? null,
       importance: parsed.importance ?? prevDraft.importance ?? null,
       importance_tier: parsed.importance_tier ?? prevDraft.importance_tier ?? null,
       impact_signals: parsed.impact_signals ?? prevDraft.impact_signals ?? [],
@@ -686,6 +691,7 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
         deadline: mergedDraft.deadline,
         deadline_kind: mergedDraft.deadline_kind,
         time_mode: mergedDraft.time_mode,
+        recurrence_rule: mergedDraft.recurrence_rule,
         importance: mergedDraft.importance,
         importance_tier: mergedDraft.importance_tier,
         impact_signals: mergedDraft.impact_signals,

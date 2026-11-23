@@ -29,6 +29,7 @@ import {
 import { getUserTimezone } from './accountService.js';
 import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
+  cancelStalePastDailyInstances,
   ensureTaskInstance,
   ensureTodayDailyInstancesForUser,
   executeInstanceProgressCommand,
@@ -598,7 +599,7 @@ export function computeTodayBusyMinutes(
     }
   } else {
     const scheduledTasks = db.prepare(`
-      SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, is_fixed, is_concurrent, completed_dates
+      SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, recurrence_rule, is_fixed, is_concurrent, completed_dates
       FROM tasks
       WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
         AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
@@ -935,6 +936,7 @@ export function runSingleDaySchedule(
     if (task.status === 'completed' || task.status === 'cancelled' || targetDateStr < todayStr) return false;
     if (task.time_mode === 'daily_fixed') {
       if (targetDateStr !== todayStr) return false;
+      if (!isDateMatchingRecurrence(targetDateStr, task.recurrence_rule)) return false;
       try {
         if (JSON.parse(task.completed_dates || '[]').includes(targetDateStr)) return false;
       } catch {}
@@ -1180,8 +1182,9 @@ export function replanUserTasks(
     const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
     const horizonDays = 14;
 
-    // 1. Ensure active daily templates have today's instance & legacy tasks have instances
+    // 1. Ensure active daily templates have today's instance & stale past daily instances are cancelled
     ensureTodayDailyInstancesForUser(userId, now);
+    cancelStalePastDailyInstances(userId, todayKey);
     const rawTasks = db.prepare(`
       SELECT * FROM tasks
       WHERE user_id = ? AND status != 'cancelled'
@@ -1199,15 +1202,24 @@ export function replanUserTasks(
     // Load all active instances joined with their task definitions
     const activeInstances = db.prepare(`
       SELECT ti.*, t.title, t.importance, t.urgency, t.score_scale, t.importance_tier,
-             t.impact_signals, t.time_mode, t.urgency_pace, t.deadline, t.deadline_kind,
+             t.impact_signals, t.time_mode, t.recurrence_rule, t.urgency_pace, t.deadline, t.deadline_kind,
              t.is_fixed, t.is_concurrent, t.session_plan, t.original_duration_minutes,
-             t.completed_dates, t.created_at as task_created_at, t.active_template
+             t.completed_dates, t.created_at as task_created_at, t.active_template,
+             t.scheduled_start as template_scheduled_start, t.scheduled_end as template_scheduled_end
       FROM task_instances ti
       JOIN tasks t ON t.id = ti.task_id
       WHERE ti.user_id = ?
         AND ti.status IN ('pending', 'in_progress')
         AND t.status != 'cancelled'
-    `).all(userId) as Array<TaskInstance & Task & { task_created_at: string; active_template: number }>;
+    `).all(userId) as Array<
+      TaskInstance &
+        Task & {
+          task_created_at: string;
+          active_template: number;
+          template_scheduled_start?: string | null;
+          template_scheduled_end?: string | null;
+        }
+    >;
 
     if (activeInstances.length === 0) {
       const committed = commitSchedulePlan({
@@ -1260,12 +1272,24 @@ export function replanUserTasks(
     const concurrentFixedBusy: FixedCalendarBlock[] = [];
 
     const preservedByInstance = new Map<number, ScheduleBlockRecord[]>();
+    const materializedFixedByInstance = new Map<
+      number,
+      Array<{ start: Date; end: Date; durationMinutes: number; conflict: boolean }>
+    >();
     const conflictedBlockIdsByInstance = new Map<number, string[]>();
     const movableTasksToSchedule: Task[] = [];
     const instanceByTaskId = new Map<number, typeof activeInstances[number]>();
     const remainingNeededByInstance = new Map<number, number>();
+    const activeInstancesForPlan: typeof activeInstances = [];
 
     for (const row of activeInstances) {
+      if (row.time_mode === 'daily_fixed' && !isDateMatchingRecurrence(row.business_date, row.recurrence_rule)) {
+        continue;
+      }
+      if (row.time_mode === 'daily_fixed' && row.is_fixed !== 1 && row.business_date > todayKey) {
+        continue;
+      }
+      activeInstancesForPlan.push(row);
       taskTitlesById.set(row.task_id, row.title);
 
       // Refresh urgency dynamically for both daily_fixed AND normal tasks (T09)
@@ -1342,19 +1366,60 @@ export function replanUserTasks(
         }
       }
 
+      // Materialize rolled-over daily_fixed fixed block for newly generated day instances
+      if (
+        row.time_mode === 'daily_fixed' &&
+        row.is_fixed === 1 &&
+        row.active_template !== 0 &&
+        protectedBlocks.length === 0 &&
+        row.template_scheduled_start &&
+        row.template_scheduled_end
+      ) {
+        const tmplStart = new Date(row.template_scheduled_start);
+        const tmplEnd = new Date(row.template_scheduled_end);
+        const durMs = Math.max(60000, tmplEnd.getTime() - tmplStart.getTime());
+        const hm = getHourDecimalInTz(tmplStart, tz);
+        const hh = Math.floor(hm);
+        const mm = Math.round((hm - hh) * 60);
+        const dayStart = zonedWallClockToUtc(row.business_date, hh, mm, 0, 0, tz);
+        const dayEnd = new Date(dayStart.getTime() + durMs);
+        const hitsExt = row.is_concurrent !== 1 && externalBusy.some(ext => intervalsOverlap(dayStart, dayEnd, ext.start, ext.end));
+        materializedFixedByInstance.set(row.id, [
+          {
+            start: dayStart,
+            end: dayEnd,
+            durationMinutes: Math.max(1, Math.round(durMs / 60000)),
+            conflict: hitsExt,
+          },
+        ]);
+        const busyEntry: FixedCalendarBlock = {
+          id: `daily-fixed-mat-${row.id}`,
+          title: `[固定周期] ${row.title}`,
+          start: dayStart,
+          end: dayEnd,
+          isAllDay: false,
+        };
+        if (row.is_concurrent === 1) concurrentFixedBusy.push(busyEntry);
+        else exclusiveFixedBusy.push(busyEntry);
+      }
+
       // Daily fixed template future projection into busy events across horizon
-      if (row.time_mode === 'daily_fixed' && row.is_fixed === 1 && row.active_template !== 0 && protectedBlocks.length > 0) {
+      if (row.time_mode === 'daily_fixed' && row.is_fixed === 1 && row.active_template !== 0 && (protectedBlocks.length > 0 || materializedFixedByInstance.has(row.id))) {
+        const mat = materializedFixedByInstance.get(row.id);
+        const baseStartIso = protectedBlocks[0]?.start_time || mat?.[0]?.start.toISOString() || row.template_scheduled_start!;
+        const baseEndIso = protectedBlocks[protectedBlocks.length - 1]?.end_time || mat?.[0]?.end.toISOString() || row.template_scheduled_end!;
         const baseTaskShape = {
           id: row.task_id,
           title: row.title,
-          scheduled_start: protectedBlocks[0].start_time,
-          scheduled_end: protectedBlocks[protectedBlocks.length - 1].end_time,
-          schedule_blocks: JSON.stringify(protectedBlocks.map(b => ({ start: b.start_time, end: b.end_time }))),
+          scheduled_start: baseStartIso,
+          scheduled_end: baseEndIso,
+          schedule_blocks: JSON.stringify([{ start: baseStartIso, end: baseEndIso }]),
           time_mode: row.time_mode,
+          recurrence_rule: row.recurrence_rule,
           is_fixed: 1,
           completed_dates: row.completed_dates,
         };
-        const projected = taskToBusyEvents(baseTaskShape, 'daily-fixed-proj', now, horizonDays, tz).slice(protectedBlocks.length);
+        const projected = taskToBusyEvents(baseTaskShape, 'daily-fixed-proj', now, horizonDays, tz).slice(1);
         if (row.is_concurrent === 1) concurrentFixedBusy.push(...projected);
         else exclusiveFixedBusy.push(...projected);
       }
@@ -1364,9 +1429,9 @@ export function replanUserTasks(
         conflictedBlockIdsByInstance.set(row.id, conflictIds);
       }
 
-      const activeProtectedMins = protectedBlocks
-        .filter(b => b.status !== 'completed')
-        .reduce((sum, b) => sum + b.duration_minutes, 0);
+      const activeProtectedMins =
+        protectedBlocks.filter(b => b.status !== 'completed').reduce((sum, b) => sum + b.duration_minutes, 0) +
+        (materializedFixedByInstance.get(row.id)?.reduce((s, m) => s + m.durationMinutes, 0) || 0);
       const totalRemMins = Math.max(0, row.estimated_minutes - row.completed_minutes);
       const unallocatedToPlan = Math.max(0, totalRemMins - activeProtectedMins);
       remainingNeededByInstance.set(row.id, unallocatedToPlan);
@@ -1387,6 +1452,7 @@ export function replanUserTasks(
           importance_tier: row.importance_tier,
           impact_signals: row.impact_signals,
           time_mode: row.time_mode,
+          recurrence_rule: row.recurrence_rule,
           urgency_pace: row.urgency_pace,
           completed_dates: row.completed_dates,
           score_scale: 100,
@@ -1452,12 +1518,14 @@ export function replanUserTasks(
     let hardPending = 0;
     let conflictCount = 0;
 
-    for (const row of activeInstances) {
+    for (const row of activeInstancesForPlan) {
       const preserved = preservedByInstance.get(row.id) || [];
+      const materialized = materializedFixedByInstance.get(row.id) || [];
       const conflictIds = conflictedBlockIdsByInstance.get(row.id) || [];
       const activeProtectedMins = preserved
         .filter(b => b.status !== 'completed')
         .reduce((sum, b) => sum + b.duration_minutes, 0);
+      const materializedMins = materialized.reduce((sum, m) => sum + m.durationMinutes, 0);
 
       let allocatedMovable = taskAllocations.get(row.task_id) || [];
       const stillUnallocated = remainingTaskIds.has(row.task_id);
@@ -1475,14 +1543,15 @@ export function replanUserTasks(
 
       const sortedNew = [...allocatedMovable].sort((a, b) => a.start.getTime() - b.start.getTime());
       const newMins = sortedNew.reduce((s, b) => s + b.durationMinutes, 0);
-      const totalAllocated = activeProtectedMins + newMins;
+      const totalAllocated = activeProtectedMins + materializedMins + newMins;
       const totalRemNeeded = Math.max(0, row.estimated_minutes - row.completed_minutes);
       const unallocatedMins = Math.max(0, totalRemNeeded - totalAllocated);
 
       let planStatus: ProposedInstancePlan['planStatus'] = 'pending';
       let planReason: string | null = null;
+      const hasMaterializedConflict = materialized.some(m => m.conflict);
 
-      if (conflictIds.length > 0) {
+      if (conflictIds.length > 0 || hasMaterializedConflict) {
         planStatus = 'conflict';
         planReason = '已固定或已确认时段与外部日程冲突';
         conflictCount++;
@@ -1503,8 +1572,38 @@ export function replanUserTasks(
         failedCount++;
       }
 
-      const totalParts = preserved.filter(b => b.status !== 'completed').length + sortedNew.length;
-      const preservedOffset = preserved.filter(b => b.status !== 'completed').length;
+      const allNewBlocks = [
+        ...materialized.map((m, idx) => ({
+          startTime: m.start.toISOString(),
+          endTime: m.end.toISOString(),
+          durationMinutes: m.durationMinutes,
+          partIndex: idx + 1,
+          totalParts: materialized.length,
+          isFixed: true,
+          isCommitted: true,
+          isConcurrent: row.is_concurrent === 1,
+          energyZone: null,
+          strategyLabel: null,
+          breakAfterMinutes: null,
+        })),
+        ...sortedNew.map((b, idx) => {
+          const totalParts = preserved.filter(p => p.status !== 'completed').length + materialized.length + sortedNew.length;
+          const offset = preserved.filter(p => p.status !== 'completed').length + materialized.length;
+          return {
+            startTime: b.start.toISOString(),
+            endTime: b.end.toISOString(),
+            durationMinutes: b.durationMinutes,
+            partIndex: offset + idx + 1,
+            totalParts,
+            isFixed: false,
+            isCommitted: false,
+            isConcurrent: row.is_concurrent === 1,
+            energyZone: b.energyZone,
+            strategyLabel: b.strategyLabel,
+            breakAfterMinutes: b.breakAfterMinutes,
+          };
+        }),
+      ];
 
       instancePlans.push({
         instanceId: row.id,
@@ -1515,19 +1614,7 @@ export function replanUserTasks(
         planReason,
         preservedBlocks: preserved,
         conflictedBlockIds: conflictIds,
-        newBlocks: sortedNew.map((b, idx) => ({
-          startTime: b.start.toISOString(),
-          endTime: b.end.toISOString(),
-          durationMinutes: b.durationMinutes,
-          partIndex: preservedOffset + idx + 1,
-          totalParts,
-          isFixed: false,
-          isCommitted: false,
-          isConcurrent: row.is_concurrent === 1,
-          energyZone: b.energyZone,
-          strategyLabel: b.strategyLabel,
-          breakAfterMinutes: b.breakAfterMinutes,
-        })),
+        newBlocks: allNewBlocks,
       });
     }
 

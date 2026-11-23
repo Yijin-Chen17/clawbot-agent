@@ -939,9 +939,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
-  const handleCompleteTask = async (taskId: number, reopen = false) => {
+  const handleCompleteTask = async (taskId: number, reopen = false, businessDate?: string) => {
     try {
-      await api.post(`/tasks/${taskId}/action`, { action: reopen ? 'reopen' : 'complete' });
+      await api.post(`/tasks/${taskId}/action`, {
+        action: reopen ? 'reopen' : 'complete',
+        ...(businessDate ? { business_date: businessDate } : {}),
+      });
       setSelectedItem(null);
       setSelectedDueTask(null);
       fetchData();
@@ -2016,7 +2019,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   >
                     {t('calendar.replan_task_btn', '重新排程')}
                   </button>
-                  {selectedItem.qName !== '已完成' && <button
+                  {!selectedItem.id.endsWith('-done') && <button
                     type="button"
                     onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
                     className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
@@ -2025,10 +2028,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   </button>}
                   <button
                     type="button"
-                    onClick={() => handleCompleteTask(selectedItem.task.id, selectedItem.qName === '已完成')}
+                    onClick={() =>
+                      handleCompleteTask(
+                        selectedItem.task.id,
+                        selectedItem.id.endsWith('-done'),
+                        dateKeyFromIso(selectedItem.start)
+                      )
+                    }
                     className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
                   >
-                    {selectedItem.qName === '已完成' ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
+                    {selectedItem.id.endsWith('-done') ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
                   </button>
                 </div>
               </div>
