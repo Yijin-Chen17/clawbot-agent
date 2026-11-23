@@ -907,9 +907,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 select-none">
       {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
       {/* 1. Google Calendar 经典顶部工具栏 */}
-      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+      <header className="min-h-14 px-2 sm:px-5 py-2 border-b border-gray-200/80 dark:border-[#444746] flex flex-wrap items-center justify-between gap-1 sm:gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧：菜单切换 + 今天按钮 + 翻周箭头 + 月份年份 */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1 sm:gap-3 min-w-0">
           {onOpenMobileMenu && (
             <button
               type="button"
@@ -961,7 +961,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           </div>
 
           {/* 月份年份标题 (如: November 2026 / 2026年11月) */}
-          <h2 className="text-lg sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight ml-1 sm:ml-2">
+          <h2 className="text-sm sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight ml-1 sm:ml-2 whitespace-nowrap">
             {formatMonthHeading(weekStart, language)}
           </h2>
         </div>
@@ -972,10 +972,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
             title={t('calendar.replan')}
-            className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-[#a8c7fa] border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-[#a8c7fa] border border-blue-200/90 dark:border-blue-800 rounded-full text-xs font-medium transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
-            <span>{replanLoading ? '正在重排' : '重排全部'}</span>
+            <span className="hidden sm:inline">{replanLoading ? '正在重排' : '重排全部'}</span>
           </button>
 
           <button
@@ -1254,7 +1254,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           className="h-full bg-white dark:bg-[#1e1f20] overflow-y-auto overflow-x-auto overscroll-contain relative transition-colors scrollbar-thin"
         >
           <div
-            className="grid min-w-[780px] pb-8 bg-white dark:bg-[#1e1f20]"
+            className="grid min-w-[560px] sm:min-w-[780px] pb-8 bg-white dark:bg-[#1e1f20]"
             style={{
               gridTemplateColumns: '56px repeat(7, minmax(0, 1fr))',
             }}

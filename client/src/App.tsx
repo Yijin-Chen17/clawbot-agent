@@ -68,7 +68,7 @@ const DashboardContent: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden flex bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 transition-colors">
+    <div className="h-[100dvh] w-full overflow-hidden flex bg-white dark:bg-[#1e1f20] text-gray-900 dark:text-gray-100 transition-colors">
       {/* 主流 AI Agent 风格左侧边栏 */}
       <Sidebar
         activeTab={activeTab}
@@ -138,16 +138,19 @@ const DashboardContent: React.FC = () => {
         )}
         {activeTab === 'admin' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
             <AdminUsersView onRefreshCount={fetchPendingCount} />
           </div>
         )}
         {activeTab === 'api' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
             <AdminApiView />
           </div>
         )}
         {activeTab === 'debug' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
             <SystemDebugger />
           </div>
         )}

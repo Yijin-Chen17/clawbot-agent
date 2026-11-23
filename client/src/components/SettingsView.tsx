@@ -881,16 +881,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   ) => (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 dark:border-neutral-800">
       <div className="flex items-center gap-3">
-        {onOpenMobileMenu && (
-          <button
-            type="button"
-            onClick={onOpenMobileMenu}
-            className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-            title="打开侧边导航"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        )}
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
           {icon}
         </div>
@@ -919,6 +909,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
   return (
     <div className="w-full flex-1 min-h-0 flex flex-col space-y-2.5 overflow-hidden">
+
+      {onOpenMobileMenu && (
+        <div className="md:hidden flex shrink-0 items-center gap-3 px-1 py-1">
+          <button type="button" onClick={onOpenMobileMenu} aria-label="打开侧边导航" className="flex h-10 w-10 items-center justify-center rounded-xl text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">
+            <Menu className="w-5 h-5" />
+          </button>
+          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('nav.settings', '设置')}</h1>
+        </div>
+      )}
 
       {/* Mobile Horizontal Tabs Rail */}
       <div className="lg:hidden shrink-0 flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
@@ -998,7 +997,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         </aside>
 
         {/* Right Column: Selected Config Panel */}
-        <section className="flex-1 min-w-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-5 sm:p-7 shadow-xs overflow-y-auto transition-colors scrollbar-thin">
+        <section className="flex-1 min-w-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-3 sm:p-7 shadow-xs overflow-y-auto overflow-x-hidden transition-colors scrollbar-thin">
           {/* ===================== A. 个人账户管理 (Account) ===================== */}
           {activeSection === 'account' && (
             <div className="space-y-6 animate-fadeIn">

@@ -774,9 +774,9 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         </div>
 
         {/* 右侧: 搜索框 + 刷新 + 明暗/系统主题切换 (严格对齐日历日程按钮与文字规格) */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {/* 搜索框 (圆角胶囊风格，高度、内边距与字体大小严格对齐日历) */}
-          <div className="relative w-36 sm:w-52">
+          <div className="relative w-24 min-[400px]:w-32 sm:w-52">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500 pointer-events-none" />
             <input
               type="text"
