@@ -286,6 +286,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   // iCal export urls
   const [icalExportUrl, setIcalExportUrl] = useState('');
   const [copiedIcal, setCopiedIcal] = useState(false);
+  const [copiedWebcal, setCopiedWebcal] = useState(false);
+  const webcalInputRef = useRef<HTMLInputElement>(null);
   const [copyIcalError, setCopyIcalError] = useState('');
   const icalInputRef = useRef<HTMLInputElement>(null);
 
@@ -795,6 +797,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     } else {
       icalInputRef.current?.focus();
       icalInputRef.current?.select();
+      setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
+    }
+  };
+
+  const webcalUrl = icalExportUrl.replace(/^https?:\/\//i, 'webcal://');
+  const copyWebcal = async () => {
+    setCopyIcalError('');
+    setCopiedWebcal(false);
+    if (!webcalUrl) {
+      setCopyIcalError('订阅链接尚未加载，请刷新页面后重试。');
+    } else if (await copyText(webcalUrl)) {
+      setCopiedWebcal(true);
+      setTimeout(() => setCopiedWebcal(false), 2000);
+    } else {
+      webcalInputRef.current?.focus();
+      webcalInputRef.current?.select();
       setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
     }
   };
@@ -2328,6 +2346,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
+                <label className="text-xs font-medium text-gray-700 dark:text-neutral-300 block pt-2">Webcal 订阅链接</label>
+                <div className="flex items-center gap-2 max-w-2xl">
+                  <input type="text" readOnly ref={webcalInputRef} value={webcalUrl} aria-label="Webcal 订阅链接" className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all" />
+                  <button type="button" onClick={copyWebcal} className="px-4 py-2.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-800 dark:text-neutral-200 text-xs font-medium rounded-xl shrink-0 flex items-center gap-1.5 transition cursor-pointer border border-gray-200 dark:border-neutral-700">
+                    {copiedWebcal ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedWebcal ? t('common.copied') : t('calendar.copy_btn')}</span>
+                  </button>
+                </div>
+                {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-blue-400 hover:underline">在日历应用中订阅</a>}
                 {copyIcalError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{copyIcalError}</p>}
               </div>
 

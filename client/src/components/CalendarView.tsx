@@ -409,6 +409,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const effectiveToken = serverExportUrls?.token || user?.token_secret || user?.calendar_token || '';
   const icalExportUrl = serverExportUrls?.http || (effectiveToken ? `${window.location.origin}/api/calendar/subscribe/${effectiveToken}.ics` : '');
+  const webcalUrl = icalExportUrl.replace(/^https?:\/\//i, 'webcal://');
   const downloadUrl = serverExportUrls?.download || (effectiveToken ? `${window.location.origin}/api/calendar/export/${effectiveToken}.ics` : '');
 
   // Live timer for red current time line
@@ -1645,6 +1646,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <span>{copiedType === 'http' ? '已复制' : '复制'}</span>
                 </button>
               </div>
+            </div>
+
+            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
+              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">Webcal 订阅链接</div>
+              <div className="flex items-center gap-2">
+                <input type="text" readOnly value={webcalUrl} aria-label="Webcal 订阅链接" className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all" />
+                <button type="button" onClick={() => handleCopyLink(webcalUrl, 'webcal')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer">
+                  {copiedType === 'webcal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedType === 'webcal' ? '已复制' : '复制'}</span>
+                </button>
+              </div>
+              {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-[#a8c7fa] hover:underline">在日历应用中订阅</a>}
             </div>
 
             {/* 静态 .ics 文件下载 */}
