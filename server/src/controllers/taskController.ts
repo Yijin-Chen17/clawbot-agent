@@ -496,7 +496,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
         scheduled_end = ?,
         schedule_blocks = ?,
         status = 'scheduled',
-        updated_at = datetime('now', 'localtime')
+        updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND user_id = ?
   `).run(
     proposal.conflictTaskSchedule.start,
@@ -515,7 +515,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
           scheduled_end = ?,
           schedule_blocks = ?,
           status = 'scheduled',
-          updated_at = datetime('now', 'localtime')
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `).run(
       proposal.newTaskSchedule.start,
@@ -531,7 +531,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
         score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).run(
       userId,
       newTask.title,

@@ -8,9 +8,11 @@ import {
   parseDeadlineDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
+  scheduleTaskGroupInHorizon,
   splitIntoFocusSessions,
   taskToBusyEvents,
 } from './scheduler.js';
+import { findDueReminderBlockIndex } from './reminder.js';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -461,3 +463,109 @@ test('overdue task is placed before a similar task with a future deadline', () =
   ], [], { targetDate: day, workStartHour: 8, workEndHour: 18, taskRestMinutes: 0, maxDailyTaskMinutes: 480 });
   assert.equal(result.scheduledBlocks[0]?.taskId, 2);
 });
+
+test('scheduleTaskGroupInHorizon runs concurrent track independently and tracks remaining partial tasks', () => {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+
+  const fullDayStart = new Date(tomorrow);
+  fullDayStart.setHours(9, 0, 0, 0);
+  const fullDayEnd = new Date(tomorrow);
+  fullDayEnd.setHours(18, 0, 0, 0);
+
+  // Day is completely full with an external meeting, so exclusive tasks can't schedule today,
+  // while concurrent track (is_concurrent = 1) still schedules inside workWindows!
+  const concurrentTask = makeTask({
+    id: 101,
+    title: '通勤/并行听课',
+    duration_minutes: 60,
+    importance: 80,
+    urgency: 75,
+    is_concurrent: 1,
+  });
+
+  const allocations = new Map();
+  const remaining = new Set<number>([101]);
+
+  scheduleTaskGroupInHorizon(
+    [concurrentTask],
+    [],
+    tomorrow,
+    1,
+    {
+      workStartHour: 9,
+      workEndHour: 18,
+      workWindows: [{ startHour: 9, endHour: 18 }],
+      bufferMinutes: 0,
+      advanceDeadlineDays: 1,
+      releaseTimeMsToday: fullDayStart.getTime(),
+    },
+    allocations,
+    remaining
+  );
+
+  assert.equal(allocations.get(101)?.length, 1);
+  assert.equal(remaining.has(101), false);
+
+  // Partial long task across 1-day horizon keeps remaining unallocated ID in `remaining`
+  const hugeTask = makeTask({
+    id: 102,
+    title: '超长 soft 任务',
+    duration_minutes: 600,
+    importance: 85,
+    urgency: 80,
+    deadline_kind: 'soft',
+  });
+  const partialAlloc = new Map();
+  const partialRem = new Set<number>([102]);
+  scheduleTaskGroupInHorizon(
+    [hugeTask],
+    [],
+    tomorrow,
+    1,
+    {
+      workStartHour: 9,
+      workEndHour: 18,
+      workWindows: [{ startHour: 9, endHour: 18 }],
+      bufferMinutes: 0,
+      advanceDeadlineDays: 1,
+      releaseTimeMsToday: fullDayStart.getTime(),
+    },
+    partialAlloc,
+    partialRem
+  );
+  assert.ok((partialAlloc.get(102)?.length || 0) > 0);
+  assert.equal(partialRem.has(102), true);
+});
+
+test('findDueReminderBlockIndex fires per-block start & end reminders on multi-part tasks', () => {
+  const blocks = [
+    {
+      start: '2026-11-23T09:00:00.000Z',
+      end: '2026-11-23T10:00:00.000Z',
+      partIndex: 1,
+      totalParts: 2,
+      startReminderSent: true,
+      endReminderSent: true,
+      completed: false,
+    },
+    {
+      start: '2026-11-24T14:00:00.000Z',
+      end: '2026-11-24T15:00:00.000Z',
+      partIndex: 2,
+      totalParts: 2,
+      startReminderSent: false,
+      endReminderSent: false,
+      completed: false,
+    },
+  ];
+
+  // Block 2 start reminder (5 min before 14:00Z = 13:55Z)
+  assert.equal(findDueReminderBlockIndex(blocks, new Date('2026-11-24T13:56:00.000Z'), 5, 'start'), 1);
+  // Block 2 end reminder (5 min before 15:00Z = 14:55Z)
+  assert.equal(findDueReminderBlockIndex(blocks, new Date('2026-11-24T14:56:00.000Z'), 5, 'end'), 1);
+  // Outside window returns -1
+  assert.equal(findDueReminderBlockIndex(blocks, new Date('2026-11-24T12:00:00.000Z'), 5, 'start'), -1);
+});
+

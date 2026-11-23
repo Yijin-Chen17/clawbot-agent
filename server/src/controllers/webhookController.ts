@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState } from '../models/types.js';
 import { parseUserMessageWithLLM } from '../services/llm.js';
-import { scheduleTask, computeTodayBusyMinutes, replanUserTasks, extendTaskDuration } from '../services/scheduler.js';
+import { scheduleTask, computeTodayBusyMinutes, replanUserTasks, extendTaskDuration, normalizeDeadlineIso } from '../services/scheduler.js';
 import { templates, sendClawbotMessage } from '../services/clawbot.js';
 import {
   calculateDynamicImportance,
@@ -102,6 +102,10 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
           id: activeTask.id,
           title: activeTask.title,
           duration_minutes: activeTask.duration_minutes,
+          time_mode: activeTask.time_mode,
+          is_concurrent: activeTask.is_concurrent,
+          deadline_kind: activeTask.deadline_kind,
+          urgency_pace: activeTask.urgency_pace,
           urgency: activeTask.urgency,
           importance: activeTask.importance,
           deadline: activeTask.deadline,
@@ -240,36 +244,40 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
           replanUserTasks(userId);
           replyText = `已安排「${title}」：${new Date(fixedTime.start).toLocaleString('zh-CN')}，持续 ${duration} 分钟。`;
         } else {
+        const normalizedWebhookDeadline = normalizeDeadlineIso(deadline);
         const plan = scheduleTask(userId, {
           title,
           duration_minutes: duration!,
+          time_mode: timeMode,
           urgency: finalUrgency,
           importance: importance!,
-          deadline: deadline,
+          deadline: normalizedWebhookDeadline,
         });
 
         if (plan.success && plan.scheduled_start && plan.scheduled_end) {
           db.prepare(`
             INSERT INTO tasks (
-              user_id, title, duration_minutes, urgency, importance,
+              user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
               importance_tier, impact_signals, time_mode, score_scale,
               deadline, scheduled_start, scheduled_end, is_fixed, status, schedule_blocks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, 'scheduled', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, 'scheduled', ?)
           `).run(
             userId,
             title,
+            duration,
             duration,
             finalUrgency,
             importance,
             importanceTier,
             JSON.stringify(impactSignals),
             timeMode,
-            deadline,
+            normalizedWebhookDeadline,
             plan.scheduled_start,
             plan.scheduled_end,
             plan.schedule_blocks || null
           );
+          replanUserTasks(userId);
 
           const sStr = new Date(plan.scheduled_start).toLocaleString('zh-CN', {
             month: '2-digit',
