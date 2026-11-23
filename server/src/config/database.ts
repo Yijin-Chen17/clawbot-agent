@@ -4,18 +4,39 @@ import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getAppConfig } from './appConfig.js';
+import { getDataDir, getDbPath } from './env.js';
+import { runMigrations } from './migrations.js';
 import { getGlobalApiConfig } from '../services/globalApiConfig.js';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+function openDatabase(dbPath: string): Database.Database {
+  const dir = path.dirname(dbPath);
+  if (dbPath !== ':memory:' && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const instance = new Database(dbPath);
+  instance.pragma('journal_mode = WAL');
+  instance.pragma('foreign_keys = ON');
+  return instance;
 }
 
-const DB_PATH = path.join(DATA_DIR, 'clawbot.db');
-export const db = new Database(DB_PATH);
+const initialDataDir = getDataDir();
+if (!fs.existsSync(initialDataDir)) {
+  fs.mkdirSync(initialDataDir, { recursive: true });
+}
 
-// Enable WAL mode for high concurrency
-db.pragma('journal_mode = WAL');
+export let db: Database.Database = openDatabase(getDbPath());
+
+/**
+ * Switch database instance for isolated automated testing.
+ */
+export function useTestDatabase(dbPath: string = ':memory:'): Database.Database {
+  try {
+    db.close();
+  } catch {}
+  db = openDatabase(dbPath);
+  initDatabase();
+  return db;
+}
 
 export function initDatabase() {
   db.exec(`
@@ -175,20 +196,6 @@ export function initDatabase() {
   addCol('weixin_activated', 'INTEGER', '0');
   addCol('weixin_last_active_at', 'DATETIME', 'NULL');
 
-  // 若存量用户已配置私有 API Key，但尚未主动充值官方余额，默认保持其 custom 模式
-  try {
-    db.exec(`
-      UPDATE user_settings 
-      SET api_mode = 'custom' 
-      WHERE (llm_api_key IS NOT NULL AND TRIM(llm_api_key) != '')
-        AND (api_mode IS NULL OR api_mode = 'official')
-        AND user_id NOT IN (SELECT id FROM users WHERE balance > 0)
-        AND user_id NOT IN (SELECT used_by_user_id FROM redemption_codes WHERE used_by_user_id IS NOT NULL);
-    `);
-  } catch (err: any) {
-    // 容错处理
-  }
-
   // Migrate api_usage_logs columns if missing (is_official)
   const usageCols = (db.prepare('PRAGMA table_info(api_usage_logs)').all() as any[]).map(c => c.name);
   if (!usageCols.includes('is_official')) {
@@ -234,13 +241,6 @@ export function initDatabase() {
   initPriceSetting('global_llm_price_output', '8.0');
   initPriceSetting('global_llm_price_cache_hit', '0.5');
 
-  // 初始化独立持久化配置文件并同步数据
-  try {
-    getGlobalApiConfig();
-  } catch (err: any) {
-    console.warn('[DB] Failed to init global API config:', err.message);
-  }
-
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
   if (!taskCols.includes('deadline_kind')) db.exec("ALTER TABLE tasks ADD COLUMN deadline_kind TEXT DEFAULT 'soft';");
@@ -280,7 +280,6 @@ export function initDatabase() {
   }
   if (!taskCols.includes('score_scale')) {
     db.exec('ALTER TABLE tasks ADD COLUMN score_scale INTEGER DEFAULT 100;');
-    // 将历史 1~5 / 0~10 分制存量数据一次性升级归一化为 0~100 分制
     db.exec(`
       UPDATE tasks
       SET
@@ -296,6 +295,16 @@ export function initDatabase() {
         END,
         score_scale = 100;
     `);
+  }
+
+  // Run versioned v2 schema migrations and legacy backfill
+  runMigrations(db);
+
+  // 初始化独立持久化配置文件并同步数据
+  try {
+    getGlobalApiConfig();
+  } catch (err: any) {
+    console.warn('[DB] Failed to init global API config:', err.message);
   }
 
   // Seed initial admin if database has no users

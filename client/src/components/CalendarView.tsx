@@ -123,6 +123,8 @@ type TimedSegment =
   | {
       kind: 'task';
       id: string;
+      blockId?: string;
+      partIndex?: number;
       title: string;
       start: string;
       end: string;
@@ -369,7 +371,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       estimatedMinutes: task.duration_minutes, isFixed: Boolean(task.is_fixed), isConcurrent: Boolean(task.is_concurrent),
       scheduledStart: task.scheduled_start, scheduledEnd: task.scheduled_end,
       isImportant: importance >= 50, isUrgent: urgency >= 50, quadrant,
-      isCompleted: task.status === 'completed' || (task.time_mode === 'daily_fixed' && (() => { try { return JSON.parse(task.completed_dates || '[]').includes(localDateKey(new Date())); } catch { return false; } })()), tags: [], createdAt: task.created_at || new Date().toISOString(),
+      isCompleted: task.status === 'completed' || (task.time_mode === 'daily_fixed' && (() => { try { return JSON.parse(task.completed_dates || '[]').includes(localDateKey(new Date())); } catch { return false; } })()),
+      tags: (() => { try { const raw = (task as any).tags; if (Array.isArray(raw)) return raw; const p = JSON.parse(raw || '[]'); return Array.isArray(p) ? p : []; } catch { return []; } })(),
+      createdAt: task.created_at || new Date().toISOString(),
     };
   };
 
@@ -383,6 +387,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         impact_signals: data.impactSignals, time_mode: data.timeMode, recurrence_rule: data.recurrenceRule, urgency_pace: data.urgencyPace,
         importance_manual_override: data.importanceManualOverride, score_scale: 100,
         deadline_kind: data.deadlineKind,
+        tags: data.tags || [],
         deadline: data.dueDate ? (data.dueDate.includes('T') ? new Date(data.dueDate).toISOString() : data.dueDate) : null,
         scheduled_start: data.scheduledStart || null, scheduled_end: data.scheduledEnd || null,
         is_fixed: data.isFixed ? 1 : 0, is_concurrent: data.isConcurrent ? 1 : 0,
@@ -697,7 +702,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       const isCompletedForDay =
         taskItem.status === 'completed' || (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));
 
-      let blocks: { start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
+      let blocks: { id?: string; start: string; end: string; partIndex?: number; totalParts?: number; completed?: boolean }[] = [];
 
       if (taskItem.schedule_blocks) {
         try {
@@ -743,8 +748,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
           timedItems.push({
             kind: 'task',
-            id: `task-${taskItem.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
-            title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+            id: `task-${t.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
+            blockId: block.id,
+            partIndex: block.partIndex || bIdx + 1,
+            title: `${titlePrefix}${t.title}${partSuffix}`,
             start: range.start,
             end: range.end,
             allDay: false,
@@ -917,9 +924,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
-  const handleCompletePart = async (taskId: number) => {
+  const handleCompletePart = async (taskId: number, blockId?: string, partIndex?: number) => {
     try {
-      const res = await api.post(`/tasks/${taskId}/complete-part`, {});
+      const res = await api.post(`/tasks/${taskId}/complete-part`, {
+        ...(blockId ? { block_id: blockId } : {}),
+        ...(partIndex ? { part_index: partIndex } : {}),
+      });
       alert(res.data.message);
       setSelectedItem(null);
       setSelectedDueTask(null);
@@ -2008,7 +2018,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   </button>
                   {selectedItem.qName !== '已完成' && <button
                     type="button"
-                    onClick={() => handleCompletePart(selectedItem.task.id)}
+                    onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
                     className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
                   >
                     {t('calendar.complete_part', '完成本节')}

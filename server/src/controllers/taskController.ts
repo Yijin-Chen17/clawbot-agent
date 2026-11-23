@@ -1,46 +1,29 @@
-import { deadlineMs, recurringDebt } from '../services/calendarOptimizer.js';
+import crypto from 'crypto';
 import { Response } from 'express';
-import { planTaskWithLLM } from '../services/llm.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
-import { Task } from '../models/types.js';
-import { stringifyRecurrenceRule, parseRecurrenceRule } from '../utils/recurrence.js';
+import { Task, TaskInstance } from '../models/types.js';
+import { recurringDebt } from '../services/calendarOptimizer.js';
+import { completeTaskPart, replanUserTasks } from '../services/scheduler.js';
 import {
-  scheduleTask,
-  replanUserTasks,
-  completeTaskPart,
-  extendTaskDuration,
-  computeTodayBusyMinutes,
-  formatLocalDate,
-  normalizeDeadlineIso,
-} from '../services/scheduler.js';
-import {
-  calculateDynamicImportance,
-  calculateDynamicUrgency,
-  inferTierFromScore,
-  normalizeScoreTo100,
-  type ImpactSignal,
-  type ImportanceTier,
-  type TimeMode,
-  type UrgencyPace,
-} from '../utils/priorityAlgorithm.js';
-
-function parseJsonArray<T = string>(raw: unknown): T[] {
-  if (Array.isArray(raw)) return raw as T[];
-  if (typeof raw === 'string' && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as T[]) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
+  createTaskCommand,
+  deleteTaskCommand,
+  executeQuickActionCommand,
+  updateTaskCommand,
+} from '../services/taskService.js';
+import { resolveScheduleProposal } from '../services/proposalService.js';
+import { claimCommandInbox, completeCommandInbox, failCommandInbox } from '../services/inboxService.js';
+import { getLatestPlanVersion } from '../services/instanceService.js';
+import { commitBackupImport, exportUserBackup, previewBackupImport } from '../services/backupService.js';
+import { parseTagsArray } from '../services/taskCommandSchema.js';
+import { getUserTimezone } from '../services/accountService.js';
+import { getAccountLocalDateKey } from '../utils/timezone.js';
 
 export function listTasks(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
   const { status, search } = req.query;
+  const tz = getUserTimezone(userId);
+  const todayKey = getAccountLocalDateKey(new Date(), tz);
 
   let query = 'SELECT * FROM tasks WHERE user_id = ?';
   const params: any[] = [userId];
@@ -58,410 +41,228 @@ export function listTasks(req: AuthenticatedRequest, res: Response): void {
   query += " ORDER BY CASE status WHEN 'in_progress' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'pending_slot' THEN 3 ELSE 4 END, scheduled_start ASC, created_at DESC";
 
   const tasks = db.prepare(query).all(...params) as Task[];
+  const instances = db
+    .prepare('SELECT * FROM task_instances WHERE user_id = ? ORDER BY business_date DESC')
+    .all(userId) as TaskInstance[];
+
+  const instByTask = new Map<number, TaskInstance>();
+  for (const inst of instances) {
+    if (inst.instance_type === 'once') {
+      instByTask.set(inst.task_id, inst);
+    } else if (inst.business_date === todayKey && !instByTask.has(inst.task_id)) {
+      instByTask.set(inst.task_id, inst);
+    }
+  }
+
   const today = new Date();
-  res.json({ tasks: tasks.map(task => task.time_mode === 'daily_fixed'
-    ? { ...task, recurring_debt: recurringDebt(task, today) } : task) });
+  const planVersion = getLatestPlanVersion(userId);
+
+  res.json({
+    planVersion,
+    timezone: tz,
+    tasks: tasks.map(task => {
+      const inst = instByTask.get(task.id);
+      const parsedTags = parseTagsArray(task.tags);
+      const base = {
+        ...task,
+        tags: parsedTags,
+        instance_id: inst?.id,
+        instance_version: inst?.version,
+        instance_status: inst?.status,
+        plan_status: inst?.plan_status,
+        allocated_minutes: inst?.allocated_minutes,
+        unallocated_minutes: inst?.unallocated_minutes,
+        plan_reason: inst?.plan_reason,
+      };
+      return task.time_mode === 'daily_fixed'
+        ? { ...base, recurring_debt: recurringDebt(task, today) }
+        : base;
+    }),
+  });
+}
+
+function getIdempotencyKey(req: AuthenticatedRequest): string | null {
+  const h = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
+  if (typeof h === 'string' && h.trim()) return h.trim();
+  if (req.body?.command_id && typeof req.body.command_id === 'string') return req.body.command_id.trim();
+  return null;
 }
 
 export async function createTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
-  const {
-    title,
-    duration_minutes: inputDuration,
-    urgency,
-    importance,
-    importance_tier,
-    impact_signals,
-    time_mode,
-    recurrence_rule,
-    urgency_pace,
-    importance_manual_override,
-    score_scale,
-    deadline,
-    deadline_kind,
-    scheduled_start,
-    scheduled_end,
-    is_fixed = 0,
-    is_concurrent = 0,
-    auto_schedule = true,
-    notes,
-  } = req.body;
+  const idemKey = getIdempotencyKey(req);
 
-  if (!title) {
-    res.status(400).json({ error: '请输入任务标题' });
-    return;
-  }
-
-  if (inputDuration !== undefined && inputDuration !== null && inputDuration !== '' &&
-      (!Number.isInteger(Number(inputDuration)) || Number(inputDuration) <= 0 || Number(inputDuration) > 100000)) {
-    res.status(400).json({ error: '预计耗时必须为有效的正整数分钟数' });
-    return;
-  }
-  let duration_minutes = Number(inputDuration);
-  let sessions: number[] = [];
-  try {
-    const plan = await planTaskWithLLM(userId, title, duration_minutes > 0 ? duration_minutes : undefined, notes);
-    duration_minutes = plan.minutes;
-    sessions = plan.sessions;
-  } catch {
-    if (!(duration_minutes > 0)) {
-      res.status(400).json({ error: '无法预估任务耗时，请检查 LLM 配置或填写预计耗时' });
+  let inboxId: number | null = null;
+  if (idemKey) {
+    const claim = claimCommandInbox({
+      userId,
+      channel: 'web',
+      senderId: String(userId),
+      externalMsgId: `web:${idemKey}`,
+      idempotencyKey: idemKey,
+      payload: req.body || {},
+    });
+    if (claim.kind === 'conflict') {
+      res.status(409).json({ error: claim.message });
       return;
     }
-    // 显式耗时在 LLM 不可用时仍可创建，保持任务整体性。
-    sessions = [];
-  }
-  const sessionPlan = sessions.length ? JSON.stringify(sessions) : null;
-  if (deadline_kind === 'hard' && !Number.isFinite(deadlineMs(deadline))) {
-    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
-    return;
-  }
-
-  const parsedSignals = parseJsonArray<ImpactSignal>(impact_signals);
-  const manualOverrideNum =
-    importance_manual_override !== undefined &&
-    importance_manual_override !== null &&
-    importance_manual_override !== ''
-      ? normalizeScoreTo100(Number(importance_manual_override), score_scale ?? 100)
-      : null;
-
-  let resolvedTier: ImportanceTier;
-  let resolvedImportance: number;
-  if (importance_tier === 'vital' || importance_tier === 'support' || importance_tier === 'minor') {
-    resolvedTier = importance_tier;
-    resolvedImportance = calculateDynamicImportance({
-      tier: resolvedTier,
-      estimatedMinutes: Number(duration_minutes),
-      impactSignals: parsedSignals,
-      isFixed: Boolean(is_fixed),
-      manualOverride: manualOverrideNum,
-    }).importance;
-  } else {
-    resolvedImportance =
-      importance !== undefined && importance !== null
-        ? normalizeScoreTo100(Number(importance), score_scale)
-        : 58;
-    resolvedTier = inferTierFromScore(resolvedImportance);
+    if (claim.kind === 'duplicate_completed') {
+      res.status(claim.response?.statusCode || 201).json(claim.response?.body || claim.response);
+      return;
+    }
+    if (claim.kind === 'duplicate_processing') {
+      res.status(409).json({ error: '相同请求正在处理中，请稍候' });
+      return;
+    }
+    inboxId = claim.inboxId;
   }
 
-  const resolvedTimeMode: TimeMode =
-    time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
-      ? time_mode
-      : deadline
-      ? 'deadline'
-      : 'flexible';
-  const resolvedPace: UrgencyPace =
-    urgency_pace === 'urgent' || urgency_pace === 'later' || urgency_pace === 'soon'
-      ? urgency_pace
-      : 'soon';
+  try {
+    const result = await createTaskCommand({
+      userId,
+      rawInput: req.body || {},
+      allowProposal: false,
+    });
 
-  const fallbackUrg100 =
-    urgency !== undefined && urgency !== null
-      ? normalizeScoreTo100(Number(urgency), score_scale)
-      : 50;
+    if (!result.success) {
+      if (inboxId) failCommandInbox(inboxId, result.message);
+      res.status(result.statusCode).json({ error: result.message });
+      return;
+    }
 
-  const normalizedDeadline = normalizeDeadlineIso(deadline);
+    const body = {
+      message: result.message,
+      task: result.task ? { ...result.task, tags: parseTagsArray(result.task.tags) } : result.task,
+      instance: result.instance,
+      planVersion: result.planVersion,
+      proposal: result.proposal || null,
+      replan: result.replan,
+    };
 
-  const todayBusyMinutes = computeTodayBusyMinutes(userId);
-  const resolvedUrgency = calculateDynamicUrgency({
-    timeMode: resolvedTimeMode,
-    dueDate: normalizedDeadline,
-    estimatedMinutes: Number(duration_minutes),
-    importance: resolvedImportance,
-    urgencyPace: resolvedPace,
-    scheduledStart: scheduled_start || null,
-    scheduledEnd: scheduled_end || null,
-    dailyBusyMinutesAhead: todayBusyMinutes,
-    fallbackUrgency: fallbackUrg100,
-  }).urgency;
-
-  let finalStart: string | null = scheduled_start || null;
-  let finalEnd: string | null = scheduled_end || null;
-  let status = 'pending_slot';
-  let scheduleMsg = '';
-  let scheduleBlocks: string | null = null;
-  let proposal: any = null;
-
-  if (is_fixed && finalEnd && deadline_kind === 'hard' && deadlineMs(finalEnd) > deadlineMs(deadline)) {
-    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
-    return;
+    if (inboxId) completeCommandInbox(inboxId, { statusCode: result.statusCode, body });
+    res.status(result.statusCode).json(body);
+  } catch (err: any) {
+    if (inboxId) failCommandInbox(inboxId, err.message);
+    res.status(500).json({ error: err.message || '创建任务失败' });
   }
-
-  if (is_fixed && finalStart && finalEnd) {
-    status = 'scheduled';
-    scheduleMsg = '固定任务已创建并锁定时间段！';
-    scheduleBlocks = JSON.stringify([{ start: finalStart, end: finalEnd, duration: Number(duration_minutes) }]);
-
-  }
-
-  const result = db.prepare(`
-    INSERT INTO tasks (
-      user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-      importance_tier, impact_signals, time_mode, recurrence_rule, urgency_pace, importance_manual_override,
-      score_scale, completed_dates,
-      deadline, deadline_kind, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    userId,
-    title,
-    Number(duration_minutes),
-    Number(duration_minutes),
-    resolvedUrgency,
-    resolvedImportance,
-    resolvedTier,
-    JSON.stringify(parsedSignals),
-    resolvedTimeMode,
-    resolvedTimeMode === 'daily_fixed' && recurrence_rule ? stringifyRecurrenceRule(parseRecurrenceRule(recurrence_rule)) : null,
-    resolvedPace,
-    manualOverrideNum,
-    normalizedDeadline,
-    deadline_kind === 'hard' ? 'hard' : 'soft',
-    finalStart,
-    finalEnd,
-    is_fixed ? 1 : 0,
-    is_concurrent ? 1 : 0,
-    status,
-    scheduleBlocks,
-    notes || null
-  );
-
-  const newId = result.lastInsertRowid;
-  db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, newId);
-  const replan = replanUserTasks(userId);
-  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId) as Task | undefined;
-
-  res.status(201).json({
-    message: newTask?.scheduled_start ? (scheduleMsg || '任务已创建并排入日历') : '任务已创建，暂未找到合适时段',
-    task: newTask,
-    proposal,
-    replan,
-  });
 }
 
 export async function updateTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
-  const { id } = req.params;
-  const {
-    title,
-    duration_minutes,
-    urgency,
-    importance,
-    importance_tier,
-    impact_signals,
-    time_mode,
-    recurrence_rule,
-    urgency_pace,
-    importance_manual_override,
-    score_scale,
-    deadline,
-    deadline_kind,
-    scheduled_start,
-    scheduled_end,
-    is_fixed,
-    is_concurrent,
-    status,
-    notes,
-  } = req.body;
+  const taskId = Number(req.params.id);
+  const idemKey = getIdempotencyKey(req);
 
-  const existing = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task | undefined;
-  if (!existing) {
-    res.status(404).json({ error: '任务不存在' });
-    return;
-  }
-
-  const nextDuration = duration_minutes !== undefined ? Number(duration_minutes) : existing.duration_minutes;
-  const nextIsFixed = is_fixed !== undefined ? (is_fixed ? 1 : 0) : (existing.is_fixed ?? 0);
-  const nextSignals =
-    impact_signals !== undefined
-      ? parseJsonArray<ImpactSignal>(impact_signals)
-      : parseJsonArray<ImpactSignal>(existing.impact_signals);
-
-  const nextManualOverride =
-    importance_manual_override !== undefined
-      ? (importance_manual_override !== null && importance_manual_override !== ''
-          ? normalizeScoreTo100(Number(importance_manual_override), score_scale ?? 100)
-          : null)
-      : existing.importance_manual_override ?? null;
-
-  const nextTierRaw = importance_tier !== undefined ? importance_tier : existing.importance_tier;
-  let nextImportance: number;
-  let resolvedTier: ImportanceTier;
-
-  if (nextTierRaw === 'vital' || nextTierRaw === 'support' || nextTierRaw === 'minor') {
-    resolvedTier = nextTierRaw;
-    if (
-      importance_tier !== undefined ||
-      impact_signals !== undefined ||
-      importance_manual_override !== undefined ||
-      duration_minutes !== undefined ||
-      is_fixed !== undefined
-    ) {
-      nextImportance = calculateDynamicImportance({
-        tier: resolvedTier,
-        estimatedMinutes: nextDuration,
-        impactSignals: nextSignals,
-        isFixed: Boolean(nextIsFixed),
-        manualOverride: nextManualOverride,
-      }).importance;
-    } else if (importance !== undefined) {
-      nextImportance = normalizeScoreTo100(Number(importance), score_scale);
-    } else {
-      nextImportance = normalizeScoreTo100(existing.importance, existing.score_scale);
+  let inboxId: number | null = null;
+  if (idemKey) {
+    const claim = claimCommandInbox({
+      userId,
+      channel: 'web',
+      senderId: String(userId),
+      externalMsgId: `web:update:${taskId}:${idemKey}`,
+      idempotencyKey: idemKey,
+      payload: { taskId, body: req.body || {} },
+    });
+    if (claim.kind === 'conflict') {
+      res.status(409).json({ error: claim.message });
+      return;
     }
-  } else {
-    nextImportance =
-      importance !== undefined
-        ? normalizeScoreTo100(Number(importance), score_scale)
-        : normalizeScoreTo100(existing.importance, existing.score_scale);
-    resolvedTier = inferTierFromScore(nextImportance);
+    if (claim.kind === 'duplicate_completed') {
+      res.status(claim.response?.statusCode || 200).json(claim.response?.body || claim.response);
+      return;
+    }
+    if (claim.kind === 'duplicate_processing') {
+      res.status(409).json({ error: '相同更新请求正在处理中' });
+      return;
+    }
+    inboxId = claim.inboxId;
   }
 
-  const nextDeadline =
-    deadline !== undefined
-      ? normalizeDeadlineIso(deadline)
-      : normalizeDeadlineIso(existing.deadline);
-  const nextDeadlineKind = deadline_kind ?? (nextDeadline ? existing.deadline_kind : 'soft');
-  if (nextDeadlineKind === 'hard' && !Number.isFinite(deadlineMs(nextDeadline))) {
-    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
-    return;
+  try {
+    const result = await updateTaskCommand({
+      userId,
+      taskId,
+      rawInput: req.body || {},
+    });
+
+    if (!result.success) {
+      if (inboxId) failCommandInbox(inboxId, result.message);
+      res.status(result.statusCode).json({ error: result.message });
+      return;
+    }
+
+    const body = {
+      message: result.message,
+      task: result.task ? { ...result.task, tags: parseTagsArray(result.task.tags) } : result.task,
+      instance: result.instance,
+      planVersion: result.planVersion,
+      replan: result.replan,
+    };
+    if (inboxId) completeCommandInbox(inboxId, { statusCode: 200, body });
+    res.json(body);
+  } catch (err: any) {
+    if (inboxId) failCommandInbox(inboxId, err.message);
+    res.status(500).json({ error: err.message || '更新任务失败' });
   }
-  const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
-  const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
-
-  if (nextIsFixed && nextScheduledEnd && nextDeadlineKind === 'hard' && deadlineMs(nextScheduledEnd) > deadlineMs(nextDeadline)) {
-    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
-    return;
-  }
-  const nextBlocks = nextIsFixed && nextScheduledStart && nextScheduledEnd && (scheduled_start !== undefined || scheduled_end !== undefined)
-    ? JSON.stringify([{ start: nextScheduledStart, end: nextScheduledEnd, duration: nextDuration }])
-    : existing.schedule_blocks;
-
-  const nextTimeMode: TimeMode =
-    time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
-      ? time_mode
-      : existing.time_mode === 'daily_fixed' || existing.time_mode === 'flexible' || existing.time_mode === 'deadline'
-      ? existing.time_mode
-      : nextDeadline
-      ? 'deadline'
-      : 'flexible';
-
-  const nextPace: UrgencyPace =
-    urgency_pace === 'urgent' || urgency_pace === 'later' || urgency_pace === 'soon'
-      ? urgency_pace
-      : existing.urgency_pace === 'urgent' || existing.urgency_pace === 'later' || existing.urgency_pace === 'soon'
-      ? existing.urgency_pace
-      : 'soon';
-
-  const completedDates = parseJsonArray<string>(existing.completed_dates);
-  const todayStr = formatLocalDate(new Date());
-  const isCompletedToday = completedDates.includes(todayStr);
-
-  const fallbackUrg100 =
-    urgency !== undefined
-      ? normalizeScoreTo100(Number(urgency), score_scale)
-      : normalizeScoreTo100(existing.urgency, existing.score_scale);
-
-  const nextUrgency = calculateDynamicUrgency({
-    timeMode: nextTimeMode,
-    dueDate: nextDeadline || null,
-    estimatedMinutes: nextDuration,
-    importance: nextImportance,
-    urgencyPace: nextPace,
-    scheduledStart: nextScheduledStart || null,
-    scheduledEnd: nextScheduledEnd || null,
-    isCompletedToday,
-    dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, new Date(), existing.id),
-    fallbackUrgency: fallbackUrg100,
-  }).urgency;
-
-  const nextRecurrenceRule =
-    recurrence_rule !== undefined
-      ? (recurrence_rule ? stringifyRecurrenceRule(parseRecurrenceRule(recurrence_rule)) : null)
-      : existing.recurrence_rule ?? null;
-
-  db.prepare(`
-    UPDATE tasks
-    SET
-      title = COALESCE(?, title),
-      duration_minutes = COALESCE(?, duration_minutes),
-      urgency = ?,
-      importance = ?,
-      importance_tier = ?,
-      impact_signals = ?,
-      time_mode = ?,
-      recurrence_rule = ?,
-      urgency_pace = ?,
-      importance_manual_override = ?,
-      score_scale = 100,
-      deadline = ?,
-      deadline_kind = ?,
-      scheduled_start = ?,
-      scheduled_end = ?,
-      schedule_blocks = ?,
-      is_fixed = COALESCE(?, is_fixed),
-      is_concurrent = COALESCE(?, is_concurrent),
-      status = COALESCE(?, status),
-      notes = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND user_id = ?
-  `).run(
-    title,
-    duration_minutes,
-    nextUrgency,
-    nextImportance,
-    resolvedTier,
-    JSON.stringify(nextSignals),
-    nextTimeMode,
-    nextTimeMode === 'daily_fixed' ? nextRecurrenceRule : null,
-    nextPace,
-    nextManualOverride,
-    nextDeadline,
-    nextDeadlineKind === 'hard' ? 'hard' : 'soft',
-    nextScheduledStart,
-    nextScheduledEnd,
-    nextBlocks,
-    nextIsFixed,
-    is_concurrent !== undefined ? (is_concurrent ? 1 : 0) : existing.is_concurrent,
-    status,
-    notes !== undefined ? notes : existing.notes,
-    id,
-    userId
-  );
-
-  if (nextDuration !== existing.duration_minutes || (title && title !== existing.title)) {
-    let sessions: number[] = [];
-    try {
-      sessions = (await planTaskWithLLM(userId, title || existing.title, nextDuration, notes || existing.notes || undefined)).sessions;
-    } catch {}
-    db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND user_id = ?').run(sessions.length ? JSON.stringify(sessions) : null, id, userId);
-  }
-  replanUserTasks(userId);
-
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-  res.json({ message: '任务更新成功并已排程入日历', task: updated });
 }
 
 export function completePartTask(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const { id } = req.params;
-  const { completed_minutes, part_index } = req.body;
+  const taskId = Number(req.params.id);
+  const {
+    completed_minutes,
+    part_index,
+    block_id,
+    blockId,
+    expected_plan_version,
+    expected_instance_version,
+    business_date,
+    command_id,
+  } = req.body || {};
 
-  const result = completeTaskPart(userId, Number(id), completed_minutes, part_index);
+  const resolvedCmdId = command_id || getIdempotencyKey(req) || undefined;
+  const result = completeTaskPart(userId, taskId, completed_minutes, part_index, {
+    blockId: block_id || blockId,
+    commandId: resolvedCmdId,
+    expectedPlanVersion: expected_plan_version !== undefined ? Number(expected_plan_version) : undefined,
+    expectedInstanceVersion: expected_instance_version !== undefined ? Number(expected_instance_version) : undefined,
+    businessDate: business_date,
+  });
+
   if (!result.success) {
-    res.status(400).json({ error: result.message });
+    res.status(result.staleVersion ? 409 : 400).json({
+      error: result.message,
+      staleVersion: result.staleVersion,
+      currentPlanVersion: result.currentPlanVersion,
+    });
     return;
   }
+
   res.json(result);
 }
 
 export function deleteTask(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const { id } = req.params;
+  const taskId = Number(req.params.id);
+  const del = deleteTaskCommand(userId, taskId);
+  if (!del.success) {
+    res.status(404).json({ error: del.message });
+    return;
+  }
+  res.json({ message: del.message, planVersion: del.planVersion });
+}
 
-  db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, userId);
-  replanUserTasks(userId);
-  res.json({ message: '任务已删除并自适应更新日历排程' });
+export function deleteAllTasks(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND status IN ('pending', 'failed')
+    `).run(userId);
+    db.prepare('DELETE FROM tasks WHERE user_id = ?').run(userId);
+  })();
+  const replan = replanUserTasks(userId, { triggerSource: 'clear_all_tasks' });
+  res.json({ success: true, message: '已清空全部待办任务', planVersion: replan.planVersion });
 }
 
 export async function rescheduleTask(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -480,208 +281,140 @@ export async function rescheduleTask(req: AuthenticatedRequest, res: Response): 
   }
 
   try {
-    const result = db.transaction(() => {
-      const replan = replanUserTasks(userId);
-      const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task;
-      if (!updated.scheduled_start) throw new Error('暂无合适空闲时段，原日程已保留');
-      return { task: updated, replan };
-    })();
-    res.json({ message: '已重新规划全部可移动任务', ...result });
+    const replan = replanUserTasks(userId, { triggerSource: 'reschedule_task' });
+    const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task;
+    if (!updated.scheduled_start) {
+      res.status(400).json({ error: '暂无合适空闲时段，原日程已保留' });
+      return;
+    }
+    res.json({ message: '已重新规划全部可移动任务', task: updated, replan });
   } catch (error: any) {
     res.status(400).json({ error: error.message || '重新排程失败' });
   }
 }
 
+/**
+ * 仅接受服务端颁发的 proposalId，禁止直接提交客户端构造的完整排程时段（T07）。
+ */
 export function applyProposal(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const { proposal, newTask } = req.body;
-  if (!proposal || !proposal.conflictTask || !proposal.newTaskSchedule || !proposal.conflictTaskSchedule) {
-    res.status(400).json({ error: '调整建议数据不完整' });
+  const { proposalId, decision } = req.body || {};
+
+  if (!proposalId || typeof proposalId !== 'string') {
+    res.status(400).json({ error: '缺少服务端提案编号 proposalId，请刷新后重试' });
     return;
   }
 
-  // 1. 同步调整 conflictTask
-  db.prepare(`
-    UPDATE tasks
-    SET scheduled_start = ?,
-        scheduled_end = ?,
-        schedule_blocks = ?,
-        status = 'scheduled',
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND user_id = ?
-  `).run(
-    proposal.conflictTaskSchedule.start,
-    proposal.conflictTaskSchedule.end,
-    proposal.conflictTaskSchedule.blocks ? JSON.stringify(proposal.conflictTaskSchedule.blocks) : null,
-    proposal.conflictTask.id,
-    userId
-  );
+  const resolvedDecision = decision === 'reject' ? 'reject' : 'accept';
+  const result = resolveScheduleProposal({
+    userId,
+    proposalId,
+    decision: resolvedDecision,
+  });
 
-  // 2. 插入或更新 newTask
-  let taskId = newTask?.id;
-  if (taskId) {
-    db.prepare(`
-      UPDATE tasks
-      SET scheduled_start = ?,
-          scheduled_end = ?,
-          schedule_blocks = ?,
-          status = 'scheduled',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `).run(
-      proposal.newTaskSchedule.start,
-      proposal.newTaskSchedule.end,
-      proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null,
-      taskId,
-      userId
-    );
-  } else if (newTask) {
-    const resInsert = db.prepare(`
-      INSERT INTO tasks (
-        user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
-        score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
-        created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(
-      userId,
-      newTask.title,
-      Number(newTask.duration_minutes || 60),
-      Number(newTask.duration_minutes || 60),
-      normalizeScoreTo100(Number(newTask.urgency ?? 50), newTask.score_scale ?? 100),
-      normalizeScoreTo100(Number(newTask.importance ?? 50), newTask.score_scale ?? 100),
-      newTask.deadline || null,
-      proposal.newTaskSchedule.start,
-      proposal.newTaskSchedule.end,
-      newTask.is_fixed ? 1 : 0,
-      newTask.is_concurrent ? 1 : 0,
-      proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null
-    );
-    taskId = resInsert.lastInsertRowid;
+  if (result.status === 'not_found') {
+    res.status(404).json({ error: result.message });
+    return;
+  }
+
+  if (result.status === 'recomputed') {
+    res.status(409).json({
+      success: false,
+      stale: true,
+      message: result.message,
+      newProposal: result.newProposal,
+    });
+    return;
   }
 
   res.json({
-    success: true,
-    message: `已同步调整「${proposal.conflictTask.title}」日程`,
-    taskId,
+    success: result.success,
+    status: result.status,
+    message: result.message,
+    taskId: result.taskId,
+    planVersion: result.planVersion,
   });
 }
 
 export function quickActionTask(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const { id } = req.params;
-  const { action, extend_minutes = 30 } = req.body;
+  const taskId = Number(req.params.id);
+  const { action, extend_minutes = 30, business_date, target_remaining_minutes, command_id } = req.body || {};
 
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task | undefined;
-  if (!task) {
-    res.status(404).json({ error: '任务不存在' });
+  const allowed = new Set(['start', 'complete', 'reopen', 'cancel', 'extend', 'stop_daily']);
+  if (!allowed.has(action)) {
+    res.status(400).json({ error: '未知动作' });
     return;
   }
 
-  if (action === 'complete') {
-    const todayStr = formatLocalDate(new Date());
-    const completedDates = parseJsonArray<string>(task.completed_dates);
-    if (!completedDates.includes(todayStr)) {
-      completedDates.push(todayStr);
-    }
+  const result = executeQuickActionCommand({
+    userId,
+    taskId,
+    action,
+    extendMinutes: Number(extend_minutes),
+    businessDate: business_date,
+    targetRemainingMinutes: target_remaining_minutes !== undefined ? Number(target_remaining_minutes) : undefined,
+    commandId: command_id || getIdempotencyKey(req) || undefined,
+  });
 
-    if (task.time_mode === 'daily_fixed') {
-      db.prepare(`
-        UPDATE tasks
-        SET completed_dates = ?, urgency = 15, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(JSON.stringify(completedDates), id);
-      res.json({ message: `周期任务「${task.title}」今日已打卡完成，下一个周期自动恢复！` });
-      return;
-    }
-
-    db.prepare(`
-      UPDATE tasks
-      SET status = 'completed', completed_dates = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(completedDates), id);
-    res.json({ message: `任务「${task.title}」已标记完成！` });
+  if (!result.success) {
+    res.status(result.statusCode).json({ error: result.message });
     return;
   }
 
-  if (action === 'reopen') {
-    const now = new Date();
-    const todayStr = formatLocalDate(now);
-    const completedDates = parseJsonArray<string>(task.completed_dates).filter((d) => d !== todayStr);
+  res.json({
+    message: result.message,
+    task: result.task,
+    planVersion: result.planVersion,
+  });
+}
 
-    if (task.time_mode === 'daily_fixed') {
-      const imp100 = normalizeScoreTo100(task.importance, task.score_scale);
-      const nextUrgency = calculateDynamicUrgency({
-        timeMode: 'daily_fixed',
-        dueDate: task.deadline || null,
-        estimatedMinutes: task.duration_minutes,
-        importance: imp100,
-        scheduledStart: task.scheduled_start,
-        scheduledEnd: task.scheduled_end,
-        isCompletedToday: false,
-        dailyBusyMinutesAhead: computeTodayBusyMinutes(userId, now, task.id),
-      }).urgency;
-      db.prepare(`
-        UPDATE tasks
-        SET completed_dates = ?, urgency = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(JSON.stringify(completedDates), nextUrgency, task.scheduled_start ? 'scheduled' : 'pending_slot', id);
-      replanUserTasks(userId);
-      res.json({ message: `任务「${task.title}」已恢复今日待办！` });
-      return;
-    }
+export function exportBackup(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  res.json(exportUserBackup(userId));
+}
 
-    let restoredBlocks: any[] = [];
-    try {
-      const parsed = JSON.parse(task.schedule_blocks || '[]');
-      if (Array.isArray(parsed)) restoredBlocks = parsed.map(block => ({ ...block, completed: false }));
-    } catch {}
-    const blockMinutes = restoredBlocks.reduce((sum, block) => {
-      const duration = Number(block.duration) || (new Date(block.end).getTime() - new Date(block.start).getTime()) / 60000;
-      return sum + (Number.isFinite(duration) && duration > 0 ? duration : 0);
-    }, 0);
-    const restoredDuration = task.duration_minutes > 0 ? task.duration_minutes : (task.original_duration_minutes || Math.round(blockMinutes) || 60);
-    const hasValidFuturePinnedSlot =
-      task.is_fixed === 1 &&
-      Boolean(task.scheduled_start && task.scheduled_end) &&
-      new Date(task.scheduled_end!).getTime() > now.getTime();
+export function previewBackup(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const mode = req.body?.mode === 'replace' ? 'replace' : 'merge';
+  const payload = req.body?.data ?? req.body?.tasks ?? req.body;
+  res.json(previewBackupImport(userId, payload, mode));
+}
 
-    if (hasValidFuturePinnedSlot) {
-      db.prepare(`
-        UPDATE tasks
-        SET status = 'scheduled', duration_minutes = ?, completed_dates = ?, schedule_blocks = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(restoredDuration, JSON.stringify(completedDates), JSON.stringify(restoredBlocks), id);
-    } else {
-      db.prepare(`
-        UPDATE tasks
-        SET status = 'pending_slot',
-            duration_minutes = ?,
-            completed_dates = ?,
-            scheduled_start = NULL,
-            scheduled_end = NULL,
-            schedule_blocks = NULL,
-            is_fixed = 0,
-            start_reminder_sent = 0,
-            end_reminder_sent = 0,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(restoredDuration, JSON.stringify(completedDates), id);
-    }
-    replanUserTasks(userId);
-    res.json({ message: `任务「${task.title}」已重新打开并重排日程！` });
+export function importBackup(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const mode = req.body?.mode === 'replace' ? 'replace' : 'merge';
+  const payload = req.body?.data ?? req.body?.tasks ?? req.body;
+  const idemKey = getIdempotencyKey(req) || crypto.createHash('sha256').update(JSON.stringify({ mode, payload })).digest('hex').slice(0, 24);
+
+  const claim = claimCommandInbox({
+    userId,
+    channel: 'web',
+    senderId: String(userId),
+    externalMsgId: `web:backup:${idemKey}`,
+    idempotencyKey: `backup:${idemKey}`,
+    payload: { mode, payload },
+  });
+
+  if (claim.kind === 'conflict') {
+    res.status(409).json({ error: claim.message });
+    return;
+  }
+  if (claim.kind === 'duplicate_completed') {
+    res.json(claim.response);
+    return;
+  }
+  if (claim.kind === 'duplicate_processing') {
+    res.status(409).json({ error: '备份导入正在执行中，请勿重复提交' });
     return;
   }
 
-  if (action === 'extend') {
-    const extResult = extendTaskDuration(userId, Number(id), Number(extend_minutes));
-    if (!extResult.success) {
-      res.status(400).json({ error: extResult.message });
-      return;
-    }
-    res.json({ message: extResult.message, task: extResult.task });
-    return;
+  try {
+    const result = commitBackupImport(userId, payload, mode);
+    completeCommandInbox(claim.inboxId, result);
+    res.json(result);
+  } catch (err: any) {
+    failCommandInbox(claim.inboxId, err.message);
+    res.status(500).json({ error: err.message || '备份导入失败' });
   }
-
-  res.status(400).json({ error: '未知动作' });
 }

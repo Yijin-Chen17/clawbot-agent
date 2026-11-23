@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { PORT } from './config/env.js';
+import { PORT, getDataDir } from './config/env.js';
 import { initDatabase } from './config/database.js';
 import { router as apiRouter } from './routes/api.js';
 import { startReminderScheduler } from './services/reminder.js';
@@ -19,7 +19,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static uploads directory (avatars, attachments)
-const uploadsDir = path.resolve(process.cwd(), 'data/uploads');
+const uploadsDir = path.join(getDataDir(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }

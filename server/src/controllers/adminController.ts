@@ -12,6 +12,8 @@ import {
 import { UserSettings } from '../models/types.js';
 import { getGlobalUsageStats, recordApiUsage } from '../services/llmPricing.js';
 import { getGlobalApiConfig, saveGlobalApiConfig, maskApiKey } from '../services/globalApiConfig.js';
+import { incrementSessionVersion, recordAuditLog } from '../services/accountService.js';
+import { deleteUserAccountWithCleanup } from './authController.js';
 
 export function listUsers(req: AuthenticatedRequest, res: Response): void {
   const users = db.prepare(`
@@ -35,10 +37,14 @@ export function listUsers(req: AuthenticatedRequest, res: Response): void {
 
 export function approveUser(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
-
   const target = db.prepare('SELECT id, username, status FROM users WHERE id = ?').get(id) as any;
   if (!target) {
     res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+
+  if (target.status !== 'pending' && target.status !== 'rejected') {
+    res.status(400).json({ error: `当前账号状态为「${target.status}」，仅待审核或已拒绝账号可执行审核放行` });
     return;
   }
 
@@ -48,21 +54,24 @@ export function approveUser(req: AuthenticatedRequest, res: Response): void {
     WHERE id = ?
   `).run(id);
 
+  recordAuditLog(req.user?.id ?? null, target.id, 'approve_user', { fromStatus: target.status });
   addDebugLog('Auth', 'info', `管理员审核放行了用户「${target.username}」`);
   res.json({ message: `用户「${target.username}」已成功审核放行！` });
 }
 
 export function rejectUser(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
-
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any;
+  const target = db.prepare('SELECT id, username, role, status FROM users WHERE id = ?').get(id) as any;
   if (!target) {
     res.status(404).json({ error: '用户不存在' });
     return;
   }
-
   if (target.id === req.user?.id) {
     res.status(400).json({ error: '不能拒绝自己的账号' });
+    return;
+  }
+  if (target.status !== 'pending') {
+    res.status(400).json({ error: `仅待审核账号可执行拒绝操作（当前状态：${target.status}）` });
     return;
   }
 
@@ -72,6 +81,7 @@ export function rejectUser(req: AuthenticatedRequest, res: Response): void {
     WHERE id = ?
   `).run(id);
 
+  recordAuditLog(req.user?.id ?? null, target.id, 'reject_user', { fromStatus: target.status });
   addDebugLog('Auth', 'warn', `管理员拒绝了用户「${target.username}」的权限`);
   res.json({ message: `已拒绝用户「${target.username}」的访问权限。` });
 }
@@ -96,44 +106,55 @@ export function setUserRole(req: AuthenticatedRequest, res: Response): void {
     WHERE id = ?
   `).run(role, id);
 
+  recordAuditLog(req.user?.id ?? null, Number(id), 'set_user_role', { role });
   res.json({ message: '用户角色已更新' });
 }
 
 export function banUser(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
-
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any;
+  const target = db.prepare('SELECT id, username, role, status FROM users WHERE id = ?').get(id) as any;
   if (!target) {
     res.status(404).json({ error: '用户不存在' });
     return;
   }
-
   if (target.id === req.user?.id) {
     res.status(400).json({ error: '不能封禁自己的账号' });
     return;
   }
-
   if (target.role === 'admin' && target.username === 'admin') {
     res.status(400).json({ error: '不能封禁系统超级管理员' });
     return;
   }
 
-  db.prepare(`
-    UPDATE users
-    SET status = 'banned', updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(id);
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE users
+      SET status = 'banned', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+    incrementSessionVersion(target.id);
+    db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND status IN ('pending', 'failed')
+    `).run(target.id);
+    recordAuditLog(req.user?.id ?? null, target.id, 'ban_user', { fromStatus: target.status });
+  })();
 
+  weixinTransitManager.stopWorker(target.id);
   addDebugLog('Auth', 'warn', `管理员封禁了用户「${target.username}」`);
   res.json({ message: `用户「${target.username}」已被封禁！` });
 }
 
 export function unbanUser(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
-
-  const target = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id) as any;
+  const target = db.prepare('SELECT id, username, status FROM users WHERE id = ?').get(id) as any;
   if (!target) {
     res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+  if (target.status !== 'banned') {
+    res.status(400).json({ error: `仅已封禁账号可解封（当前状态：${target.status}）` });
     return;
   }
 
@@ -143,33 +164,32 @@ export function unbanUser(req: AuthenticatedRequest, res: Response): void {
     WHERE id = ?
   `).run(id);
 
+  recordAuditLog(req.user?.id ?? null, target.id, 'unban_user', { fromStatus: target.status });
   addDebugLog('Auth', 'info', `管理员解封了用户「${target.username}」`);
   res.json({ message: `用户「${target.username}」已解除封禁！` });
 }
 
 export function deleteUser(req: AuthenticatedRequest, res: Response): void {
-  const { id } = req.params;
-
-  if (Number(id) === req.user?.id) {
+  const targetId = Number(req.params.id);
+  if (targetId === req.user?.id) {
     res.status(400).json({ error: '不能删除自己的账号' });
     return;
   }
 
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any;
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(targetId) as any;
+  if (!target) {
+    res.status(404).json({ error: '用户不存在' });
+    return;
+  }
   if (target?.role === 'admin' && target?.username === 'admin') {
     res.status(400).json({ error: '不能删除系统超级管理员账号' });
     return;
   }
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  res.json({ message: '用户已删除' });
+  deleteUserAccountWithCleanup(targetId, req.user?.id ?? null);
+  res.json({ message: '用户及关联数据已清理并删除' });
 }
 
-// ================= Debugger Endpoints =================
-
-/**
- * 1. Get recent system debug logs
- */
 export function getDebugLogs(req: AuthenticatedRequest, res: Response): void {
   const limit = Math.min(500, Number(req.query.limit) || 200);
   const level = String(req.query.level || 'all');
@@ -179,19 +199,18 @@ export function getDebugLogs(req: AuthenticatedRequest, res: Response): void {
   res.json({ logs });
 }
 
-/**
- * 2. Clear debug logs
- */
 export function clearDebugLogs(req: AuthenticatedRequest, res: Response): void {
   clearLogs();
   res.json({ message: '日志已清空' });
 }
 
 /**
- * 3. Simulate inbound WeChat message for a given user
+ * 模拟来信（A08）：
+ * - 默认 dryRun = true（隔离预演，不写入用户任务、不改激活态、不扣用户额度）
+ * - 仅当显式传入 realExecution: true 时执行真实写入，并记录管理员操作审计日志
  */
 export async function debugSimulateInbound(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { userId, content } = req.body;
+  const { userId, content, realExecution = false } = req.body || {};
   if (!userId || !content || !String(content).trim()) {
     res.status(400).json({ error: '缺少 userId 或 content' });
     return;
@@ -203,19 +222,32 @@ export async function debugSimulateInbound(req: AuthenticatedRequest, res: Respo
     return;
   }
 
+  const isDryRun = !Boolean(realExecution);
   const startTime = Date.now();
-  addDebugLog('Weixin', 'info', `[调试器模拟] 模拟用户 #${userId} (${user.username}) 发送消息: "${content}"`);
+  addDebugLog(
+    'Weixin',
+    'info',
+    `[调试器模拟:${isDryRun ? '演练隔离' : '真实执行'}] 用户 #${userId} (${user.username}) 消息: "${content}"`
+  );
+
+  if (!isDryRun) {
+    recordAuditLog(req.user?.id ?? null, Number(userId), 'admin_simulate_inbound_real', {
+      content: String(content).trim(),
+    });
+  }
 
   try {
-    const result = await processWeChatMessage(Number(userId), String(content).trim(), `debug_sim_user_${userId}`);
+    const result = await processWeChatMessage(
+      Number(userId),
+      String(content).trim(),
+      `debug_sim_user_${userId}`,
+      { dryRun: isDryRun, skipImages: isDryRun }
+    );
     const elapsedMs = Date.now() - startTime;
-
-    addDebugLog('Weixin', 'success', `[调试器模拟] 模拟消息处理完成，耗时 ${elapsedMs}ms`, {
-      replyPreview: result.replyText.slice(0, 80),
-    });
 
     res.json({
       success: true,
+      dryRun: isDryRun,
       user: { id: user.id, username: user.username },
       inputContent: content,
       replyText: result.replyText,
@@ -228,15 +260,13 @@ export async function debugSimulateInbound(req: AuthenticatedRequest, res: Respo
   } catch (err: any) {
     res.status(500).json({
       success: false,
+      dryRun: isDryRun,
       error: err.message,
       stack: err.stack,
     });
   }
 }
 
-/**
- * 4. Test outbound message sending to real WeChat user
- */
 export async function debugTestSendWeChat(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { userId, message } = req.body;
   if (!userId || !message) {
@@ -269,45 +299,30 @@ export async function debugTestSendWeChat(req: AuthenticatedRequest, res: Respon
   });
 }
 
-/**
- * 5. Get status of all WeChat transit workers
- */
 export function getWorkersStatus(req: AuthenticatedRequest, res: Response): void {
   const workers = weixinTransitManager.getWorkerStatusList();
   res.json({ workers });
 }
 
-/**
- * 6. Restart a worker for a user
- */
 export function restartUserWorker(req: AuthenticatedRequest, res: Response): void {
   const { userId } = req.params;
   weixinTransitManager.startWorker(Number(userId));
   res.json({ message: `已重新启动用户 #${userId} 的微信轮询管道` });
 }
 
-/**
- * 7. Reset sync_buf for a user
- */
 export function resetUserSyncBuf(req: AuthenticatedRequest, res: Response): void {
   const { userId } = req.params;
   weixinTransitManager.resetSyncBuf(Number(userId));
   res.json({ message: `已重置用户 #${userId} 的 sync_buf 并重启 Worker` });
 }
 
-// ================= Global LLM API & Quota Settings =================
-
-/**
- * 获取全局大模型 API 设置（包含 API 1 主节点与 API 2 备用节点）
- */
 export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
   const config = getGlobalApiConfig();
-
   const api1Masked = maskApiKey(config.api1.apiKey);
   const api2Masked = maskApiKey(config.api2.apiKey);
 
   res.json({
-    // 结构化节点数据
+    configVersion: config.configVersion,
     api1: {
       endpoint: config.api1.endpoint,
       model: config.api1.model,
@@ -323,8 +338,6 @@ export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): 
     },
     pricing: config.pricing,
     updatedAt: config.updatedAt,
-
-    // 扁平结构兼容旧前端调用
     endpoint: config.api1.endpoint,
     model: config.api1.model,
     apiKeyMasked: api1Masked,
@@ -335,13 +348,9 @@ export function getGlobalLlmSettings(req: AuthenticatedRequest, res: Response): 
   });
 }
 
-/**
- * 更新全局大模型 API 设置（双写至独立持久化配置文件与数据库，防止重启丢配置）
- */
 export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response): void {
   const body = req.body;
 
-  // 兼顾结构化传参与扁平旧传参
   const api1Update = body.api1 || {
     endpoint: body.endpoint,
     model: body.model,
@@ -361,28 +370,29 @@ export function updateGlobalLlmSettings(req: AuthenticatedRequest, res: Response
     priceCacheHit: body.price_cache_hit,
   };
 
-  const updated = saveGlobalApiConfig({
-    api1: api1Update,
-    api2: api2Update,
-    pricing: pricingUpdate,
-  });
+  try {
+    const updated = saveGlobalApiConfig({
+      api1: api1Update,
+      api2: api2Update,
+      pricing: pricingUpdate,
+    });
 
-  addDebugLog(
-    'System',
-    'info',
-    `管理员更新了全局 API 配置 (主节点 Model: ${updated.api1.model}, 备用节点: ${updated.api2.enabled ? '已启用' : '未启用'})`
-  );
+    addDebugLog(
+      'System',
+      'info',
+      `管理员更新了全局 API 配置 v${updated.configVersion} (主节点 Model: ${updated.api1.model}, 备用节点: ${updated.api2.enabled ? '已启用' : '未启用'})`
+    );
 
-  res.json({
-    success: true,
-    message: '全局 API 配置及主备节点设置已成功持久化保存！',
-    config: updated,
-  });
+    res.json({
+      success: true,
+      message: `全局 API 配置已持久化保存 (版本 v${updated.configVersion})！`,
+      config: updated,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: `保存全局配置失败: ${err.message}` });
+  }
 }
 
-/**
- * 测试全局大模型 API 连通性（支持独立测试 API 1 或 API 2）
- */
 export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { node = 'api1', endpoint, api_key, model } = req.body;
   const config = getGlobalApiConfig();
@@ -444,9 +454,6 @@ export async function testGlobalLlmSettings(req: AuthenticatedRequest, res: Resp
   }
 }
 
-/**
- * 直接充值指定用户账户额度（支持通过 UID 或用户名充值）
- */
 export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
   const { amount, username } = req.body;
@@ -457,43 +464,45 @@ export function rechargeUserBalance(req: AuthenticatedRequest, res: Response): v
     return;
   }
 
-  let target: any = null;
-  if (username && typeof username === 'string' && username.trim()) {
-    target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE username = ? COLLATE NOCASE').get(username.trim());
-    if (!target) {
-      res.status(404).json({ error: `用户「${username}」不存在` });
-      return;
+  const txResult = db.transaction(() => {
+    let target: any = null;
+    if (username && typeof username === 'string' && username.trim()) {
+      target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE username = ? COLLATE NOCASE').get(username.trim());
+    } else if (id && id !== 'by-username') {
+      target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE id = ?').get(id);
+    } else {
+      return { error: { status: 400, message: '缺少充值目标用户信息（UID 或 用户名）' } };
     }
-  } else if (id && id !== 'by-username') {
-    target = db.prepare('SELECT id, username, COALESCE(balance, 0) as balance FROM users WHERE id = ?').get(id);
+
     if (!target) {
-      res.status(404).json({ error: '用户不存在' });
-      return;
+      return { error: { status: 404, message: '用户不存在' } };
     }
-  } else {
-    res.status(400).json({ error: '缺少充值目标用户信息（UID 或 用户名）' });
+
+    db.prepare(`
+      UPDATE users
+      SET balance = ROUND(COALESCE(balance, 0) + ?, 4), updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(numAmount, target.id);
+
+    const after = db.prepare('SELECT balance FROM users WHERE id = ?').get(target.id) as { balance: number };
+    recordAuditLog(req.user?.id ?? null, target.id, 'admin_recharge', { amount: numAmount, newBalance: after.balance });
+    return { target, newBalance: Number(after.balance) };
+  })();
+
+  if ('error' in txResult && txResult.error) {
+    res.status(txResult.error.status).json({ error: txResult.error.message });
     return;
   }
 
-  const newBalance = Number((target.balance + numAmount).toFixed(4));
-  db.prepare(`
-    UPDATE users
-    SET balance = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(newBalance, target.id);
-
-  addDebugLog('Auth', 'info', `管理员为用户「${target.username}」(ID: ${target.id}) 充值 ¥${numAmount.toFixed(2)}，当前余额: ¥${newBalance.toFixed(2)}`);
+  addDebugLog('Auth', 'info', `管理员为用户「${txResult.target.username}」(ID: ${txResult.target.id}) 充值 ¥${numAmount.toFixed(2)}，当前余额: ¥${txResult.newBalance!.toFixed(2)}`);
   res.json({
     success: true,
-    user: { id: target.id, username: target.username },
-    newBalance,
-    message: `已成功为用户「${target.username}」充值 ¥${numAmount.toFixed(2)} 元！当前余额：¥${newBalance.toFixed(2)} 元`,
+    user: { id: txResult.target.id, username: txResult.target.username },
+    newBalance: txResult.newBalance,
+    message: `已成功为用户「${txResult.target.username}」充值 ¥${numAmount.toFixed(2)} 元！当前余额：¥${txResult.newBalance!.toFixed(2)} 元`,
   });
 }
 
-/**
- * 批量生成兑换码
- */
 export function generateRedemptionCodes(req: AuthenticatedRequest, res: Response): void {
   const { amount, count } = req.body;
 
@@ -512,20 +521,16 @@ export function generateRedemptionCodes(req: AuthenticatedRequest, res: Response
     VALUES (?, ?, 'active', ?)
   `);
 
-  const runTransaction = db.transaction(() => {
+  db.transaction(() => {
     for (let i = 0; i < numCount; i++) {
-      // 生成格式如 CLAW-8F3A-BC12-9D4E 的随机唯一兑换码
       const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
       const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
       const part3 = crypto.randomBytes(2).toString('hex').toUpperCase();
       const code = `CLAW-${part1}-${part2}-${part3}`;
-
       insertStmt.run(code, numAmount, createdBy);
       generatedCodes.push(code);
     }
-  });
-
-  runTransaction();
+  })();
 
   addDebugLog('System', 'info', `管理员生成了 ${numCount} 个面额为 ¥${numAmount.toFixed(2)} 的兑换码`);
   res.json({
@@ -537,9 +542,6 @@ export function generateRedemptionCodes(req: AuthenticatedRequest, res: Response
   });
 }
 
-/**
- * 查询兑换码列表与汇总数据
- */
 export function listRedemptionCodes(req: AuthenticatedRequest, res: Response): void {
   const codes = db.prepare(`
     SELECT 
@@ -580,20 +582,29 @@ export function listRedemptionCodes(req: AuthenticatedRequest, res: Response): v
 }
 
 /**
- * 删除或废弃兑换码
+ * 废弃/删除兑换码（A06：已使用的兑换码不可物理删除，保留不可变财务核对记录）
  */
 export function deleteRedemptionCode(req: AuthenticatedRequest, res: Response): void {
   const { id } = req.params;
+  const row = db.prepare('SELECT id, status FROM redemption_codes WHERE id = ?').get(id) as
+    | { id: number; status: string }
+    | undefined;
+  if (!row) {
+    res.status(404).json({ error: '兑换码不存在' });
+    return;
+  }
+  if (row.status === 'used') {
+    res.status(400).json({ error: '已使用的兑换码涉及财务流水审计，不可删除' });
+    return;
+  }
+
   db.prepare('DELETE FROM redemption_codes WHERE id = ?').run(id);
-  res.json({ success: true, message: '兑换码已删除' });
+  res.json({ success: true, message: '未使用的兑换码已删除' });
 }
 
-/**
- * 获取全平台 Token 与资费使用统计
- */
 export function getAdminUsageStats(req: AuthenticatedRequest, res: Response): void {
   const scope = (req.query.scope as string) === 'all' ? 'all' : 'official';
-  const stats = getGlobalUsageStats('deepseek-chat', scope);
+  const stats = getGlobalUsageStats(undefined, scope);
   res.json({
     success: true,
     ...stats,

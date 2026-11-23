@@ -204,10 +204,23 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       if (e > s) intervals.push({ start: s, end: e });
     }
     for (const t of rawServerTasks) {
-      if (t.status === 'completed' || !t.scheduled_start || !t.scheduled_end) continue;
-      const s = Math.max(currentTime.getTime(), new Date(t.scheduled_start).getTime());
-      const e = Math.min(dayEnd.getTime(), new Date(t.scheduled_end).getTime());
-      if (e > s) intervals.push({ start: s, end: e });
+      if (t.status === 'completed' || t.status === 'cancelled' || t.is_concurrent) continue;
+      let blocks: Array<{ start: string; end: string; completed?: boolean }> = [];
+      if (t.schedule_blocks) {
+        try {
+          const parsed = typeof t.schedule_blocks === 'string' ? JSON.parse(t.schedule_blocks) : t.schedule_blocks;
+          if (Array.isArray(parsed)) blocks = parsed;
+        } catch {}
+      }
+      if (blocks.length === 0 && t.scheduled_start && t.scheduled_end) {
+        blocks = [{ start: t.scheduled_start, end: t.scheduled_end }];
+      }
+      for (const b of blocks) {
+        if (b.completed) continue;
+        const s = Math.max(currentTime.getTime(), new Date(b.start).getTime());
+        const e = Math.min(dayEnd.getTime(), new Date(b.end).getTime());
+        if (e > s) intervals.push({ start: s, end: e });
+      }
     }
 
     intervals.sort((a, b) => a.start - b.start);
@@ -341,15 +354,19 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         completedDates: isCompletedToday
           ? Array.from(new Set([...completedDates, todayStr]))
           : completedDates,
+        deadlineAt: t.deadline || null,
+        deadlineKind: t.deadline_kind === 'hard' ? 'hard' : 'soft',
         dueDate: effectiveDueDate
           ? /^\d{4}-\d{2}-\d{2}$/.test(effectiveDueDate)
             ? effectiveDueDate
             : formatLocalDate(new Date(effectiveDueDate))
           : null,
-        tags: Array.isArray(t.tags)
+        tags: parseArr<string>(t.tags).length > 0
+          ? parseArr<string>(t.tags)
+          : Array.isArray(t.tags)
           ? t.tags
-          : t.tags
-          ? String(t.tags)
+          : typeof t.tags === 'string' && !t.tags.trim().startsWith('[')
+          ? t.tags
               .split(',')
               .map((s: string) => s.trim())
               .filter(Boolean)
@@ -546,8 +563,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     title: string;
     importance: number;
     urgency: number;
-  }) => {
-    setPlanning({ title: editingTask ? (language === 'zh' ? '正在更新日程' : 'Updating schedule...') : (language === 'zh' ? '正在规划全部日程' : 'Planning all schedules...'), status: 'working' });
+  }): Promise<boolean> => {
+    setPlanning({ title: editingTask ? '正在更新日程' : '正在规划全部日程', status: 'working' });
     try {
       const payload = {
         title: data.title,
@@ -563,6 +580,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
           data.importanceManualOverride !== undefined ? data.importanceManualOverride : null,
         score_scale: 100,
         deadline: serializeDeadlineIso(data.dueDate),
+        deadline_kind: data.deadlineKind || 'soft',
+        tags: data.tags || [],
         scheduled_start: data.scheduledStart || null,
         scheduled_end: data.scheduledEnd || null,
         is_fixed: data.isFixed ? 1 : 0,
@@ -579,8 +598,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       setIsTaskModalOpen(false);
       setEditingTask(null);
       setClickCoords(null);
+      return true;
     } catch (err: any) {
-      setPlanning({ title: language === 'zh' ? '保存失败' : 'Save failed', status: 'error', detail: err.response?.data?.error || (language === 'zh' ? '请重试' : 'Please retry') });
+      setPlanning({ title: '保存失败', status: 'error', detail: err.response?.data?.error || '请重试' });
+      return false;
     }
   };
 
@@ -621,7 +642,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         urgencyPace = 'later';
       }
 
-      await handleSaveTask({
+      const ok = await handleSaveTask({
         title: quickTaskTitle.trim(),
         importance: imp,
         urgency: urg,
@@ -632,7 +653,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         dueDate,
         estimatedMinutes: 30,
       });
-      setQuickTaskTitle('');
+      if (ok) setQuickTaskTitle('');
     } finally {
       setQuickTaskSubmitting(false);
     }
@@ -713,13 +734,14 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     }
   };
 
-  // 删除任务
+  // 删除任务并刷新受影响重排结果 (C08)
   const handleDeleteTask = async (taskId: string) => {
     if (!window.confirm(t('workspace.delete_confirm', '确定要删除该待办事项吗？'))) return;
 
     setRawServerTasks((prev) => prev.filter((t) => String(t.id) !== taskId));
     try {
       await api.delete(`/tasks/${taskId}`);
+      await fetchTasks();
     } catch (err) {
       console.error('删除任务失败:', err);
       fetchTasks();
@@ -733,35 +755,19 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     setIsTaskModalOpen(true);
   };
 
-  // 数据导入
-  const handleImportTasks = async (importedList: TaskItem[]) => {
-    for (const t of importedList) {
-      try {
-        await api.post('/tasks', {
-          title: t.title,
-          duration_minutes: t.estimatedMinutes,
-          importance: t.importance,
-          urgency: t.urgency,
-          score_scale: 100,
-          deadline: serializeDeadlineIso(t.dueDate),
-          notes: t.description || '',
-          auto_schedule: true,
-        });
-      } catch (_) {}
-    }
+  // 批量版本化数据导入 (C07)
+  const handleImportTasks = async (importedList: unknown, mode: 'merge' | 'replace' = 'merge') => {
+    const res = await api.post('/tasks/backup/import', { data: importedList, mode });
     await fetchTasks();
     setIsBackupOpen(false);
+    return res.data;
   };
 
-  // 清空所有任务
+  // 原子清空所有任务 (C07)
   const handleClearAll = async () => {
-    if (!window.confirm(t('workspace.clear_all_confirm', '确定要清空全部事项吗？此操作无法撤销！'))) return;
-    for (const t of tasks) {
-      try {
-        await api.delete(`/tasks/${t.id}`);
-      } catch (_) {}
-    }
-    setRawServerTasks([]);
+    if (!window.confirm('确定要清空全部事项吗？此操作无法撤销！')) return;
+    await api.delete('/tasks/all');
+    await fetchTasks();
     setIsBackupOpen(false);
   };
 
