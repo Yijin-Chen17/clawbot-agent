@@ -4,6 +4,7 @@ import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getAppConfig } from './appConfig.js';
+import { getGlobalApiConfig } from '../services/globalApiConfig.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -118,6 +119,7 @@ export function initDatabase() {
       input_cost_cny REAL NOT NULL DEFAULT 0,
       output_cost_cny REAL NOT NULL DEFAULT 0,
       request_type TEXT DEFAULT 'weixin_chat',
+      is_official INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -130,7 +132,27 @@ export function initDatabase() {
       used INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS redemption_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_by INTEGER REFERENCES users(id),
+      used_by_user_id INTEGER REFERENCES users(id),
+      used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+
+  const subscriptionColumns = (db.prepare('PRAGMA table_info(calendar_subscriptions)').all() as { name: string }[]).map(c => c.name);
+  if (!subscriptionColumns.includes('color')) db.exec('ALTER TABLE calendar_subscriptions ADD COLUMN color TEXT DEFAULT NULL');
 
   // Migrate user_settings columns if missing
   const columns = (db.prepare('PRAGMA table_info(user_settings)').all() as any[]).map(c => c.name);
@@ -139,6 +161,8 @@ export function initDatabase() {
       db.exec(`ALTER TABLE user_settings ADD COLUMN ${name} ${type} DEFAULT ${def};`);
     }
   };
+  addCol('calendar_color', 'TEXT', 'NULL');
+  addCol('api_mode', 'TEXT', "'official'");
   addCol('weixin_connected', 'INTEGER', '0');
   addCol('weixin_bot_token', 'TEXT', "''");
   addCol('weixin_bot_id', 'TEXT', "''");
@@ -151,6 +175,26 @@ export function initDatabase() {
   addCol('weixin_activated', 'INTEGER', '0');
   addCol('weixin_last_active_at', 'DATETIME', 'NULL');
 
+  // 若存量用户已配置私有 API Key，但尚未主动充值官方余额，默认保持其 custom 模式
+  try {
+    db.exec(`
+      UPDATE user_settings 
+      SET api_mode = 'custom' 
+      WHERE (llm_api_key IS NOT NULL AND TRIM(llm_api_key) != '')
+        AND (api_mode IS NULL OR api_mode = 'official')
+        AND user_id NOT IN (SELECT id FROM users WHERE balance > 0)
+        AND user_id NOT IN (SELECT used_by_user_id FROM redemption_codes WHERE used_by_user_id IS NOT NULL);
+    `);
+  } catch (err: any) {
+    // 容错处理
+  }
+
+  // Migrate api_usage_logs columns if missing (is_official)
+  const usageCols = (db.prepare('PRAGMA table_info(api_usage_logs)').all() as any[]).map(c => c.name);
+  if (!usageCols.includes('is_official')) {
+    db.exec("ALTER TABLE api_usage_logs ADD COLUMN is_official INTEGER DEFAULT 0;");
+  }
+
   // Migrate users table columns if missing (nickname, avatar_url, email)
   const userCols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map(c => c.name);
   if (!userCols.includes('nickname')) {
@@ -162,10 +206,45 @@ export function initDatabase() {
   if (!userCols.includes('email')) {
     db.exec("ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL;");
   }
+  if (!userCols.includes('balance')) {
+    db.exec("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0;");
+  }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL AND email != '';");
+
+  // Initialize default system settings for global LLM if not present
+  const existingGlobalEndpoint = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_endpoint');
+  if (!existingGlobalEndpoint) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_endpoint', 'https://api.deepseek.com/v1');
+  }
+  const existingGlobalModel = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_model');
+  if (!existingGlobalModel) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_model', 'deepseek-chat');
+  }
+  const existingGlobalKey = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('global_llm_api_key');
+  if (!existingGlobalKey && process.env.DEEPSEEK_API_KEY) {
+    db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run('global_llm_api_key', process.env.DEEPSEEK_API_KEY);
+  }
+  const initPriceSetting = (k: string, val: string) => {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(k);
+    if (!row) {
+      db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').run(k, val);
+    }
+  };
+  initPriceSetting('global_llm_price_input', '2.0');
+  initPriceSetting('global_llm_price_output', '8.0');
+  initPriceSetting('global_llm_price_cache_hit', '0.5');
+
+  // 初始化独立持久化配置文件并同步数据
+  try {
+    getGlobalApiConfig();
+  } catch (err: any) {
+    console.warn('[DB] Failed to init global API config:', err.message);
+  }
 
   // Migrate tasks table columns if missing
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as any[]).map(c => c.name);
+  if (!taskCols.includes('deadline_kind')) db.exec("ALTER TABLE tasks ADD COLUMN deadline_kind TEXT DEFAULT 'soft';");
+  if (!taskCols.includes('session_plan')) db.exec('ALTER TABLE tasks ADD COLUMN session_plan TEXT DEFAULT NULL;');
   if (!taskCols.includes('schedule_blocks')) {
     db.exec('ALTER TABLE tasks ADD COLUMN schedule_blocks TEXT DEFAULT NULL;');
   }
@@ -215,15 +294,6 @@ export function initDatabase() {
         score_scale = 100;
     `);
   }
-
-  // 确保所有已有排程的任务均锁定为固定任务 (一旦安排日历，就不再做更改)
-  db.exec(`
-    UPDATE tasks
-    SET is_fixed = 1
-    WHERE status IN ('scheduled', 'in_progress')
-      AND scheduled_start IS NOT NULL
-      AND (is_fixed IS NULL OR is_fixed = 0);
-  `);
 
   // Seed initial admin if database has no users
   const config = getAppConfig();

@@ -1,3 +1,4 @@
+import { resolveFixedTaskTime } from './fixedTaskTime.js';
 import crypto from 'node:crypto';
 import axios from 'axios';
 import { db } from '../config/database.js';
@@ -595,7 +596,6 @@ export async function processWeChatMessage(
         SET scheduled_start = ?,
             scheduled_end = ?,
             schedule_blocks = ?,
-            is_fixed = 1,
             status = 'scheduled',
             updated_at = datetime('now', 'localtime')
         WHERE id = ? AND user_id = ?
@@ -607,14 +607,14 @@ export async function processWeChatMessage(
         userId
       );
 
-      // 2. 插入新任务并锁定
+      // 2. 插入新任务
       db.prepare(`
         INSERT INTO tasks (
           user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
           deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       `).run(
         userId,
         newTask.title,
@@ -635,10 +635,9 @@ export async function processWeChatMessage(
       const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
       const replyText =
-        `✅ 已为您同步调整日程并锁定：\n` +
+        `✅ 已为您同步调整日程：\n` +
         `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
-        `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
-        `📌 一旦安排日历，事件均已固定锁定。`;
+        `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}`;
 
       addDebugLog('Scheduler', 'success', `用户 #${userId} 快捷确认同步修改日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
       return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied' } };
@@ -654,7 +653,7 @@ export async function processWeChatMessage(
             deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
             created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
         `).run(
           userId,
           newTask.title,
@@ -705,15 +704,38 @@ export async function processWeChatMessage(
 
   try {
     let parsed: any;
-    // Check if user has configured LLM API Key
-    if (!settings.llm_api_key || !settings.llm_api_key.trim()) {
-      addDebugLog('LLM', 'warn', `用户 #${userId} 未配置 DeepSeek API Key，无法进行语义解析`);
-      return {
-        replyText:
-          `⚠️【系统提醒】您尚未在管理后台配置大模型 API Key。\n` +
-          `请登录管理面板（http://${settings.weixin_base_url ? '管理地址' : '5178'}）在「设置」中填入您的 DeepSeek API Key 即可开启智能规划。`,
-        diagnostics: { error: '未配置 LLM API Key' },
-      };
+    // Check if user has configured LLM API Key or can use official mode
+    const llmConfig = getEffectiveLlmConfig(userId, settings);
+    if (llmConfig.isOfficial) {
+      if (llmConfig.userBalance <= 0) {
+        addDebugLog('LLM', 'warn', `用户 #${userId} 官方接口账户额度已用尽 (¥0.00)，拦截智能解析`);
+        return {
+          replyText:
+            `⚠️【账户额度已用尽】\n` +
+            `您的 Clawbot 官方接口额度为 ¥0.00，无法继续调用智能模型。\n` +
+            `请登录管理后台在「设置」中输入兑换码充值或联系管理员，亦可切换为「自定义 APIKey」模式。`,
+          diagnostics: { error: '官方接口额度已用尽' },
+        };
+      }
+      if (!llmConfig.apiKey) {
+        addDebugLog('LLM', 'warn', `管理员尚未配置官方全局 API Key`);
+        return {
+          replyText:
+            `⚠️【系统提醒】管理员尚未配置官方全局大模型接口。\n` +
+            `请联系管理员在后台设置中填入全局 API Key，或在「设置」中切换为「自定义 APIKey」模式。`,
+          diagnostics: { error: '未配置全局 LLM API Key' },
+        };
+      }
+    } else {
+      if (!llmConfig.apiKey || !llmConfig.apiKey.trim()) {
+        addDebugLog('LLM', 'warn', `用户 #${userId} 未配置自定义 API Key`);
+        return {
+          replyText:
+            `⚠️【系统提醒】您选择了自定义 APIKey 模式，但尚未配置有效密钥。\n` +
+            `请登录管理后台在「设置」中填入您的 API Key，或切换为「Clawbot Task 官方接口」即可立即使用。`,
+          diagnostics: { error: '未配置自定义 LLM API Key' },
+        };
+      }
     }
 
     parsed = await parseUserMessageWithLLM(content, settings, pendingSwapData || pendingTask);
@@ -732,7 +754,6 @@ export async function processWeChatMessage(
           SET scheduled_start = ?,
               scheduled_end = ?,
               schedule_blocks = ?,
-              is_fixed = 1,
               status = 'scheduled',
               updated_at = datetime('now', 'localtime')
           WHERE id = ? AND user_id = ?
@@ -744,14 +765,14 @@ export async function processWeChatMessage(
           userId
         );
 
-        // 2. 插入新任务并锁定
+        // 2. 插入新任务
         db.prepare(`
           INSERT INTO tasks (
             user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
             deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
             created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
         `).run(
           userId,
           newTask.title,
@@ -772,10 +793,9 @@ export async function processWeChatMessage(
         const confE = new Date(prop.conflictTaskSchedule.end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
         const replyText =
-          `✅ 已为您同步调整日程并锁定：\n` +
+          `✅ 已为您同步调整日程：\n` +
           `1. 「${newTask.title}」已安排：${newS} ~ ${newE}\n` +
-          `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}\n\n` +
-          `📌 一旦安排日历，事件均已固定锁定。`;
+          `2. 「${prop.conflictTask.title}」已同步修改至：${confS} ~ ${confE}`;
 
         addDebugLog('Scheduler', 'success', `LLM 判定用户同意调整日程: ${newTask.title} 替换 ${prop.conflictTask.title}`);
         return { replyText, diagnostics: { intent: 'confirm_schedule_swap', action: 'applied', parsed } };
@@ -791,7 +811,7 @@ export async function processWeChatMessage(
               score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 0, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run(
             userId,
             newTask.title,
@@ -1072,7 +1092,8 @@ export async function processWeChatMessage(
       return { replyText: reply, imageBuffer, diagnostics: { intent: parsed.intent, todayTasksCount: todayTasks.length } };
     } else if (parsed.intent === 'create_task') {
       const title = parsed.title || pendingTask?.title || '未命名任务';
-      const duration = parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
+      const fixedTime = resolveFixedTaskTime(parsed, pendingTask || {});
+      const duration = fixedTime.duration || parsed.duration_minutes || parsed.estimatedMinutes || pendingTask?.duration_minutes || pendingTask?.estimatedMinutes || null;
       const deadline = parsed.deadline || pendingTask?.deadline || null;
       const dueDate = parsed.dueDate || (deadline ? deadline.split('T')[0] : null) || pendingTask?.dueDate || null;
       const resolvedDeadline = !deadline && dueDate ? `${dueDate}T23:59:59` : deadline;
@@ -1118,15 +1139,19 @@ export async function processWeChatMessage(
         time_mode: timeMode,
         deadline: resolvedDeadline,
         dueDate,
+        is_fixed: fixedTime.fixed,
+        fixed_start: fixedTime.start,
+        fixed_end: fixedTime.end,
+        is_concurrent: parsed.is_concurrent ?? pendingTask?.is_concurrent ?? false,
       };
       const missing = {
         duration: !duration || duration <= 0,
-        deadline: !resolvedDeadline && !dueDate && timeMode !== 'daily_fixed',
+        deadline: !resolvedDeadline && !dueDate && timeMode !== 'daily_fixed' && !fixedTime.fixed,
         urgency: false, // 紧迫度依据截止期与日程负荷自动推导，不强制追问
         importance: !importance,
       };
 
-      const hasMissing = missing.duration || missing.deadline;
+      const hasMissing = missing.duration || missing.deadline || (fixedTime.fixed && !fixedTime.end);
 
       if (hasMissing) {
         db.prepare(`
@@ -1144,10 +1169,10 @@ export async function processWeChatMessage(
       } else {
         db.prepare('DELETE FROM conversation_states WHERE user_id = ?').run(userId);
 
-        const isFixed = parsed.is_fixed ? 1 : 0;
-        const isConcurrent = parsed.is_concurrent ? 1 : 0;
-        const fixedStart = parsed.fixed_start || null;
-        const fixedEnd = parsed.fixed_end || null;
+        const isFixed = fixedTime.fixed ? 1 : 0;
+        const isConcurrent = (parsed.is_concurrent ?? pendingTask?.is_concurrent) ? 1 : 0;
+        const fixedStart = fixedTime.start;
+        const fixedEnd = fixedTime.end;
         const originalDuration = duration || 60;
 
         if (isFixed && fixedStart && fixedEnd) {
@@ -1401,18 +1426,27 @@ class WeixinTransitManager {
 
   public getWorkerStatusList() {
     const allSettings = db.prepare(`
-      SELECT us.*, u.username, u.role
+      SELECT us.*, u.username, u.role, u.balance
       FROM user_settings us
       JOIN users u ON us.user_id = u.id
       ORDER BY us.user_id ASC
-    `).all() as (UserSettings & { username: string; role: string })[];
+    `).all() as (UserSettings & { username: string; role: string; balance?: number })[];
 
     return allSettings.map((s) => {
       const worker = this.activeWorkers.get(s.user_id);
+      const apiMode = s.api_mode === 'custom' ? 'custom' : 'official';
+      const balance = Number(s.balance) || 0;
+      // 官方接口：只要余额大于零就显示已配置；自定义 API Key：检查用户是否填入有效 Key
+      const isLlmConfigured = apiMode === 'official'
+        ? balance > 0
+        : Boolean(s.llm_api_key && s.llm_api_key.trim().length > 3);
+
       return {
         userId: s.user_id,
         username: s.username,
         role: s.role,
+        apiMode,
+        balance,
         weixinConnected: Boolean(s.weixin_connected),
         weixinBotId: s.weixin_bot_id || '',
         weixinUserId: s.weixin_user_id || '',
@@ -1420,7 +1454,7 @@ class WeixinTransitManager {
         hasBotToken: Boolean(s.weixin_bot_token && s.weixin_bot_token.length > 5),
         hasSyncBuf: Boolean(s.weixin_sync_buf),
         hasContextToken: Boolean(s.weixin_context_token || contextTokenMap.has(s.user_id)),
-        hasLlmKey: Boolean(s.llm_api_key && s.llm_api_key.length > 3),
+        hasLlmKey: isLlmConfigured,
         workerRunning: Boolean(worker?.running),
         startedAt: worker?.startedAt ? new Date(worker.startedAt).toISOString() : null,
         lastPollAt: worker?.lastPollAt ? new Date(worker.lastPollAt).toISOString() : null,

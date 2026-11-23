@@ -1,3 +1,4 @@
+import { deadlineMs, recurringDebt, selectCalendarBlocks, type Window } from './calendarOptimizer.js';
 import { db } from '../config/database.js';
 import { Task, UserSettings, ExternalEvent, WorkSlot } from '../models/types.js';
 import {
@@ -54,7 +55,7 @@ export interface ScheduleOptions {
   workWindows?: WorkWindow[];      // 细分可用工作时段（缺省则使用 [workStartHour, workEndHour]）
   bufferMinutes?: number;          // 固定课程/会议后过渡缓冲，默认 10 分钟
   taskRestMinutes?: number;        // 专注周期/任务间歇休息，默认 10 分钟
-  maxContinuousMinutes?: number;   // 单次最长连续专注时长上限，默认 60 分钟 (Ultradian Rhythm)
+  maxContinuousMinutes?: number;   // 单次最长连续专注时长上限，默认 90 分钟
   maxDailyTaskMinutes?: number;    // 每日自主待办最大负荷上限，默认 330 分钟 (5.5h)
   autoFilterQ4?: boolean;          // 是否过滤 Q4 不自动排程，默认 true
   lunchStartHour?: number;         // 默认 12.0
@@ -65,7 +66,9 @@ export interface ScheduleOptions {
   allowSplit?: boolean;            // 当全天无单槽可完整容纳时，是否允许跨槽拆分
   advanceDeadlineDays?: number;    // 提前截止缓冲天数 (尽可能在 DDL 前 N 天完成)
   releaseTimeMs?: number;
-  rolloverTaskIds?: Set<number>;
+  futureWindows?: Window[];
+  allocationDebt?: Map<number, number>;
+  collectWindows?: (windows: Window[]) => void;
 }
 
 export interface ScheduleProposal {
@@ -76,6 +79,7 @@ export interface ScheduleProposal {
     scheduled_start: string;
     scheduled_end: string;
     duration_minutes: number;
+    session_plan?: string | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
@@ -140,7 +144,7 @@ function parseClockToHour(clock: string, isEndBoundary: boolean): number | null 
   if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 24 || m < 0 || m >= 60) {
     return null;
   }
-  if (h === 24 && m > 0) return 24;
+  if (h === 24 && m > 0) return null;
   if (isEndBoundary && h === 0 && m === 0) return 24;
   return h + m / 60;
 }
@@ -154,7 +158,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
   workWindows: WorkWindow[];
 } {
   const fallback: WorkWindow[] = [{ startHour: 8, endHour: 22 }];
-  if (!settings || !settings.work_slots) {
+  if (!settings || settings.work_slots === undefined || settings.work_slots === null) {
     return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
   }
 
@@ -165,7 +169,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     } else if (typeof settings.work_slots === 'string') {
       const trimmed = settings.work_slots.trim();
       if (!trimmed) {
-        return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+        return { workStartHour: 0, workEndHour: 0, workWindows: [] };
       }
       if (trimmed.startsWith('[')) {
         const parsed = JSON.parse(trimmed);
@@ -183,7 +187,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     }
 
     if (!Array.isArray(parsedSlots) || parsedSlots.length === 0) {
-      return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      return { workStartHour: 0, workEndHour: 0, workWindows: [] };
     }
 
     const raw: WorkWindow[] = [];
@@ -209,7 +213,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
     }
 
     if (raw.length === 0) {
-      return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      return { workStartHour: 0, workEndHour: 0, workWindows: [] };
     }
 
     raw.sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour);
@@ -229,7 +233,7 @@ export function parseWorkSlotWindows(settings?: UserSettings): {
       workWindows: merged,
     };
   } catch {
-    return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+    return { workStartHour: 0, workEndHour: 0, workWindows: [] };
   }
 }
 
@@ -338,42 +342,27 @@ export function taskToBusyEvents(
 }
 
 /**
- * 将长耗时任务按生理专注极限（默认 60 分钟）切分为专注小节 (Focus Sessions)
+ * 将长耗时任务按最长专注时长均衡切分任务
  */
 export function splitIntoFocusSessions(
   totalMinutes: number,
-  maxSessionMinutes: number = 60,
-  minTailMinutes: number = 20
+  maxSessionMinutes: number = 90,
+  _minTailMinutes: number = 20
 ): number[] {
-  if (totalMinutes <= maxSessionMinutes) {
-    return [totalMinutes];
+  if (totalMinutes <= 0 || maxSessionMinutes <= 0) return [];
+  const count = Math.ceil(totalMinutes / maxSessionMinutes);
+  if (count === 1) return [totalMinutes];
+  // 均衡分配，避免最后出现过短的一节；保留分钟精度。
+  const base = Math.floor(totalMinutes / count / 5) * 5;
+  const sessions = Array<number>(count).fill(base);
+  let remainder = totalMinutes - base * count;
+  for (let i = 0; remainder > 0; i = (i + 1) % count) {
+    const increment = Math.min(5, remainder, maxSessionMinutes - sessions[i]);
+    sessions[i] += increment;
+    remainder -= increment;
   }
-
-  const sessions: number[] = [];
-  let remaining = totalMinutes;
-
-  while (remaining > maxSessionMinutes) {
-    const tail = remaining - maxSessionMinutes;
-    if (tail > 0 && tail < minTailMinutes) {
-      const firstHalf = Math.ceil(remaining / 2 / 5) * 5;
-      const secondHalf = remaining - firstHalf;
-      sessions.push(firstHalf);
-      if (secondHalf > 0) {
-        sessions.push(secondHalf);
-      }
-      remaining = 0;
-      break;
-    } else {
-      sessions.push(maxSessionMinutes);
-      remaining -= maxSessionMinutes;
-    }
-  }
-
-  if (remaining > 0) {
-    sessions.push(remaining);
-  }
-
   return sessions;
+
 }
 
 /**
@@ -544,10 +533,7 @@ export function computeTaskPriorityScore(task: {
 export function runSingleDaySchedule(
   tasks: Task[],
   fixedEvents: { id: string; title: string; start: Date; end: Date; isAllDay: boolean }[],
-  options: ScheduleOptions & {
-    releaseTimeMs?: number;
-    rolloverTaskIds?: Set<number>;
-  }
+  options: ScheduleOptions
 ): {
   scheduledBlocks: ScheduledTaskBlock[];
   scheduledTaskIds: Set<number>;
@@ -560,7 +546,7 @@ export function runSingleDaySchedule(
     workWindows,
     bufferMinutes = 10,
     taskRestMinutes = 10,
-    maxContinuousMinutes = 60,
+    maxContinuousMinutes = 90,
     maxDailyTaskMinutes = 330,
     autoFilterQ4 = true,
     lunchStartHour = 12.0,
@@ -570,7 +556,6 @@ export function runSingleDaySchedule(
     minChunkMinutes = 30,
     allowSplit = true,
     releaseTimeMs,
-    rolloverTaskIds,
   } = options;
 
   const dayStart = new Date(targetDate);
@@ -579,9 +564,8 @@ export function runSingleDaySchedule(
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(Math.floor(workEndHour), Math.round((workEndHour % 1) * 60), 0, 0);
 
-  // 当天的固定日历日程 (避开全天日程)
+  // 当天的固定日历日程，包括全天忙碌事件
   const dayFixedEvents = fixedEvents
-    .filter(e => !e.isAllDay)
     .map(e => {
       const clippedStart = new Date(Math.max(e.start.getTime(), dayStart.getTime()));
       const clippedEnd = new Date(Math.min(e.end.getTime(), dayEnd.getTime()));
@@ -697,7 +681,7 @@ export function runSingleDaySchedule(
 
   for (const busy of mergedBusy) {
     if (busy.start.getTime() > currentCursor.getTime()) {
-      const durationMin = Math.round((busy.start.getTime() - currentCursor.getTime()) / 60000);
+      const durationMin = Math.floor((busy.start.getTime() - currentCursor.getTime()) / 60000);
       if (durationMin >= 15) {
         rawFreeSlots.push({
           start: new Date(currentCursor),
@@ -712,7 +696,7 @@ export function runSingleDaySchedule(
   }
 
   if (currentCursor.getTime() < dayEnd.getTime()) {
-    const durationMin = Math.round((dayEnd.getTime() - currentCursor.getTime()) / 60000);
+    const durationMin = Math.floor((dayEnd.getTime() - currentCursor.getTime()) / 60000);
     if (durationMin >= 15) {
       rawFreeSlots.push({
         start: new Date(currentCursor),
@@ -751,31 +735,8 @@ export function runSingleDaySchedule(
     constrainedFreeSlots = intersected.sort((a, b) => a.start.getTime() - b.start.getTime());
   }
 
-  // 14:30 黄金深度区切分
-  const afternoonPivot = new Date(targetDate);
-  afternoonPivot.setHours(14, 30, 0, 0);
-
   const workingFreeSlots: TimeSlot[] = [];
   for (const slot of constrainedFreeSlots) {
-    if (slot.start.getTime() < afternoonPivot.getTime() && slot.end.getTime() > afternoonPivot.getTime()) {
-      const beforeMin = Math.round((afternoonPivot.getTime() - slot.start.getTime()) / 60000);
-      const afterMin = Math.round((slot.end.getTime() - afternoonPivot.getTime()) / 60000);
-      if (beforeMin >= 30 && afterMin >= 90) {
-        workingFreeSlots.push({
-          start: new Date(slot.start),
-          end: new Date(afternoonPivot),
-          durationMinutes: beforeMin,
-          energyZone: classifySlotEnergy(slot.start, beforeMin),
-        });
-        workingFreeSlots.push({
-          start: new Date(afternoonPivot),
-          end: new Date(slot.end),
-          durationMinutes: afterMin,
-          energyZone: classifySlotEnergy(afternoonPivot, afterMin),
-        });
-        continue;
-      }
-    }
     workingFreeSlots.push({
       start: new Date(slot.start),
       end: new Date(slot.end),
@@ -803,6 +764,12 @@ export function runSingleDaySchedule(
     }
     refreshSlots();
   }
+
+  const day = new Date(targetDate);
+  day.setHours(0, 0, 0, 0);
+  const windows = workingFreeSlots.filter(s => s.durationMinutes > 0)
+    .map(s => ({ start: s.start.getTime(), end: s.end.getTime(), day: day.getTime() }));
+  options.collectWindows?.(windows);
 
   const targetDateStr = formatLocalDate(targetDate);
   const todayStr = formatLocalDate(new Date());
@@ -835,17 +802,11 @@ export function runSingleDaySchedule(
   const scheduledTaskIds = new Set<number>();
   const unscheduledTaskIds: { taskId: number; remainingMinutes: number; reason: string }[] = [];
 
-  const activeCandidates: Task[] = [];
-  for (const task of pendingTasks) {
-    const quad = calculateQuadrant(task.importance, task.urgency, task.score_scale);
-    if (autoFilterQ4 && quad === 'q4') {
-      unscheduledTaskIds.push({
-        taskId: task.id,
-        remainingMinutes: task.duration_minutes || 45,
-        reason: '象限 IV（不重要不紧急）：默认不自动侵占核心专注日程',
-      });
-    } else {
-      activeCandidates.push(task);
+  const active = tasks.filter(task => {
+    if (task.status === 'completed' || targetDateStr < todayStr) return false;
+    if (task.time_mode === 'daily_fixed') {
+      if (targetDateStr !== todayStr) return false;
+      try { if (JSON.parse(task.completed_dates || '[]').includes(targetDateStr)) return false; } catch {}
     }
   }
 
@@ -1114,21 +1075,50 @@ export function runSingleDaySchedule(
         scheduledTaskIds.add(task.id);
       }
     }
+    return true;
+  });
 
-    if (unscheduledMin > 0) {
-      unscheduledTaskIds.push({
-        taskId: task.id,
-        remainingMinutes: unscheduledMin,
-        reason: '长任务阶段排程或当天无更多合适空闲槽，自动顺延后续日期',
+  const placements = selectCalendarBlocks(active, windows, options.futureWindows || [], {
+    cap: maxDailyTaskMinutes + 30, rest: taskRestMinutes, maxChunk: maxContinuousMinutes,
+    minChunk: minChunkMinutes, allowSplit, debt: options.allocationDebt,
+  });
+  for (const [index, task] of active.entries()) {
+    const parts = placements.filter(p => p.index === index);
+    const quadrant = calculateQuadrant(task.importance, task.urgency, task.score_scale);
+    const isSplit = parts.length > 1;
+    for (const [part, p] of parts.entries()) {
+      const start = new Date(p.start);
+      const energyZone = classifySlotEnergy(start, p.minutes);
+      scheduledBlocks.push({
+        id: `sched-${task.id}-p${part + 1}-${p.start}`, taskId: task.id, title: task.title,
+        start, end: new Date(p.start + p.minutes * 60_000), durationMinutes: p.minutes,
+        partIndex: part + 1, totalParts: parts.length, isSplit, quadrant,
+        importance: task.importance, urgency: task.urgency, energyZone,
+        strategyLabel: getStrategyLabel(energyZone, quadrant, isSplit), breakAfterMinutes: p.rest || undefined,
       });
     }
+    const remainingMinutes = Math.max(0, Math.ceil(task.duration_minutes || 45) - parts.reduce((sum, p) => sum + p.minutes, 0));
+    if (!remainingMinutes) scheduledTaskIds.add(task.id);
+    else unscheduledTaskIds.push({ taskId: task.id, remainingMinutes, reason: task.deadline_kind === 'hard'
+      ? '不可逾期：截止前尚有未分配工作量' : '当天没有更多合适的空闲时段' });
   }
+  scheduledBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return { scheduledBlocks, scheduledTaskIds, unscheduledTaskIds };
+}
 
-  return {
-    scheduledBlocks,
-    scheduledTaskIds,
-    unscheduledTaskIds,
-  };
+function getHorizonWindows(now: Date, days: number, events: FixedCalendarBlock[], options: Omit<ScheduleOptions, 'targetDate'>): Window[][] {
+  return Array.from({ length: days }, (_, offset) => {
+    const targetDate = new Date(now);
+    targetDate.setDate(targetDate.getDate() + offset);
+    let result: Window[] = [];
+    runSingleDaySchedule([], events, {
+      ...options,
+      targetDate,
+      releaseTimeMs: offset === 0 ? options.releaseTimeMs : undefined,
+      collectWindows: windows => { result = windows; },
+    });
+    return result;
+  });
 }
 
 /**
@@ -1189,6 +1179,7 @@ export function replanUserTasks(
           const newStart = new Date(now);
           newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
           const newEnd = new Date(newStart.getTime() + Math.max(15 * 60000, oldEnd.getTime() - oldStart.getTime()));
+          db.prepare('UPDATE tasks SET start_reminder_sent = 0, end_reminder_sent = 0 WHERE id = ?').run(t.id);
           t.scheduled_start = newStart.toISOString();
           t.scheduled_end = newEnd.toISOString();
           t.schedule_blocks = JSON.stringify([{ start: t.scheduled_start, end: t.scheduled_end, duration: t.duration_minutes }]);
@@ -1216,7 +1207,8 @@ export function replanUserTasks(
         workEndHour,
         currentTime: now,
       });
-      t.urgency = urgRes.urgency;
+      const debtBoost = Math.round(15 * recurringDebt(t, now));
+      t.urgency = isCompletedToday ? urgRes.urgency : Math.min(100, urgRes.urgency + debtBoost);
       t.importance = imp100;
       t.score_scale = 100;
       db.prepare('UPDATE tasks SET urgency = ?, importance = ?, score_scale = 100 WHERE id = ?').run(
@@ -1314,7 +1306,17 @@ export function replanUserTasks(
 
   const taskMap = new Map<number, Task>(nonFixedTasks.map(t => [t.id, { ...t }]));
   let remainingTaskIds = new Set<number>(nonFixedTasks.map(t => t.id));
-  let rolloverTaskIds = new Set<number>();
+  // Reconstruct an initial balance from recorded progress after a replan.
+  const progress = nonFixedTasks.map(task => Math.max(0, (task.original_duration_minutes || 0) - task.duration_minutes));
+  const totalProgress = progress.reduce((sum, minutes) => sum + minutes, 0);
+  const weights = nonFixedTasks.map(task => 0.2 + (normalizeScoreTo100(task.importance, task.score_scale) / 100) ** 2);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const balances = weights.map((weight, index) => totalProgress * weight / totalWeight - progress[index]);
+  const scale = Math.max(1, ...balances.map(balance => Math.abs(balance) / 120));
+  const allocationDebt = new Map(nonFixedTasks.map((task, index) => [task.id, balances[index] / scale]));
+  const horizonWindows = getHorizonWindows(now, horizonDays, parsedFixedEvents, {
+    workStartHour, workEndHour, workWindows, bufferMinutes, releaseTimeMs: releaseTimeMsToday,
+  });
   const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
 
   for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
@@ -1334,7 +1336,7 @@ export function replanUserTasks(
       workWindows,
       bufferMinutes,
       taskRestMinutes: 10,
-      maxContinuousMinutes: 60,
+      maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
       autoFilterQ4: true,
       lunchStartHour: 12.0,
@@ -1345,7 +1347,8 @@ export function replanUserTasks(
       allowSplit: true,
       advanceDeadlineDays,
       releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
-      rolloverTaskIds,
+      allocationDebt,
+      futureWindows: horizonWindows.slice(dayOffset + 1).flat(),
     });
 
     for (const block of dayResult.scheduledBlocks) {
@@ -1357,14 +1360,11 @@ export function replanUserTasks(
 
     for (const scheduledId of dayResult.scheduledTaskIds) {
       remainingTaskIds.delete(scheduledId);
-      rolloverTaskIds.delete(scheduledId);
     }
 
     // 次日顺延
-    const nextRollover = new Set<number>();
     for (const unsched of dayResult.unscheduledTaskIds) {
       if (!unsched.reason.includes('象限 IV')) {
-        nextRollover.add(unsched.taskId);
         const tRef = taskMap.get(unsched.taskId);
         if (tRef) {
           tRef.duration_minutes = unsched.remainingMinutes;
@@ -1373,16 +1373,17 @@ export function replanUserTasks(
         remainingTaskIds.delete(unsched.taskId);
       }
     }
-    rolloverTaskIds = nextRollover;
   }
 
   // 批量持久化到 SQLite 数据库
   let scheduledCount = 0;
   let failedCount = 0;
+  let hardPending = 0;
 
   for (const t of activeTasks) {
     const blocks = taskAllocations.get(t.id);
-    if (blocks && blocks.length > 0) {
+    if (t.deadline_kind === 'hard' && !t.is_fixed && remainingTaskIds.has(t.id)) hardPending++;
+    if (blocks && blocks.length > 0 && !(t.deadline_kind === 'hard' && !t.is_fixed && remainingTaskIds.has(t.id))) {
       const sortedBlocks = [...blocks].sort((a, b) => a.start.getTime() - b.start.getTime());
       const firstStart = sortedBlocks[0].start.toISOString();
       const lastEnd = sortedBlocks[sortedBlocks.length - 1].end.toISOString();
@@ -1448,7 +1449,7 @@ export function replanUserTasks(
     scheduledCount,
     failedCount,
     tasks: allUpdatedTasks,
-    summary: `智能排程完成：共将 ${scheduledCount} 项任务排入日历${failedCount > 0 ? `，${failedCount} 项待办未分配` : ''}`,
+    summary: `智能排程完成：共将 ${scheduledCount} 项任务排入日历${failedCount > 0 ? `，${failedCount} 项待办未分配` : ''}${hardPending ? `，其中 ${hardPending} 项不可逾期任务未找到完整方案` : ''}`,
   };
 }
 
@@ -1461,6 +1462,10 @@ function simulateTaskInHorizon(
     id?: number;
     title: string;
     duration_minutes: number;
+    session_plan?: string | null;
+    deadline_kind?: Task['deadline_kind'];
+    urgency_pace?: Task['urgency_pace'];
+    score_scale?: number | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
@@ -1481,6 +1486,10 @@ function simulateTaskInHorizon(
     user_id: userId,
     title: task.title,
     duration_minutes: task.duration_minutes,
+    session_plan: task.session_plan,
+    deadline_kind: task.deadline_kind,
+    urgency_pace: task.urgency_pace,
+    score_scale: task.score_scale,
     urgency: task.urgency,
     importance: task.importance,
     deadline: task.deadline || null,
@@ -1499,7 +1508,9 @@ function simulateTaskInHorizon(
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
   const accumulatedBlocks: ScheduledTaskBlock[] = [];
   let remainingMinutesToSim = task.duration_minutes;
-  const rolloverTaskIds = new Set<number>();
+  const horizonWindows = getHorizonWindows(now, 14, fixedEvents, {
+    workStartHour, workEndHour, workWindows, bufferMinutes, releaseTimeMs: releaseTimeMsToday,
+  });
 
   for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
     if (remainingMinutesToSim <= 0) break;
@@ -1515,12 +1526,12 @@ function simulateTaskInHorizon(
       workWindows,
       bufferMinutes,
       taskRestMinutes: 10,
-      maxContinuousMinutes: 60,
+      maxContinuousMinutes: 90,
       maxDailyTaskMinutes: 330,
       autoFilterQ4: false,
       advanceDeadlineDays,
       releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
-      rolloverTaskIds,
+      futureWindows: horizonWindows.slice(dayOffset + 1).flat(),
     });
 
     const blocks = dayResult.scheduledBlocks.filter(b => b.taskId === simTask.id);
@@ -1530,9 +1541,6 @@ function simulateTaskInHorizon(
       remainingMinutesToSim = Math.max(0, remainingMinutesToSim - allocatedToday);
     }
 
-    if (dayResult.unscheduledTaskIds.some(u => u.taskId === simTask.id)) {
-      rolloverTaskIds.add(simTask.id);
-    }
   }
 
   if (accumulatedBlocks.length > 0 && remainingMinutesToSim <= 0) {
@@ -1563,7 +1571,7 @@ function simulateTaskInHorizon(
 
   return {
     success: false,
-    message: '在未来14天的工作时间与空闲槽范围内，未找到合适的时间段。',
+    message: task.deadline_kind === 'hard' ? '排程窗口内未找到能在截止前完成的方案。' : '未来 14 天内未找到足够的空闲工作时段。',
     accumulatedBlocks: [],
   };
 }
@@ -1580,6 +1588,10 @@ export function scheduleTask(
     id?: number;
     title: string;
     duration_minutes: number;
+    session_plan?: string | null;
+    deadline_kind?: Task['deadline_kind'];
+    urgency_pace?: Task['urgency_pace'];
+    score_scale?: number | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
@@ -1839,6 +1851,24 @@ export function completeTaskPart(
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) as Task | undefined;
   if (!task) {
     return { success: false, message: '未找到指定任务', remainingMinutes: 0, isAllCompleted: false };
+  }
+
+  if (task.time_mode === 'daily_fixed' && task.is_fixed) {
+    let dates: string[] = [];
+    try {
+      const value = JSON.parse(task.completed_dates || '[]');
+      if (Array.isArray(value)) dates = value;
+    } catch {}
+    const today = formatLocalDate();
+    if (!dates.includes(today)) {
+      dates.push(today);
+      db.prepare('UPDATE tasks SET completed_dates = ?, urgency = 15, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(JSON.stringify(dates), taskId);
+    }
+    return {
+      success: true, message: '已完成今天的固定任务', remainingMinutes: 0, isAllCompleted: true,
+      task: { ...task, completed_dates: JSON.stringify(dates), urgency: 15 },
+    };
   }
 
   let blocks: any[] = [];

@@ -2,6 +2,7 @@ import { db } from '../config/database.js';
 
 export interface DeepSeekPricingPeriod {
   isPeak: boolean;
+  isDeepSeek?: boolean;
   periodLabel: string;
   beijingTimeStr: string;
   rates: {
@@ -10,6 +11,8 @@ export interface DeepSeekPricingPeriod {
     outputPerMillion: number;
   };
 }
+
+export type ModelPricingPeriod = DeepSeekPricingPeriod;
 
 /**
  * 获取当前北京时间 (UTC+8) 的峰谷时段信息与单价（元/百万 Tokens）
@@ -82,7 +85,67 @@ export function getDeepSeekPricingPeriod(
 
   return {
     isPeak,
+    isDeepSeek: true,
     periodLabel,
+    beijingTimeStr,
+    rates: {
+      cacheHitPerMillion,
+      cacheMissPerMillion,
+      outputPerMillion,
+    },
+  };
+}
+
+/**
+ * 依据模型类型获取生效的定价规则与费率（元/百万 Tokens）：
+ * - 若模型名称包含 deepseek（如 deepseek-chat, deepseek-reasoner 等），使用 DeepSeek 官方峰谷动态计费
+ * - 若为非 deepseek 模型，采用系统管理员在 system_settings 中设置的自定义单价（输入、输出、缓存命中）
+ */
+export function getModelPricingPeriod(
+  date: Date = new Date(),
+  model: string = 'deepseek-chat',
+  isOfficial: boolean = false
+): ModelPricingPeriod {
+  const isDeepSeek = model.toLowerCase().includes('deepseek');
+  if (isDeepSeek) {
+    return getDeepSeekPricingPeriod(date, model);
+  }
+
+  const getSetting = (key: string, def: string) => {
+    try {
+      const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value || def;
+    } catch {
+      return def;
+    }
+  };
+
+  const cacheMissPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_input', '2.0')) || 2.0);
+  const outputPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_output', '8.0')) || 8.0);
+  const cacheHitPerMillion = Math.max(0, parseFloat(getSetting('global_llm_price_cache_hit', '0.5')) || 0.5);
+
+  const bjFormatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'short',
+  });
+  const parts = bjFormatter.formatToParts(date);
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || '';
+  const hour = getPart('hour');
+  const minute = getPart('minute');
+  const weekdayStr = getPart('weekday');
+  const beijingTimeStr = `${getPart('year')}-${getPart('month')}-${getPart('day')} ${hour}:${minute} (${weekdayStr})`;
+
+  return {
+    isPeak: false,
+    isDeepSeek: false,
+    periodLabel: `自定义单价 (输入: ¥${cacheMissPerMillion}/M, 输出: ¥${outputPerMillion}/M, 缓存: ¥${cacheHitPerMillion}/M)`,
     beijingTimeStr,
     rates: {
       cacheHitPerMillion,
@@ -106,6 +169,7 @@ export interface ApiUsageRecord {
   inputCostCny: number;
   outputCostCny: number;
   requestType: string;
+  isOfficial?: boolean;
   createdAt?: string;
 }
 
@@ -116,7 +180,8 @@ export function recordApiUsage(
   userId: number,
   model: string,
   usage: any,
-  requestType: string = 'weixin_chat'
+  requestType: string = 'weixin_chat',
+  isOfficial: boolean = false
 ): ApiUsageRecord | null {
   if (!usage || !userId) return null;
 
@@ -134,7 +199,7 @@ export function recordApiUsage(
     usage.prompt_cache_miss_tokens ??
     Math.max(0, promptTokens - cacheHitTokens);
 
-  const { isPeak, rates } = getDeepSeekPricingPeriod(new Date(), model);
+  const { isPeak, rates } = getModelPricingPeriod(new Date(), model, isOfficial);
 
   const inputCostCny =
     (cacheHitTokens / 1_000_000) * rates.cacheHitPerMillion +
@@ -148,8 +213,8 @@ export function recordApiUsage(
       INSERT INTO api_usage_logs (
         user_id, model, prompt_tokens, completion_tokens, total_tokens,
         cache_hit_tokens, cache_miss_tokens, is_peak, cost_cny,
-        input_cost_cny, output_cost_cny, request_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_cost_cny, output_cost_cny, request_type, is_official
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -164,7 +229,8 @@ export function recordApiUsage(
       costCny,
       inputCostCny,
       outputCostCny,
-      requestType
+      requestType,
+      isOfficial ? 1 : 0
     );
 
     return {
@@ -180,6 +246,7 @@ export function recordApiUsage(
       inputCostCny,
       outputCostCny,
       requestType,
+      isOfficial,
     };
   } catch (err: any) {
     console.error('[API Usage] Failed to record usage log:', err.message);
@@ -209,6 +276,7 @@ export interface UserUsageStats {
     savedCostCny: number;
     cacheHitRate: number;
   };
+  scope?: 'official' | 'all';
   currentStatus: DeepSeekPricingPeriod;
   dailyHistory: {
     '1d': DailyHistoryPoint[];
@@ -217,6 +285,8 @@ export interface UserUsageStats {
   };
   recentLogs?: Array<{
     id: number;
+    user_id?: number;
+    username?: string;
     model: string;
     prompt_tokens: number;
     completion_tokens: number;
@@ -228,6 +298,7 @@ export interface UserUsageStats {
     input_cost_cny: number;
     output_cost_cny: number;
     request_type: string;
+    is_official?: number;
     created_at: string;
   }>;
 }
@@ -236,7 +307,7 @@ export interface UserUsageStats {
  * 查询指定用户的用量统计汇总与前 1天/7天/30天 价格曲线数据
  */
 export function getUserUsageStats(userId: number, currentModel: string = 'deepseek-chat'): UserUsageStats {
-  const currentStatus = getDeepSeekPricingPeriod(new Date(), currentModel);
+  const currentStatus = getModelPricingPeriod(new Date(), currentModel);
 
   try {
     const agg = db.prepare(`
@@ -264,7 +335,9 @@ export function getUserUsageStats(userId: number, currentModel: string = 'deepse
     const inputCostCny = agg?.input_cost_cny || 0;
     const outputCostCny = agg?.output_cost_cny || 0;
 
-    const baselineCost = (promptTokens / 1_000_000) * 2.0 + (completionTokens / 1_000_000) * 8.0;
+    const baselineCost =
+      (promptTokens / 1_000_000) * currentStatus.rates.cacheMissPerMillion +
+      (completionTokens / 1_000_000) * currentStatus.rates.outputPerMillion;
     const savedCostCny = Math.max(0, baselineCost - totalCostCny);
     const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
 
@@ -446,5 +519,243 @@ export function clearUserUsageLogs(userId: number): boolean {
   } catch (err: any) {
     console.error('[API Usage] Failed to clear logs:', err.message);
     return false;
+  }
+}
+
+/**
+ * 统计全平台前 1 天 / 7 天 / 30 天每日资费消耗曲线数据
+ * @param scope 'official' (仅统计官方全局接口) 或 'all' (包含用户私有 Key)
+ */
+export function getGlobalDailyHistory(scope: 'official' | 'all' = 'official'): {
+  '1d': DailyHistoryPoint[];
+  '7d': DailyHistoryPoint[];
+  '30d': DailyHistoryPoint[];
+} {
+  const filter = scope === 'official' ? 'is_official = 1 AND ' : '';
+
+  const todayRows = db.prepare(`
+    SELECT 
+      strftime('%H:00', created_at, '+8 hours') as hour,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE ${filter}date(created_at, '+8 hours') = date('now', '+8 hours')
+    GROUP BY hour
+  `).all() as any[];
+
+  const todayMap = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  todayRows.forEach((r) => {
+    todayMap.set(r.hour, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history1d: DailyHistoryPoint[] = [];
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0') + ':00';
+    const found = todayMap.get(hh);
+    history1d.push({
+      label: hh,
+      date: hh,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  const rows7d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE ${filter}date(created_at, '+8 hours') >= date('now', '+8 hours', '-6 days')
+    GROUP BY day
+  `).all() as any[];
+
+  const map7d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows7d.forEach((r) => {
+    map7d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history7d: DailyHistoryPoint[] = [];
+  const now = new Date();
+  const bjNow = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map7d.get(dateStr);
+    history7d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  const rows30d = db.prepare(`
+    SELECT 
+      date(created_at, '+8 hours') as day,
+      COUNT(*) as requests,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_cny), 0) as cost_cny
+    FROM api_usage_logs
+    WHERE ${filter}date(created_at, '+8 hours') >= date('now', '+8 hours', '-29 days')
+    GROUP BY day
+  `).all() as any[];
+
+  const map30d = new Map<string, { requests: number; tokens: number; cost_cny: number }>();
+  rows30d.forEach((r) => {
+    map30d.set(r.day, {
+      requests: Number(r.requests) || 0,
+      tokens: Number(r.tokens) || 0,
+      cost_cny: Number(r.cost_cny) || 0,
+    });
+  });
+
+  const history30d: DailyHistoryPoint[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(bjNow.getTime() - i * 86400000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    const found = map30d.get(dateStr);
+    history30d.push({
+      label,
+      date: dateStr,
+      cost_cny: found ? Number(found.cost_cny.toFixed(6)) : 0,
+      tokens: found ? found.tokens : 0,
+      requests: found ? found.requests : 0,
+    });
+  }
+
+  return {
+    '1d': history1d,
+    '7d': history7d,
+    '30d': history30d,
+  };
+}
+
+/**
+ * 查询全平台用量统计汇总与前 1天/7天/30天 价格曲线数据
+ * @param scope 'official' (默认，仅统计官方全局接口) 或 'all' (全平台所有调用，包含用户私有Key)
+ */
+export function getGlobalUsageStats(
+  currentModel?: string,
+  scope: 'official' | 'all' = 'official'
+): UserUsageStats {
+  const getSetting = (key: string, def: string) => {
+    try {
+      const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value || def;
+    } catch {
+      return def;
+    }
+  };
+  const effectiveModel = currentModel || getSetting('global_llm_model', 'deepseek-chat');
+  const currentStatus = getModelPricingPeriod(new Date(), effectiveModel, true);
+  const whereClause = scope === 'official' ? 'WHERE is_official = 1' : '';
+
+  try {
+    const agg = db.prepare(`
+      SELECT 
+        COUNT(*) as total_requests,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(cache_hit_tokens), 0) as cache_hit_tokens,
+        COALESCE(SUM(cache_miss_tokens), 0) as cache_miss_tokens,
+        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+        COALESCE(SUM(cost_cny), 0) as total_cost_cny,
+        COALESCE(SUM(input_cost_cny), 0) as input_cost_cny,
+        COALESCE(SUM(output_cost_cny), 0) as output_cost_cny
+      FROM api_usage_logs
+      ${whereClause}
+    `).get() as any;
+
+    const totalRequests = agg?.total_requests || 0;
+    const totalTokens = agg?.total_tokens || 0;
+    const promptTokens = agg?.prompt_tokens || 0;
+    const cacheHitTokens = agg?.cache_hit_tokens || 0;
+    const cacheMissTokens = agg?.cache_miss_tokens || 0;
+    const completionTokens = agg?.completion_tokens || 0;
+    const totalCostCny = agg?.total_cost_cny || 0;
+    const inputCostCny = agg?.input_cost_cny || 0;
+    const outputCostCny = agg?.output_cost_cny || 0;
+
+    const baselineCost =
+      (promptTokens / 1_000_000) * currentStatus.rates.cacheMissPerMillion +
+      (completionTokens / 1_000_000) * currentStatus.rates.outputPerMillion;
+    const savedCostCny = Math.max(0, baselineCost - totalCostCny);
+    const cacheHitRate = promptTokens > 0 ? (cacheHitTokens / promptTokens) * 100 : 0;
+
+    const dailyHistory = getGlobalDailyHistory(scope);
+
+    // 查询最近 15 条全局用量调用日志
+    const recentLogs = db.prepare(`
+      SELECT 
+        l.id, l.user_id, u.username, l.model, l.prompt_tokens, l.completion_tokens,
+        l.total_tokens, l.cache_hit_tokens, l.cache_miss_tokens, l.is_peak,
+        l.cost_cny, l.input_cost_cny, l.output_cost_cny, l.request_type,
+        l.is_official, l.created_at
+      FROM api_usage_logs l
+      LEFT JOIN users u ON l.user_id = u.id
+      ${scope === 'official' ? 'WHERE l.is_official = 1' : ''}
+      ORDER BY l.id DESC
+      LIMIT 15
+    `).all() as any[];
+
+    return {
+      summary: {
+        totalRequests,
+        totalTokens,
+        promptTokens,
+        cacheHitTokens,
+        cacheMissTokens,
+        completionTokens,
+        totalCostCny,
+        inputCostCny,
+        outputCostCny,
+        savedCostCny,
+        cacheHitRate,
+      },
+      scope,
+      currentStatus,
+      dailyHistory,
+      recentLogs,
+    };
+  } catch (err: any) {
+    console.error('[API Usage] Failed to query global stats:', err.message);
+    return {
+      summary: {
+        totalRequests: 0,
+        totalTokens: 0,
+        promptTokens: 0,
+        cacheHitTokens: 0,
+        cacheMissTokens: 0,
+        completionTokens: 0,
+        totalCostCny: 0,
+        inputCostCny: 0,
+        outputCostCny: 0,
+        savedCostCny: 0,
+        cacheHitRate: 0,
+      },
+      scope,
+      currentStatus,
+      dailyHistory: {
+        '1d': [],
+        '7d': [],
+        '30d': [],
+      },
+      recentLogs: [],
+    };
   }
 }

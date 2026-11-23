@@ -10,6 +10,9 @@ import {
   Ban,
   Mail,
   UserCheck,
+  Coins,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface ManagedUser {
@@ -18,6 +21,7 @@ interface ManagedUser {
   email?: string;
   role: 'user' | 'admin';
   status: 'pending' | 'approved' | 'rejected' | 'banned';
+  balance?: number;
   task_count: number;
   subscription_count: number;
   created_at: string;
@@ -28,6 +32,12 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'approved' | 'banned' | 'pending'>('all');
+
+  // 直接充值弹窗状态 (行内充值按钮触发)
+  const [rechargeUser, setRechargeUser] = useState<ManagedUser | null>(null);
+  const [rechargeAmount, setRechargeAmount] = useState<string>('1.00');
+  const [recharging, setRecharging] = useState<boolean>(false);
+  const [rechargeMsg, setRechargeMsg] = useState<{ success: boolean; text: string } | null>(null);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -106,6 +116,33 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
     }
   };
 
+  const handleConfirmRecharge = async () => {
+    if (!rechargeUser) return;
+    const amountNum = parseFloat(rechargeAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      alert('请输入大于 0 的有效充值金额');
+      return;
+    }
+
+    setRecharging(true);
+    setRechargeMsg(null);
+    try {
+      const res = await api.post(`/admin/users/${rechargeUser.id}/recharge`, { amount: amountNum });
+      setRechargeMsg({ success: true, text: res.data.message || '充值成功！' });
+      fetchUsers();
+      setTimeout(() => {
+        setRechargeUser(null);
+        setRechargeMsg(null);
+        setRechargeAmount('1.00');
+      }, 1500);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } }; message?: string };
+      setRechargeMsg({ success: false, text: error.response?.data?.error || error.message || '充值失败' });
+    } finally {
+      setRecharging(false);
+    }
+  };
+
   const filteredUsers = users.filter((u) => {
     if (filter === 'all') return true;
     return u.status === filter;
@@ -117,11 +154,11 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
 
   return (
     <div className="w-full max-w-5xl mx-auto flex-1 min-h-0 flex flex-col space-y-4 overflow-hidden">
-      {/* Header */}
+      {/* 头部标题与状态过滤器 */}
       <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <span>用户账号与安全管理</span>
+            <span>用户账号与审核管理</span>
             {bannedCount > 0 && (
               <span className="bg-rose-500 text-white text-xs px-2.5 py-0.5 rounded-full font-semibold">
                 {bannedCount} 已封禁
@@ -129,7 +166,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
             )}
           </h2>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
-            查看已注册用户邮箱、管理账号权限状态、支持快捷封禁、解封或彻底删除用户数据
+            审核新注册用户、管理账号权限状态、查看账户额度、支持快捷封禁、解封或彻底删除用户
           </p>
         </div>
 
@@ -156,14 +193,15 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
         </div>
       </div>
 
-      {/* Surface Card Container */}
+      {/* 用户表格卡片 */}
       <div className="flex-1 min-h-0 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 rounded-3xl overflow-hidden flex flex-col shadow-2xs">
-        {/* Desktop Table View */}
+        {/* 桌面端表格 */}
         <div className="hidden sm:block flex-1 min-h-0 overflow-y-auto">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead className="bg-[#f8fafd] dark:bg-[#28292a] text-gray-500 dark:text-neutral-400 font-semibold sticky top-0 border-b border-gray-200 dark:border-neutral-800 z-10">
               <tr>
                 <th className="px-5 py-3.5">账号 / 注册邮箱</th>
+                <th className="px-5 py-3.5">账户余额 (¥)</th>
                 <th className="px-5 py-3.5">角色权限</th>
                 <th className="px-5 py-3.5">账号状态</th>
                 <th className="px-5 py-3.5">任务 / 订阅</th>
@@ -174,7 +212,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
             <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/80">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-gray-400 text-xs">
+                  <td colSpan={7} className="text-center py-12 text-gray-400 text-xs">
                     暂无符合条件的用户
                   </td>
                 </tr>
@@ -182,6 +220,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                 filteredUsers.map((u) => {
                   const isSelf = u.id === currentUser?.id;
                   const isRootAdmin = u.role === 'admin' && u.username === 'admin';
+                  const balance = Number(u.balance || 0);
 
                   return (
                     <tr
@@ -208,6 +247,32 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               UID: #{u.id}
                             </span>
                           )}
+                        </div>
+                      </td>
+
+                      {/* 余额与行内充值按钮 */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono font-bold text-xs ${
+                            balance > 0
+                              ? 'text-blue-600 dark:text-blue-400'
+                              : 'text-gray-400 dark:text-neutral-500'
+                          }`}>
+                            ¥{balance.toFixed(4)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRechargeUser(u);
+                              setRechargeAmount('1.00');
+                              setRechargeMsg(null);
+                            }}
+                            className="px-2 py-0.5 text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-md transition cursor-pointer flex items-center gap-1"
+                            title="直接充值指定金额到该账户额度"
+                          >
+                            <Coins className="w-3 h-3 text-emerald-500" />
+                            <span>充值</span>
+                          </button>
                         </div>
                       </td>
 
@@ -314,7 +379,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
           </table>
         </div>
 
-        {/* Mobile Cards View */}
+        {/* 移动端卡片视图 */}
         <div className="sm:hidden divide-y divide-gray-100 dark:divide-neutral-800 overflow-y-auto">
           {filteredUsers.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-xs">暂无用户</div>
@@ -322,6 +387,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
             filteredUsers.map((u) => {
               const isSelf = u.id === currentUser?.id;
               const isRootAdmin = u.role === 'admin' && u.username === 'admin';
+              const balance = Number(u.balance || 0);
 
               return (
                 <div key={u.id} className="p-4 space-y-3">
@@ -342,16 +408,22 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                       )}
                     </div>
 
-                    {u.status === 'approved' && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
-                        正常
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-xs text-blue-600 dark:text-blue-400">
+                        ¥{balance.toFixed(2)}
                       </span>
-                    )}
-                    {u.status === 'banned' && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300">
-                        已封禁
-                      </span>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRechargeUser(u);
+                          setRechargeAmount('1.00');
+                          setRechargeMsg(null);
+                        }}
+                        className="px-2 py-0.5 text-[11px] bg-emerald-50 dark:bg-emerald-950 text-emerald-600 rounded-md border border-emerald-200"
+                      >
+                        充值
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400">
@@ -391,6 +463,103 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
           )}
         </div>
       </div>
+
+      {/* 充值弹窗 MODAL (行内充值按钮触发) */}
+      {rechargeUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-emerald-500" />
+                <span>直接充值账户额度</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setRechargeUser(null)}
+                className="text-gray-400 hover:text-gray-600 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#28292a] flex items-center justify-between">
+                <span className="text-gray-500 dark:text-neutral-400">充值目标用户</span>
+                <span className="font-bold text-gray-900 dark:text-gray-100">{rechargeUser.username} (UID: #{rechargeUser.id})</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#28292a] flex items-center justify-between">
+                <span className="text-gray-500 dark:text-neutral-400">当前余额</span>
+                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">¥{(rechargeUser.balance || 0).toFixed(4)} 元</span>
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <label className="font-bold text-gray-800 dark:text-gray-200 block">充值金额 (元)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-gray-400 text-sm font-bold">¥</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={rechargeAmount}
+                    onChange={(e) => setRechargeAmount(e.target.value)}
+                    className="w-full pl-8 pr-3.5 py-2.5 bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-sm font-bold text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    placeholder="1.00"
+                  />
+                </div>
+
+                {/* 快捷金额标签 */}
+                <div className="flex gap-2 pt-1">
+                  {['1.00', '5.00', '10.00', '50.00'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setRechargeAmount(preset)}
+                      className={`flex-1 py-1 rounded-lg border text-xs font-mono font-semibold transition cursor-pointer ${
+                        rechargeAmount === preset
+                          ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-white dark:bg-[#28292a] border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-400 hover:border-gray-300'
+                      }`}
+                    >
+                      +{preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {rechargeMsg && (
+                <div className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                  rechargeMsg.success
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 text-rose-800 dark:text-rose-300'
+                }`}>
+                  {rechargeMsg.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                  <span>{rechargeMsg.text}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setRechargeUser(null)}
+                className="flex-1 py-2 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 rounded-xl text-xs font-medium transition cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRecharge}
+                disabled={recharging}
+                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                {recharging ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
+                <span>{recharging ? '充值中...' : '确认直接充值'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

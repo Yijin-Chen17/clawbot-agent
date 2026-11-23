@@ -16,6 +16,7 @@ import {
   Settings,
   Users,
   Terminal,
+  KeyRound,
   Plus,
   X,
 } from 'lucide-react';
@@ -274,6 +275,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => handleSelectView('api')}
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition cursor-pointer ${
+                activeTab === 'api'
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold'
+                  : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800/60'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>{t('nav.api_manage', 'API 管理')}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => handleSelectView('debug')}
               className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition cursor-pointer ${
                 activeTab === 'debug'
@@ -289,7 +302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 底部固定区域：仅显示【左：头像+昵称 右：设置符号】 */}
-      <div className="p-2.5 border-t border-gray-200/80 dark:border-neutral-800 shrink-0">
+      <div className="p-2.5 shrink-0">
         <button
           type="button"
           onClick={() => handleSelectView('settings')}
@@ -340,7 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* 桌面端常驻左侧边栏 (无右侧分界线，无缝融合) */}
-      <aside className="hidden md:flex w-64 shrink-0 h-full bg-[#f8fafd] dark:bg-[#18191a] overflow-hidden select-none">
+      <aside className="hidden md:flex w-64 shrink-0 h-full bg-white dark:bg-[#1e1f20] overflow-hidden select-none">
         {sidebarContent}
       </aside>
 
@@ -351,7 +364,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="relative w-64 max-w-[80vw] h-full bg-[#f8fafd] dark:bg-[#18191a] shadow-2xl z-10 overflow-hidden select-none">
+          <aside className="relative w-64 max-w-[80vw] h-full bg-white dark:bg-[#1e1f20] shadow-2xl z-10 overflow-hidden select-none">
             {sidebarContent}
           </aside>
         </div>

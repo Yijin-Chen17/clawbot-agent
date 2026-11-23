@@ -1,3 +1,4 @@
+import { copyText } from '../utils/clipboard';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -38,6 +39,10 @@ import {
   Languages,
   Keyboard,
   KeyRound,
+  ShieldAlert,
+  Gift,
+  Zap,
+  DollarSign,
 } from 'lucide-react';
 
 interface WorkSlot {
@@ -197,8 +202,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     setDisplayDensity,
     language,
     setLanguage,
-    defaultView,
-    setDefaultView,
     defaultTaskDuration,
     setDefaultTaskDuration,
     soundEnabled,
@@ -252,6 +255,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // LLM fields
+  const [apiMode, setApiMode] = useState<'official' | 'custom'>('official');
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [hasGlobalLlm, setHasGlobalLlm] = useState<boolean>(true);
+  const [redeemCodeInput, setRedeemCodeInput] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemResult, setRedeemResult] = useState<{ success: boolean; msg: string } | null>(null);
+
   const [llmEndpoint, setLlmEndpoint] = useState('https://api.deepseek.com/v1');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModel, setLlmModel] = useState('deepseek-chat');
@@ -276,6 +286,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   // iCal export urls
   const [icalExportUrl, setIcalExportUrl] = useState('');
   const [copiedIcal, setCopiedIcal] = useState(false);
+  const [copyIcalError, setCopyIcalError] = useState('');
+  const icalInputRef = useRef<HTMLInputElement>(null);
 
   const userId = user?.id ? String(user.id) : 'default';
 
@@ -313,6 +325,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       setLlmTesting(false);
     }
   };
+
+  const handleRedeemCode = async () => {
+    if (!redeemCodeInput.trim()) {
+      alert('请输入有效的兑换码');
+      return;
+    }
+    setRedeeming(true);
+    setRedeemResult(null);
+    try {
+      const res = await api.post('/settings/redeem-code', { code: redeemCodeInput.trim() });
+      setRedeemResult({ success: true, msg: res.data.message || '兑换充值成功！' });
+      if (res.data.newBalance !== undefined) {
+        setUserBalance(res.data.newBalance);
+      }
+      setRedeemCodeInput('');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } }; message?: string };
+      const msg = error.response?.data?.error || error.message || '兑换失败，请核对兑换码';
+      setRedeemResult({ success: false, msg });
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
+  // 官方全局 LLM 模型与计费信息
+  const [globalLlmInfo, setGlobalLlmInfo] = useState<{
+    model: string;
+    isDeepSeek: boolean;
+    priceInput: number;
+    priceOutput: number;
+    priceCacheHit: number;
+  } | null>(null);
 
   // API Usage Monitoring State
   const [llmUsageLoading, setLlmUsageLoading] = useState(false);
@@ -488,10 +532,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     try {
       setLoading(true);
       const res = await api.get('/settings');
-      const { settings, urls } = res.data;
+      const { settings, urls, user_balance, has_global_llm } = res.data;
+      if (user_balance !== undefined) {
+        setUserBalance(Number(user_balance) || 0);
+      }
+      if (has_global_llm !== undefined) {
+        setHasGlobalLlm(Boolean(has_global_llm));
+      }
+      if (res.data.global_llm_info) {
+        setGlobalLlmInfo(res.data.global_llm_info);
+      }
       if (settings) {
+        setApiMode(settings.api_mode || 'official');
         setLlmEndpoint(settings.llm_endpoint || 'https://api.deepseek.com/v1');
         setLlmApiKey(settings.llm_api_key || '');
+        if (settings.llm_api_key && settings.llm_api_key.trim().length > 3) {
+          setLlmApiKeyValid(true);
+        }
         setLlmModel(settings.llm_model || 'deepseek-chat');
 
         // Weixin status
@@ -648,6 +705,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       try {
         setSaving(true);
         await api.put('/settings', {
+          api_mode: apiMode,
           llm_endpoint: llmEndpoint,
           llm_api_key: llmApiKey,
           llm_model: llmModel,
@@ -669,6 +727,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
     return () => clearTimeout(timer);
   }, [
+    apiMode,
     llmEndpoint,
     llmApiKey,
     llmModel,
@@ -722,10 +781,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     }
   };
 
-  const copyIcal = () => {
-    navigator.clipboard.writeText(icalExportUrl);
-    setCopiedIcal(true);
-    setTimeout(() => setCopiedIcal(false), 2000);
+  const copyIcal = async () => {
+    setCopyIcalError('');
+    setCopiedIcal(false);
+    if (!icalExportUrl) {
+      setCopyIcalError('订阅链接尚未加载，请刷新页面后重试。');
+      return;
+    }
+    if (await copyText(icalExportUrl)) {
+      setCopiedIcal(true);
+      setTimeout(() => setCopiedIcal(false), 2000);
+    } else {
+      icalInputRef.current?.focus();
+      icalInputRef.current?.select();
+      setCopyIcalError('无法自动复制，已选中链接，请手动复制。');
+    }
   };
 
   if (loading) {
@@ -740,7 +810,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   }
 
   const isWeixinDone = Boolean(wxConnected);
-  const isLlmDone = Boolean(llmApiKeyValid);
+  const isLlmDone = apiMode === 'official' ? userBalance > 0 : Boolean(llmApiKeyValid || (llmApiKey && llmApiKey.trim().length > 3));
 
   const navMenuItems = [
     {
@@ -806,7 +876,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const renderCardHeader = (
     icon: React.ReactNode,
     title: string,
-    subtitle: string,
     statusBadge?: React.ReactNode,
     _hideGlobalSave?: boolean
   ) => (
@@ -825,12 +894,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
           {icon}
         </div>
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">{title}</h2>
-            {statusBadge}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">{subtitle}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">{title}</h2>
+          {statusBadge}
         </div>
       </div>
 
@@ -883,9 +949,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 items-stretch overflow-hidden">
         {/* Left Column: Vertical Nav List */}
         <aside className="hidden lg:flex flex-col w-72 xl:w-80 shrink-0 bg-white dark:bg-[#1e1f20] rounded-2xl border border-gray-200/80 dark:border-neutral-800/80 p-3 shadow-xs space-y-1.5 overflow-y-auto scrollbar-thin">
-          <div className="text-[11px] font-semibold tracking-wider uppercase text-gray-400 dark:text-neutral-500 px-3 py-1.5 flex items-center justify-between">
-            <span>{t('set.catalog')}</span>
-          </div>
           {navMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
@@ -944,7 +1007,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <User className="w-5 h-5" />
                 </div>,
                 t('account.title'),
-                t('account.subtitle'),
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-neutral-300">
                   @{user?.username}
                 </span>,
@@ -1040,9 +1102,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       />
                       <Lock className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2" />
                     </div>
-                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      {t('account.username_tip')}
-                    </span>
                   </div>
 
                   {/* 对外展示昵称 */}
@@ -1068,9 +1127,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         {savingProfile ? t('common.saving') : t('account.save_nickname')}
                       </button>
                     </div>
-                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 block">
-                      {t('account.nickname_tip')}
-                    </span>
                   </div>
 
                   {/* 注册绑定邮箱 */}
@@ -1189,9 +1245,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <h4 className="text-xs font-bold text-gray-900 dark:text-gray-100">
                     {t('account.logout_title')}
                   </h4>
-                  <p className="text-[11px] text-gray-500 dark:text-neutral-400 mt-0.5">
-                    {t('account.logout_desc')}
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -1236,21 +1289,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'general' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Sliders className="w-5 h-5" />
                 </div>,
                 t('general.title'),
-                t('general.subtitle'),
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
-                  {t('general.instant_badge')}
-                </span>,
+                undefined,
                 true
               )}
 
               {/* 1. 界面语言 (下拉选择框) */}
               <div className="space-y-2 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  <Languages className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <Languages className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>{t('general.lang_title')}</span>
                 </div>
                 <div className="max-w-xs pt-1">
@@ -1263,50 +1313,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <option value="en">English (US)</option>
                   </select>
                 </div>
-                <p className="text-[10px] text-gray-400 dark:text-neutral-500">
-                  {t('general.lang_tip')}
-                </p>
               </div>
 
-              {/* 2. 默认起始视图 */}
-              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
-                <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  {t('general.view_title')}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                  {[
-                    { id: 'matrix' as const, name: t('general.view_matrix'), desc: t('general.view_matrix_desc') },
-                    { id: 'list' as const, name: t('general.view_list'), desc: t('general.view_list_desc') },
-                    { id: 'calendar' as const, name: t('general.view_calendar'), desc: t('general.view_calendar_desc') },
-                  ].map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => setDefaultView(v.id)}
-                      className={`p-3.5 rounded-xl border text-left transition cursor-pointer ${
-                        defaultView === v.id
-                          ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
-                          : 'border-gray-200 dark:border-neutral-700 bg-white dark:bg-[#1e1f20] hover:bg-gray-100/60 dark:hover:bg-neutral-800'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold">{v.name}</span>
-                        {defaultView === v.id && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                      </div>
-                      <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">{v.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 3. 默认新建任务耗时 */}
+              {/* 2. 默认新建任务耗时 */}
               <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800">
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('general.duration_title')}
                 </div>
-                <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-                  {t('general.duration_tip')}
-                </p>
                 <div className="flex flex-wrap gap-2.5 pt-1">
                   {[30, 45, 60, 90].map((mins) => (
                     <button
@@ -1315,7 +1328,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                       onClick={() => setDefaultTaskDuration(mins)}
                       className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                         defaultTaskDuration === mins
-                          ? 'bg-indigo-600 text-white shadow-xs'
+                          ? 'bg-blue-600 text-white shadow-xs'
                           : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
                       }`}
                     >
@@ -1325,11 +1338,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* 4. 声音与音效反馈 */}
+              {/* 3. 声音与音效反馈 */}
               <div className="pb-6 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-neutral-800 flex items-center justify-center text-gray-600 dark:text-neutral-300 shrink-0">
-                    {soundEnabled ? <Volume2 className="w-4 h-4 text-indigo-600" /> : <VolumeX className="w-4 h-4" />}
+                    {soundEnabled ? <Volume2 className="w-4 h-4 text-blue-600 dark:text-blue-400" /> : <VolumeX className="w-4 h-4" />}
                   </div>
                   <div>
                     <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
@@ -1344,7 +1357,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   type="button"
                   onClick={() => setSoundEnabled(!soundEnabled)}
                   className={`w-11 h-6 rounded-full p-1 transition cursor-pointer shrink-0 ${
-                    soundEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-neutral-700'
+                    soundEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-neutral-700'
                   }`}
                 >
                   <div
@@ -1355,10 +1368,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </button>
               </div>
 
-              {/* 5. 键盘快捷键速查 */}
+              {/* 4. 键盘快捷键速查 */}
               <div className="space-y-3 pt-1">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                  <Keyboard className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <Keyboard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>{t('general.shortcuts_title')}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
@@ -1389,11 +1402,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'appearance' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Palette className="w-5 h-5" />
                 </div>,
                 t('appearance.title'),
-                t('appearance.subtitle'),
                 undefined,
                 true
               )}
@@ -1441,14 +1453,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="text-xs font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                   {t('appearance.accent_title')}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   {[
                     { id: 'blue' as const, name: t('appearance.accent_blue'), hex: '#2563eb' },
                     { id: 'emerald' as const, name: t('appearance.accent_emerald'), hex: '#059669' },
                     { id: 'violet' as const, name: t('appearance.accent_violet'), hex: '#7c3aed' },
-                    { id: 'amber' as const, name: t('appearance.accent_amber'), hex: '#d97706' },
-                    { id: 'rose' as const, name: t('appearance.accent_rose'), hex: '#e11d48' },
-                    { id: 'neutral' as const, name: t('appearance.accent_neutral'), hex: '#374151' },
                   ].map((c) => {
                     const isSelected = themeColor === c.id;
                     return (
@@ -1523,11 +1532,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'weixin' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Bot className="w-5 h-5" />
                 </div>,
                 t('weixin.title'),
-                t('weixin.subtitle'),
                 wxConnected ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1705,9 +1713,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Clock className="w-5 h-5" />
                 </div>,
-                t('scheduler.title'),
-                t('scheduler.subtitle'),
-                undefined
+                t('scheduler.title')
               )}
 
               {/* 1. Manual Work Slots Input */}
@@ -1832,16 +1838,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     onChange={(e) => setTaskBuffer(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                   />
-                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
-                    {t('scheduler.buffer_desc')}
-                  </p>
                 </div>
               </div>
 
               {/* 4. Advance Deadline Setting (DDL - N 天) */}
               <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-neutral-800">
                 <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
-                  提前完成缓冲天数 (尽可能在截止时间前完成)
+                  提前完成缓冲天数
                 </label>
                 <div className="max-w-xs">
                   <select
@@ -1854,9 +1857,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <option value={2}>2 天 (截止日前 2 天完成)</option>
                     <option value={3}>3 天 (截止日前 3 天完成，极端从容)</option>
                   </select>
-                  <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1.5">
-                    排程引擎将以「截止时间 - 缓冲天数」作为调度目标，优先将待办任务提前规划，预留容错与复盘缓冲。
-                  </p>
                 </div>
               </div>
             </div>
@@ -1866,12 +1866,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'notification' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Bell className="w-5 h-5" />
                 </div>,
-                t('notification.title'),
-                t('notification.subtitle'),
-                undefined
+                t('notification.title')
               )}
 
               {/* 1. Start reminder */}
@@ -1950,16 +1948,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* 3. Notification Mechanism Strategy */}
-              <div className="space-y-2 pt-1 text-xs">
-                <div className="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span>{t('notification.strategy_title')}</span>
-                </div>
-                <p className="text-gray-600 dark:text-neutral-400 leading-relaxed max-w-2xl">
-                  {t('notification.strategy_desc')}
-                </p>
-              </div>
             </div>
           )}
 
@@ -1967,99 +1955,262 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'llm' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Brain className="w-5 h-5" />
                 </div>,
                 t('llm.title'),
-                t('llm.subtitle'),
                 isLlmDone ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    {t('llm.valid_badge')}
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    {apiMode === 'official' ? '官方接口已就绪' : t('llm.valid_badge')}
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
-                    {t('llm.unverified_badge')}
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60">
+                    {apiMode === 'official' ? '额度不足，请充值' : t('llm.unverified_badge')}
                   </span>
                 )
               )}
 
               <div className="space-y-5 text-xs max-w-xl">
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
+                {/* 模式选择 */}
+                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.endpoint')}
+                    {t('llm.mode_select')}
                   </label>
-                  <input
-                    type="text"
-                    value={llmEndpoint}
-                    onChange={(e) => setLlmEndpoint(e.target.value)}
-                    placeholder="https://api.deepseek.com/v1"
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: DeepSeek Official Endpoint</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setApiMode('official')}
+                      className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                        apiMode === 'official'
+                          ? 'bg-blue-50/70 dark:bg-blue-950/50 border-2 border-blue-600 text-blue-950 dark:text-blue-100 font-bold shadow-xs'
+                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-900/60'
+                      }`}
+                    >
+                      <span className="text-xs flex items-center gap-2">
+                        <Sparkles className={`w-4 h-4 ${apiMode === 'official' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-neutral-500'}`} />
+                        <span>{t('llm.mode_official')}</span>
+                      </span>
+                      {apiMode === 'official' && (
+                        <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        </div>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setApiMode('custom')}
+                      className={`p-3.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                        apiMode === 'custom'
+                          ? 'bg-blue-50/70 dark:bg-blue-950/50 border-2 border-blue-600 text-blue-950 dark:text-blue-100 font-bold shadow-xs'
+                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-900/60'
+                      }`}
+                    >
+                      <span className="text-xs flex items-center gap-2">
+                        <KeyRound className={`w-4 h-4 ${apiMode === 'custom' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-neutral-500'}`} />
+                        <span>{t('llm.mode_custom')}</span>
+                      </span>
+                      {apiMode === 'custom' && (
+                        <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        </div>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.api_key')}
-                  </label>
-                  <input
-                    type="password"
-                    value={llmApiKey}
-                    onChange={(e) => {
-                      setLlmApiKey(e.target.value);
-                      if (llmApiKeyValid) {
-                        setLlmApiKeyValid(false);
-                        localStorage.removeItem(`clawbot_llm_valid_${userId}`);
-                      }
-                    }}
-                    placeholder={t('llm.api_key_placeholder')}
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Stored securely in SQLite database and isolated per account</span>
-                </div>
+                {apiMode === 'official' ? (
+                  /* 官方接口：余额与兑换码 */
+                  <div className="p-4 rounded-xl border border-blue-100 dark:border-blue-900/50 bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/20 dark:from-blue-950/30 dark:via-[#1e1f20] dark:to-indigo-950/10 shadow-2xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-100/80 dark:border-blue-900/30">
+                      <div>
+                        <div className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+                          <Coins className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                          <span>{t('llm.official_balance')}</span>
+                        </div>
+                        <div className="text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 flex items-baseline gap-1 mt-0.5">
+                          <span className="text-base font-normal">¥</span>
+                          <span>{userBalance.toFixed(4)}</span>
+                          <span className="text-xs font-normal text-gray-500 dark:text-neutral-400 ml-1">元</span>
+                        </div>
+                      </div>
 
-                <div className="space-y-1.5 pb-5 border-b border-gray-100 dark:border-neutral-800">
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
-                    {t('llm.model')}
-                  </label>
-                  <input
-                    type="text"
-                    value={llmModel}
-                    onChange={(e) => setLlmModel(e.target.value)}
-                    placeholder="deepseek-chat"
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
-                </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={fetchSettings}
+                          className="px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 bg-white dark:bg-[#1a1b1e] border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-950/60 font-semibold shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                          <span>刷新余额</span>
+                        </button>
+                      </div>
+                    </div>
 
-                <div className="flex items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleTestLlmKey}
-                    disabled={llmTesting || !llmApiKey.trim()}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
-                  >
-                    {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
-                  </button>
+                    {/* 官方模型与计费单价透明展示 */}
+                    {globalLlmInfo && (
+                      <div className="p-2.5 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-[11px] text-gray-600 dark:text-neutral-400 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-gray-700 dark:text-gray-300">当前官方模型:</span>
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{globalLlmInfo.model}</span>
+                        </div>
+                        <div>
+                          {globalLlmInfo.isDeepSeek ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-[10px] font-semibold font-mono border border-blue-200 dark:border-blue-800">
+                              DeepSeek 动态峰谷计费 (闲时/周末 5折)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 text-[10px] font-medium font-mono">
+                              输入 ¥{globalLlmInfo.priceInput}/M · 输出 ¥{globalLlmInfo.priceOutput}/M · 缓存 ¥{globalLlmInfo.priceCacheHit}/M
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
-                  {isLlmDone && (
-                    <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{t('llm.valid_badge')}</span>
-                    </span>
-                  )}
-                </div>
+                    {!hasGlobalLlm && (
+                      <div className="p-3 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-gray-400 dark:text-neutral-500" />
+                        <span>平台尚未配置全局官方接口，请联系管理员在后台配置全局 API。</span>
+                      </div>
+                    )}
 
-                {llmTestResult && (
-                  <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
-                    llmTestResult.success
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-                  }`}>
-                    {llmTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
-                    <span>{llmTestResult.msg}</span>
+                    {userBalance <= 0 && (
+                      <div className="p-3 rounded-lg bg-gray-50 dark:bg-neutral-800/50 border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 text-xs flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
+                        <div>
+                          <div className="font-semibold text-rose-600 dark:text-rose-400">{t('llm.official_balance_zero_tip')}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 兑换码兑换输入 */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                        <Gift className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                        <span>{t('llm.official_redeem_title')}</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={redeemCodeInput}
+                          onChange={(e) => setRedeemCodeInput(e.target.value.toUpperCase())}
+                          placeholder={t('llm.official_redeem_placeholder')}
+                          className="flex-1 px-3 py-2 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleRedeemCode}
+                          disabled={redeeming || !redeemCodeInput.trim()}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                        >
+                          {redeeming ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5 text-white/80" />}
+                          <span>{redeeming ? '兑换中...' : t('llm.official_redeem_btn')}</span>
+                        </button>
+                      </div>
+
+                      {redeemResult && (
+                        <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 animate-fadeIn ${
+                          redeemResult.success
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                            : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                        }`}>
+                          {redeemResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                          <span>{redeemResult.msg}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* 自定义 API 配置 */
+                  <div className="space-y-4">
+                    {/* 安全风险提示横幅 */}
+                    <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-neutral-800/40 border border-gray-200 dark:border-neutral-700 text-gray-700 dark:text-neutral-300 text-xs flex items-start gap-2.5 leading-relaxed">
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-gray-500 dark:text-neutral-400" />
+                      <div>
+                        <div className="font-semibold mb-0.5">安全风险提示</div>
+                        <div className="text-[11px] opacity-90">{t('llm.custom_risk_warning')}</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.endpoint')}
+                      </label>
+                      <input
+                        type="text"
+                        value={llmEndpoint}
+                        onChange={(e) => setLlmEndpoint(e.target.value)}
+                        placeholder="https://api.deepseek.com/v1"
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">Default: https://api.deepseek.com/v1</span>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.api_key')}
+                      </label>
+                      <input
+                        type="password"
+                        value={llmApiKey}
+                        onChange={(e) => {
+                          setLlmApiKey(e.target.value);
+                          if (llmApiKeyValid) {
+                            setLlmApiKeyValid(false);
+                            localStorage.removeItem(`clawbot_llm_valid_${userId}`);
+                          }
+                        }}
+                        placeholder={t('llm.api_key_placeholder')}
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">存储于独立隔离配置库中，供微信后台解析调用</span>
+                    </div>
+
+                    <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-neutral-800">
+                      <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block">
+                        {t('llm.model')}
+                      </label>
+                      <input
+                        type="text"
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        placeholder="deepseek-chat"
+                        className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 outline-none transition focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-gray-400 dark:text-neutral-500 mt-1 block">{t('llm.model_tip')}</span>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTestLlmKey}
+                        disabled={llmTesting || !llmApiKey.trim()}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-800 dark:text-neutral-200 border border-gray-200 dark:border-neutral-700 font-medium text-xs rounded-xl shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {llmTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />}
+                        <span>{llmTesting ? t('llm.testing') : t('llm.test_btn')}</span>
+                      </button>
+
+                      {isLlmDone && (
+                        <span className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-neutral-300 font-medium">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          <span>{t('llm.valid_badge')}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {llmTestResult && (
+                      <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 animate-fadeIn ${
+                        llmTestResult.success
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                      }`}>
+                        {llmTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                        <span>{llmTestResult.msg}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2067,7 +2218,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 <div className="pt-6 border-t border-gray-100 dark:border-neutral-800 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <Coins className="w-4 h-4 text-amber-500" />
+                      <Coins className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                       <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
                         {t('llm.usage_title')}
                       </h3>
@@ -2079,14 +2230,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         disabled={llmUsageLoading}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 transition cursor-pointer"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 ${llmUsageLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 ${llmUsageLoading ? 'animate-spin' : ''}`} />
                         <span>{t('llm.refresh_usage')}</span>
                       </button>
                       <button
                         type="button"
                         onClick={handleClearLlmUsage}
                         disabled={!llmUsageData?.summary?.totalRequests}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl text-gray-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>{t('llm.clear_usage')}</span>
@@ -2096,37 +2247,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
                   {/* 核心统计指标卡片 (总消费、输入 Tokens、输出 Tokens) */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
-                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
-                        {t('llm.total_cost')}
+                    <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
+                      <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+                        <DollarSign className="w-3.5 h-3.5" />
+                        <span>{t('llm.total_cost')}</span>
                       </span>
-                      <div className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1">
+                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         ¥{(llmUsageData?.summary?.totalCostCny || 0).toFixed(4)}
                       </div>
-                      <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
+                      <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1">
                         共 {llmUsageData?.summary?.totalRequests || 0} 次 API 调用
                       </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
-                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
-                        输入 Tokens (Prompt)
+                    <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
+                      <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>输入 Tokens (Prompt)</span>
                       </span>
                       <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         {(llmUsageData?.summary?.promptTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-mono flex items-center gap-1.5">
-                        <span className="text-emerald-600 dark:text-emerald-400">命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
-                        <span>·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">命中 {(llmUsageData?.summary?.cacheHitTokens || 0).toLocaleString()}</span>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
                         <span>未中 {(llmUsageData?.summary?.cacheMissTokens || 0).toLocaleString()}</span>
                       </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-neutral-800/60 border border-gray-200 dark:border-neutral-700/60">
-                      <span className="text-[11px] text-gray-500 dark:text-neutral-400 font-medium block">
-                        输出 Tokens (Output)
+                    <div className="p-3.5 rounded-2xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs">
+                      <span className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>输出 Tokens (Output)</span>
                       </span>
-                      <div className="text-xl font-bold font-mono text-purple-600 dark:text-purple-400 mt-1">
+                      <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
                         {(llmUsageData?.summary?.completionTokens || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 font-mono">
@@ -2146,12 +2300,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           {activeSection === 'calendar' && (
             <div className="space-y-6 animate-fadeIn">
               {renderCardHeader(
-                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
                 </div>,
-                t('calendar.title'),
-                t('calendar.subtitle'),
-                undefined
+                t('calendar.title')
               )}
 
               {/* 1. Export TODO link */}
@@ -2163,6 +2315,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   <input
                     type="text"
                     readOnly
+                    ref={icalInputRef}
                     value={icalExportUrl}
                     className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-xs text-gray-700 dark:text-neutral-300 select-all"
                   />
@@ -2175,6 +2328,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                     <span>{copiedIcal ? t('common.copied') : t('calendar.copy_btn')}</span>
                   </button>
                 </div>
+                {copyIcalError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{copyIcalError}</p>}
               </div>
 
               {/* 2. Add external sub */}

@@ -61,6 +61,29 @@ export function deleteSubscription(req: AuthenticatedRequest, res: Response): vo
   res.json({ message: '日历订阅已移除' });
 }
 
+export function updateCalendarColor(req: AuthenticatedRequest, res: Response): void {
+  const color = req.body?.color;
+  const isReset = color === null || color === '' || color === undefined;
+  if (!isReset && (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color))) {
+    res.status(400).json({ error: '请选择有效的颜色' });
+    return;
+  }
+  const userId = req.user!.id;
+  const targetColor = isReset ? null : color;
+  if (req.params.id === 'tasks') {
+    db.prepare(`INSERT INTO user_settings (user_id, calendar_color) VALUES (?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET calendar_color = excluded.calendar_color`).run(userId, targetColor);
+  } else {
+    const result = db.prepare('UPDATE calendar_subscriptions SET color = ? WHERE id = ? AND user_id = ?')
+      .run(targetColor, req.params.id, userId);
+    if (!result.changes) {
+      res.status(404).json({ error: '日历不存在' });
+      return;
+    }
+  }
+  res.json({ color: targetColor });
+}
+
 export async function syncSubscriptionNow(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const { id } = req.params;
@@ -199,9 +222,9 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   res.json({
     events: formattedEvents,
     subscriptions,
+    taskColor: (db.prepare('SELECT calendar_color FROM user_settings WHERE user_id = ?').get(userId) as { calendar_color?: string } | undefined)?.calendar_color || null,
     exportUrls: {
       http: `${protocol}://${host}/api/calendar/subscribe/${token}.ics`,
-      webcal: `webcal://${host}/api/calendar/subscribe/${token}.ics`,
       download: `${protocol}://${host}/api/calendar/export/${token}.ics`,
       token,
     },
@@ -258,6 +281,14 @@ export async function syncAndReplanAll(req: AuthenticatedRequest, res: Response)
     });
   } catch (err: any) {
     res.status(500).json({ error: `处理失败: ${err.message}` });
+  }
+}
+
+export function replanAll(req: AuthenticatedRequest, res: Response): void {
+  try {
+    res.json(replanUserTasks(req.user!.id));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || '排程失败' });
   }
 }
 

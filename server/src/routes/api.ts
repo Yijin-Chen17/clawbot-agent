@@ -15,18 +15,35 @@ import {
   getWorkersStatus,
   restartUserWorker,
   resetUserSyncBuf,
+  getGlobalLlmSettings,
+  updateGlobalLlmSettings,
+  testGlobalLlmSettings,
+  rechargeUserBalance,
+  generateRedemptionCodes,
+  listRedemptionCodes,
+  deleteRedemptionCode,
+  getAdminUsageStats,
 } from '../controllers/adminController.js';
-import { getSettings, updateSettings, regenerateWebhookToken, testLlmApiKey, getLlmUsage, clearLlmUsage } from '../controllers/settingsController.js';
+import {
+  getSettings,
+  updateSettings,
+  regenerateWebhookToken,
+  testLlmApiKey,
+  getLlmUsage,
+  clearLlmUsage,
+  redeemCode,
+} from '../controllers/settingsController.js';
 import { listTasks, createTask, updateTask, deleteTask, rescheduleTask, quickActionTask, completePartTask, applyProposal } from '../controllers/taskController.js';
 import {
   listSubscriptions,
   createSubscription,
   deleteSubscription,
   syncSubscriptionNow,
+  updateCalendarColor,
   getCalendarEvents,
   exportDedicatedIcal,
   syncAndReplanAll,
-  previewCalendarCard,
+  replanAll,
   previewTodoCard,
 } from '../controllers/calendarController.js';
 import { handleClawbotWebhook } from '../controllers/webhookController.js';
@@ -60,6 +77,7 @@ router.post('/settings/test-llm', requireAuth, testLlmApiKey);
 router.get('/settings/llm-usage', requireAuth, getLlmUsage);
 router.delete('/settings/llm-usage', requireAuth, clearLlmUsage);
 router.post('/settings/regenerate-token', requireAuth, regenerateWebhookToken);
+router.post('/settings/redeem-code', requireAuth, redeemCode);
 
 // WeChat Clawbot iLink Gateway & QR Code Scan
 router.get('/weixin/qrcode', requireAuth, getQRCode);
@@ -79,12 +97,13 @@ router.post('/tasks/:id/complete-part', requireAuth, completePartTask);
 
 // Calendar Management
 router.get('/calendar/subscriptions', requireAuth, listSubscriptions);
+router.put('/calendar/colors/:id', requireAuth, updateCalendarColor);
 router.post('/calendar/subscriptions', requireAuth, createSubscription);
 router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);
 router.get('/calendar/events', requireAuth, getCalendarEvents);
 router.post('/calendar/sync-and-replan', requireAuth, syncAndReplanAll);
-router.get('/calendar/preview-card', requireAuth, previewCalendarCard);
+router.post('/calendar/replan', requireAuth, replanAll);
 router.get('/calendar/preview-todo-card', requireAuth, previewTodoCard);
 
 // ================= Admin Routes =================
@@ -104,3 +123,14 @@ router.post('/admin/debug/test-send-wechat', requireAdmin, debugTestSendWeChat);
 router.get('/admin/debug/workers', requireAdmin, getWorkersStatus);
 router.post('/admin/debug/workers/:userId/restart', requireAdmin, restartUserWorker);
 router.post('/admin/debug/workers/:userId/reset-sync', requireAdmin, resetUserSyncBuf);
+
+// Admin Global LLM & Balance & Redemption Routes
+router.get('/admin/global-llm', requireAdmin, getGlobalLlmSettings);
+router.put('/admin/global-llm', requireAdmin, updateGlobalLlmSettings);
+router.post('/admin/global-llm/test', requireAdmin, testGlobalLlmSettings);
+router.post('/admin/users/:id/recharge', requireAdmin, rechargeUserBalance);
+router.post('/admin/users/recharge', requireAdmin, rechargeUserBalance);
+router.post('/admin/redemption-codes/generate', requireAdmin, generateRedemptionCodes);
+router.get('/admin/redemption-codes', requireAdmin, listRedemptionCodes);
+router.delete('/admin/redemption-codes/:id', requireAdmin, deleteRedemptionCode);
+router.get('/admin/usage-stats', requireAdmin, getAdminUsageStats);

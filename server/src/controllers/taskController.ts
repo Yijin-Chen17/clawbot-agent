@@ -1,4 +1,6 @@
+import { deadlineMs, recurringDebt } from '../services/calendarOptimizer.js';
 import { Response } from 'express';
+import { planTaskWithLLM } from '../services/llm.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task } from '../models/types.js';
@@ -55,14 +57,16 @@ export function listTasks(req: AuthenticatedRequest, res: Response): void {
   query += " ORDER BY CASE status WHEN 'in_progress' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'pending_slot' THEN 3 ELSE 4 END, scheduled_start ASC, created_at DESC";
 
   const tasks = db.prepare(query).all(...params) as Task[];
-  res.json({ tasks });
+  const today = new Date();
+  res.json({ tasks: tasks.map(task => task.time_mode === 'daily_fixed'
+    ? { ...task, recurring_debt: recurringDebt(task, today) } : task) });
 }
 
-export function createTask(req: AuthenticatedRequest, res: Response): void {
+export async function createTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const {
     title,
-    duration_minutes = 60,
+    duration_minutes: inputDuration,
     urgency,
     importance,
     importance_tier,
@@ -72,6 +76,7 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
     importance_manual_override,
     score_scale,
     deadline,
+    deadline_kind,
     scheduled_start,
     scheduled_end,
     is_fixed = 0,
@@ -82,6 +87,31 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
 
   if (!title) {
     res.status(400).json({ error: '请输入任务标题' });
+    return;
+  }
+
+  if (inputDuration !== undefined && inputDuration !== null && inputDuration !== '' &&
+      (!Number.isInteger(Number(inputDuration)) || Number(inputDuration) <= 0 || Number(inputDuration) > 100000)) {
+    res.status(400).json({ error: '预计耗时必须为有效的正整数分钟数' });
+    return;
+  }
+  let duration_minutes = Number(inputDuration);
+  let sessions: number[] = [];
+  try {
+    const plan = await planTaskWithLLM(userId, title, duration_minutes > 0 ? duration_minutes : undefined, notes);
+    duration_minutes = plan.minutes;
+    sessions = plan.sessions;
+  } catch {
+    if (!(duration_minutes > 0)) {
+      res.status(400).json({ error: '无法预估任务耗时，请检查 LLM 配置或填写预计耗时' });
+      return;
+    }
+    // 显式耗时在 LLM 不可用时仍可创建，保持任务整体性。
+    sessions = [];
+  }
+  const sessionPlan = sessions.length ? JSON.stringify(sessions) : null;
+  if (deadline_kind === 'hard' && !Number.isFinite(deadlineMs(deadline))) {
+    res.status(400).json({ error: '不可逾期任务需要有效的截止时间' });
     return;
   }
 
@@ -150,6 +180,11 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   let scheduleBlocks: string | null = null;
   let proposal: any = null;
 
+  if (is_fixed && finalEnd && deadline_kind === 'hard' && deadlineMs(finalEnd) > deadlineMs(deadline)) {
+    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
+    return;
+  }
+
   if (is_fixed && finalStart && finalEnd) {
     status = 'scheduled';
     scheduleMsg = '固定任务已创建并锁定时间段！';
@@ -167,15 +202,6 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       proposal = plan.proposal;
     }
 
-    if (plan.success && plan.scheduled_start && plan.scheduled_end) {
-      finalStart = plan.scheduled_start;
-      finalEnd = plan.scheduled_end;
-      scheduleBlocks = plan.schedule_blocks || null;
-      status = 'scheduled';
-      scheduleMsg = is_fixed ? '任务已成功排程入日历并锁定！' : '任务已成功智能排程入日历！';
-    } else {
-      scheduleMsg = plan.message || '未找到合适时间槽，待手动调整。';
-    }
   }
 
   const result = db.prepare(`
@@ -183,9 +209,9 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
       user_id, title, duration_minutes, original_duration_minutes, urgency, importance,
       importance_tier, impact_signals, time_mode, urgency_pace, importance_manual_override,
       score_scale, completed_dates,
-      deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
+      deadline, deadline_kind, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     title,
@@ -209,17 +235,19 @@ export function createTask(req: AuthenticatedRequest, res: Response): void {
   );
 
   const newId = result.lastInsertRowid;
-  replanUserTasks(userId);
-  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId);
+  db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ?').run(sessionPlan, newId);
+  const replan = replanUserTasks(userId);
+  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newId) as Task | undefined;
 
   res.status(201).json({
-    message: scheduleMsg || '任务已创建并已智能排程入日历',
+    message: newTask?.scheduled_start ? (scheduleMsg || '任务已创建并排入日历') : '任务已创建，暂未找到合适时段',
     task: newTask,
     proposal,
+    replan,
   });
 }
 
-export function updateTask(req: AuthenticatedRequest, res: Response): void {
+export async function updateTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const { id } = req.params;
   const {
@@ -234,6 +262,7 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     importance_manual_override,
     score_scale,
     deadline,
+    deadline_kind,
     scheduled_start,
     scheduled_end,
     is_fixed,
@@ -302,6 +331,14 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
   const nextScheduledStart = scheduled_start !== undefined ? scheduled_start : existing.scheduled_start;
   const nextScheduledEnd = scheduled_end !== undefined ? scheduled_end : existing.scheduled_end;
 
+  if (nextIsFixed && nextScheduledEnd && nextDeadlineKind === 'hard' && deadlineMs(nextScheduledEnd) > deadlineMs(nextDeadline)) {
+    res.status(400).json({ error: '固定时段不能超过硬截止时间' });
+    return;
+  }
+  const nextBlocks = nextIsFixed && nextScheduledStart && nextScheduledEnd && (scheduled_start !== undefined || scheduled_end !== undefined)
+    ? JSON.stringify([{ start: nextScheduledStart, end: nextScheduledEnd, duration: nextDuration }])
+    : existing.schedule_blocks;
+
   const nextTimeMode: TimeMode =
     time_mode === 'daily_fixed' || time_mode === 'flexible' || time_mode === 'deadline'
       ? time_mode
@@ -354,8 +391,10 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
       importance_manual_override = ?,
       score_scale = 100,
       deadline = ?,
+      deadline_kind = ?,
       scheduled_start = ?,
       scheduled_end = ?,
+      schedule_blocks = ?,
       is_fixed = COALESCE(?, is_fixed),
       is_concurrent = COALESCE(?, is_concurrent),
       status = COALESCE(?, status),
@@ -373,8 +412,10 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     nextPace,
     nextManualOverride,
     nextDeadline,
+    nextDeadlineKind === 'hard' ? 'hard' : 'soft',
     nextScheduledStart,
     nextScheduledEnd,
+    nextBlocks,
     nextIsFixed,
     is_concurrent !== undefined ? (is_concurrent ? 1 : 0) : existing.is_concurrent,
     status,
@@ -383,6 +424,13 @@ export function updateTask(req: AuthenticatedRequest, res: Response): void {
     userId
   );
 
+  if (nextDuration !== existing.duration_minutes || (title && title !== existing.title)) {
+    let sessions: number[] = [];
+    try {
+      sessions = (await planTaskWithLLM(userId, title || existing.title, nextDuration, notes || existing.notes || undefined)).sessions;
+    } catch {}
+    db.prepare('UPDATE tasks SET session_plan = ? WHERE id = ? AND user_id = ?').run(sessions.length ? JSON.stringify(sessions) : null, id, userId);
+  }
   replanUserTasks(userId);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
@@ -411,7 +459,7 @@ export function deleteTask(req: AuthenticatedRequest, res: Response): void {
   res.json({ message: '任务已删除并自适应更新日历排程' });
 }
 
-export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
+export async function rescheduleTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
   const { id } = req.params;
 
@@ -421,42 +469,22 @@ export function rescheduleTask(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
-  // 解除该任务的原有时间占用，以便为它寻找新时隙
-  db.prepare(`
-    UPDATE tasks
-    SET scheduled_start = NULL, scheduled_end = NULL, schedule_blocks = NULL, is_fixed = 0, status = 'pending_slot'
-    WHERE id = ?
-  `).run(id);
-
-  const plan = scheduleTask(userId, {
-    id: task.id,
-    title: task.title,
-    duration_minutes: task.duration_minutes,
-    urgency: task.urgency,
-    importance: task.importance,
-    deadline: task.deadline,
-  });
-
-  if (plan.success && plan.scheduled_start && plan.scheduled_end) {
-    db.prepare(`
-      UPDATE tasks
-      SET scheduled_start = ?,
-          scheduled_end = ?,
-          schedule_blocks = ?,
-          is_fixed = ?,
-          status = 'scheduled',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(plan.scheduled_start, plan.scheduled_end, plan.schedule_blocks || null, task.is_fixed ? 1 : 0, id);
+  if (task.is_fixed) {
+    res.status(400).json({ error: '固定时间任务请先编辑并解除固定，再重新排程' });
+    return;
   }
 
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task;
-
-  res.json({
-    message: updated.scheduled_start ? '任务已完成自适应重新排程并同步锁定至日历' : '排程失败，暂无合适空闲时段',
-    task: updated,
-    proposal: plan.proposal,
-  });
+  try {
+    const result = db.transaction(() => {
+      const replan = replanUserTasks(userId);
+      const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task;
+      if (!updated.scheduled_start) throw new Error('暂无合适空闲时段，原日程已保留');
+      return { task: updated, replan };
+    })();
+    res.json({ message: '已重新规划全部可移动任务', ...result });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || '重新排程失败' });
+  }
 }
 
 export function applyProposal(req: AuthenticatedRequest, res: Response): void {
@@ -473,7 +501,6 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
     SET scheduled_start = ?,
         scheduled_end = ?,
         schedule_blocks = ?,
-        is_fixed = 1,
         status = 'scheduled',
         updated_at = datetime('now', 'localtime')
     WHERE id = ? AND user_id = ?
@@ -493,7 +520,6 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
       SET scheduled_start = ?,
           scheduled_end = ?,
           schedule_blocks = ?,
-          is_fixed = 1,
           status = 'scheduled',
           updated_at = datetime('now', 'localtime')
       WHERE id = ? AND user_id = ?
@@ -511,7 +537,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
         score_scale, deadline, scheduled_start, scheduled_end, is_fixed, is_concurrent, status, schedule_blocks,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, 1, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      VALUES (?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?, 'scheduled', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
       userId,
       newTask.title,
@@ -522,6 +548,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
       newTask.deadline || null,
       proposal.newTaskSchedule.start,
       proposal.newTaskSchedule.end,
+      newTask.is_fixed ? 1 : 0,
       newTask.is_concurrent ? 1 : 0,
       proposal.newTaskSchedule.blocks ? JSON.stringify(proposal.newTaskSchedule.blocks) : null
     );
@@ -530,7 +557,7 @@ export function applyProposal(req: AuthenticatedRequest, res: Response): void {
 
   res.json({
     success: true,
-    message: `已同步调整「${proposal.conflictTask.title}」并锁定新日程`,
+    message: `已同步调整「${proposal.conflictTask.title}」日程`,
     taskId,
   });
 }

@@ -1,3 +1,4 @@
+import { PlanningProgress, type PlanningState } from './PlanningProgress';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TaskItem, QuadrantId } from '../types/task';
 import { calculateQuadrant, formatLocalDate } from '../types/task';
@@ -20,12 +21,10 @@ import { WizardModal } from './WizardModal';
 import { StatsModal } from './StatsModal';
 import { BackupModal } from './BackupModal';
 import {
-  LayoutGrid,
   Plus,
   RefreshCw,
   Search,
   Check,
-  CheckSquare,
   Clock,
   Inbox,
   Flame,
@@ -37,9 +36,11 @@ import {
   Calendar as CalendarIcon,
   CheckCircle2,
   Menu,
-  Languages,
   ChevronDown,
   ChevronRight,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react';
 
 interface EisenhowerWorkspaceProps {
@@ -73,7 +74,7 @@ function serializeDeadlineIso(rawDueDate?: string | null): string | null {
 
 export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   currentView: propsCurrentView = 'matrix',
-  onSwitchView,
+  onSwitchView: _onSwitchView,
   activeCategory: propsActiveCategory,
   setActiveCategory: propsSetActiveCategory,
   onCountsUpdate,
@@ -87,7 +88,17 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  const { t, language, setLanguage } = useTheme();
+  const { t, themeMode, setThemeMode } = useTheme();
+
+  const cycleTheme = () => {
+    if (themeMode === 'light') {
+      setThemeMode('dark');
+    } else if (themeMode === 'dark') {
+      setThemeMode('system');
+    } else {
+      setThemeMode('light');
+    }
+  };
 
   // 当前内部视图：四象限看板 (matrix) / 待办清单列表 (list)
   const [internalCurrentView, setInternalCurrentView] = useState<'matrix' | 'list'>(propsCurrentView);
@@ -99,11 +110,6 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       setInternalCurrentView(propsCurrentView);
     }
   }, [propsCurrentView, internalCurrentView]);
-
-  const handleToggleViewMode = (v: 'matrix' | 'list') => {
-    setInternalCurrentView(v);
-    onSwitchView?.(v);
-  };
 
   // 分类筛选控制
   const [internalActiveCategory, setInternalActiveCategory] = useState<string>('all');
@@ -306,12 +312,15 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         currentTime,
       });
 
+      const urgency = timeMode === 'daily_fixed' && !isCompletedToday
+        ? Math.min(100, algo.urgency + Math.round(15 * (t.recurring_debt || 0))) : algo.urgency;
+
       return {
         id: String(t.id),
         title: t.title,
         description: t.notes || '',
         importance,
-        urgency: algo.urgency,
+        urgency,
         importanceTier,
         impactSignals,
         timeMode,
@@ -320,8 +329,8 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         scoreScale: 100,
         useAutoUrgency: true,
         isImportant: importance >= PRIORITY_THRESHOLD,
-        isUrgent: algo.urgency >= PRIORITY_THRESHOLD,
-        quadrant: calculateQuadrant(importance, algo.urgency),
+        isUrgent: urgency >= PRIORITY_THRESHOLD,
+        quadrant: calculateQuadrant(importance, urgency),
         isCompleted: isCompletedToday,
         completedDates: isCompletedToday
           ? Array.from(new Set([...completedDates, todayStr]))
@@ -525,15 +534,18 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   }, []);
 
   // 保存任务 (新建 / 编辑)
+  const [planning, setPlanning] = useState<PlanningState | null>(null);
+
   const handleSaveTask = async (data: Partial<TaskModalSavePayload> & {
     title: string;
     importance: number;
     urgency: number;
   }) => {
+    setPlanning({ title: editingTask ? '正在更新日程' : '正在规划全部日程', status: 'working' });
     try {
       const payload = {
         title: data.title,
-        duration_minutes: data.estimatedMinutes || 60,
+        duration_minutes: data.estimatedMinutes,
         importance: data.importance,
         urgency: data.urgency,
         importance_tier: data.importanceTier || inferTierFromScore(data.importance),
@@ -552,18 +564,16 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         auto_schedule: !data.isFixed,
       };
 
-      if (editingTask) {
-        await api.put(`/tasks/${editingTask.id}`, payload);
-      } else {
-        await api.post('/tasks', payload);
-      }
-
+      const response = editingTask
+        ? await api.put(`/tasks/${editingTask.id}`, payload)
+        : await api.post('/tasks', payload);
+      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.replan?.summary || response.data.message });
       await fetchTasks();
       setIsTaskModalOpen(false);
       setEditingTask(null);
       setClickCoords(null);
     } catch (err: any) {
-      alert(err.response?.data?.error || '保存任务失败，请重试');
+      setPlanning({ title: '保存失败', status: 'error', detail: err.response?.data?.error || '请重试' });
     }
   };
 
@@ -722,7 +732,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       try {
         await api.post('/tasks', {
           title: t.title,
-          duration_minutes: t.estimatedMinutes || 60,
+          duration_minutes: t.estimatedMinutes,
           importance: t.importance,
           urgency: t.urgency,
           score_scale: 100,
@@ -750,108 +760,72 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#1e1f20]">
-      {/* 顶部极简操作工具栏 (主流 AI Agent 风格无缝顶栏) */}
-      <header className="h-13 px-3 sm:px-6 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
+      {planning && <PlanningProgress state={planning} onClose={() => setPlanning(null)} />}
+      {/* 顶部极简操作工具栏 (统一按照日历日程高度与规格) */}
+      <header className="h-14 px-3 sm:px-5 border-b border-gray-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#1e1f20] transition-colors">
         {/* 左侧: 移动端侧栏汉堡菜单 + 标题与分类 */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {onOpenMobileMenu && (
             <button
               type="button"
               onClick={onOpenMobileMenu}
-              className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
               title="打开侧边导航"
             >
               <Menu className="w-5 h-5" />
             </button>
           )}
 
-          <div className="flex items-center gap-2 truncate">
-            <span className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">
+          <div className="flex items-center gap-2 truncate ml-1 sm:ml-2">
+            <h2 className="text-lg sm:text-xl font-normal text-gray-800 dark:text-gray-100 tracking-tight truncate">
               {viewMode === 'matrix' ? t('nav.matrix') : t('nav.list')}
-            </span>
+            </h2>
             <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono hidden sm:inline">
               · {filterCategories.find((c) => c.key === currentCategory)?.label || t('nav.all_tasks')} ({filteredTasks.length})
             </span>
           </div>
         </div>
 
-        {/* 右侧: 看板/列表双模态切换 + 搜索框 + 刷新 + 添加任务 */}
+        {/* 右侧: 搜索框 + 刷新 + 明暗/系统主题切换 (严格对齐日历日程按钮与文字规格) */}
         <div className="flex items-center gap-2">
-          {/* 看板 / 列表快速切换胶囊 */}
-          <div className="flex items-center p-0.5 rounded-full bg-gray-100 dark:bg-neutral-800 text-xs font-medium border border-gray-200/50 dark:border-neutral-700/60">
-            <button
-              type="button"
-              onClick={() => handleToggleViewMode('matrix')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                viewMode === 'matrix'
-                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-              }`}
-              title={t('general.view_matrix_desc')}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>{t('nav.matrix')}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleToggleViewMode('list')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all cursor-pointer ${
-                viewMode === 'list'
-                  ? 'bg-white dark:bg-[#28292a] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                  : 'text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-200'
-              }`}
-              title={t('general.view_list_desc')}
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>{t('nav.list')}</span>
-            </button>
-          </div>
-
-          {/* 搜索框 */}
-          <div className="relative w-28 sm:w-44">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500" />
+          {/* 搜索框 (圆角胶囊风格，高度、内边距与字体大小严格对齐日历) */}
+          <div className="relative w-36 sm:w-52">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-neutral-500 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('workspace.search_placeholder')}
-              className="w-full pl-7.5 pr-2.5 py-1 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-neutral-700/80 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+              className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-white dark:bg-[#28292a] border border-gray-300 dark:border-neutral-700 hover:bg-gray-50 dark:hover:bg-neutral-800 text-gray-900 dark:text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors placeholder:text-gray-400 dark:placeholder:text-neutral-500"
             />
           </div>
 
-          {/* 刷新按钮 */}
+          {/* 刷新按钮 (与日历日程按钮规格一致: p-2 rounded-full, w-4 h-4 图标) */}
           <button
             type="button"
             onClick={() => fetchTasks()}
-            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
             title={t('workspace.refresh_tasks')}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
-          {/* 快捷中英文切换 */}
+          {/* 主题模式切换 (与日历日程按钮规格一致: p-2 rounded-full, w-4 h-4 图标) */}
           <button
             type="button"
-            onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}
-            className="p-1.5 rounded-full border border-gray-200/80 dark:border-neutral-700/80 bg-white dark:bg-[#1e1f20] hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition cursor-pointer"
-            title={language === 'zh' ? 'Switch to English' : '切换为简体中文'}
+            onClick={cycleTheme}
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
+            title={
+              themeMode === 'light'
+                ? '当前：亮色模式 (点击切换为暗色)'
+                : themeMode === 'dark'
+                ? '当前：暗色模式 (点击切换为跟随系统)'
+                : '当前：跟随系统 (点击切换为亮色)'
+            }
           >
-            <Languages className="w-3.5 h-3.5" />
-          </button>
-
-          {/* 新建任务 */}
-          <button
-            type="button"
-            onClick={() => {
-              setEditingTask(null);
-              setClickCoords(null);
-              setIsTaskModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-semibold shadow-xs transition cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span className="hidden sm:inline">{t('workspace.add_task')}</span>
+            {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
+            {themeMode === 'dark' && <Moon className="w-4 h-4 text-blue-400" />}
+            {themeMode === 'system' && <Monitor className="w-4 h-4" />}
           </button>
         </div>
       </header>

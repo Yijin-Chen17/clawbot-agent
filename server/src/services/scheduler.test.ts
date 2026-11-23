@@ -1,3 +1,4 @@
+import { deadlinePressure, recurringDebt } from './calendarOptimizer.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Task, UserSettings } from '../models/types.js';
@@ -7,6 +8,7 @@ import {
   parseDeadlineDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
+  splitIntoFocusSessions,
   taskToBusyEvents,
 } from './scheduler.js';
 
