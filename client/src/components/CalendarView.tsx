@@ -1302,14 +1302,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             })}
 
             {/* ================= Row 2: Sticky All-Day Row ================= */}
-            <div className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-[#8e918f] font-medium">
+            <div className="calendar-allday-fade sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-b border-gray-200/80 dark:border-[#444746] flex items-center justify-end px-2 text-[10px] text-gray-400 dark:text-[#8e918f] font-medium">
               {t('calendar.all_day', '全天')}
             </div>
 
             {dayData.map((d) => (
               <div
                 key={`allday-${d.key}`}
-                className="sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-l border-b border-gray-200/80 dark:border-[#444746] p-1 flex flex-col gap-1"
+                className="calendar-allday-fade sticky top-18 z-20 min-h-[32px] bg-white dark:bg-[#1e1f20] border-l border-b border-gray-200/80 dark:border-[#444746] p-1 flex flex-col gap-1"
               >
                 {d.allDay.map((item) => (
                   <button
