@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { formatLocalDate } from '../types/task';
 import type { TaskItem } from '../types/task';
 import type { CalendarEvent } from '../types/calendar';
-import { generateDaySchedule, computeTimelineLayout } from '../utils/calendarScheduler';
+import { generateDaySchedule, computeTimelineLayout, parseClientWorkSlots, type WorkWindow } from '../utils/calendarScheduler';
+import { api } from '../api/client';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -51,11 +52,38 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
   const [isUrlModalOpen, setIsUrlModalOpen] = useState(false);
   const [urlInput, setUrlInput] = useState(subscriptionUrl);
   const [allowSplit, setAllowSplit] = useState(true);
+  const [workConfig, setWorkConfig] = useState<{
+    workStartHour: number;
+    workEndHour: number;
+    workWindows: WorkWindow[];
+    bufferMinutes: number;
+  }>({
+    workStartHour: 8.0,
+    workEndHour: 22.0,
+    workWindows: [{ startHour: 8.0, endHour: 22.0 }],
+    bufferMinutes: 10,
+  });
 
-  // 动态检测当天日程最早与最晚时间，自适应视图时段（默认 08:00 ~ 22:00，存在更早课程或更晚实验时智能延伸）
+  useEffect(() => {
+    api.get('/settings')
+      .then((res) => {
+        const s = res.data?.settings;
+        if (!s) return;
+        const parsed = parseClientWorkSlots(s.work_slots);
+        setWorkConfig({
+          workStartHour: parsed.workStartHour,
+          workEndHour: parsed.workEndHour,
+          workWindows: parsed.workWindows,
+          bufferMinutes: s.task_buffer_minutes ?? 10,
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  // 动态检测当天日程最早与最晚时间，结合用户配置工作时段自适应视图
   const { effectiveStartHour, effectiveEndHour } = useMemo(() => {
-    let startH = 8.0;
-    let endH = 22.0;
+    let startH = workConfig.workStartHour;
+    let endH = workConfig.workEndHour;
 
     const dayStart = new Date(selectedDate);
     dayStart.setHours(0, 0, 0, 0);
@@ -70,7 +98,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
       const sH = ev.start.getHours() + ev.start.getMinutes() / 60;
       const eH = ev.end.getHours() + ev.end.getMinutes() / 60;
       if (sH < startH) {
-        startH = Math.max(6.0, Math.floor(sH));
+        startH = Math.max(0, Math.floor(sH));
       }
       if (eH > endH) {
         endH = Math.min(24.0, Math.ceil(eH));
@@ -78,7 +106,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
     }
 
     return { effectiveStartHour: startH, effectiveEndHour: endH };
-  }, [selectedDate, fixedEvents]);
+  }, [selectedDate, fixedEvents, workConfig.workStartHour, workConfig.workEndHour]);
 
   const totalWorkHours = effectiveEndHour - effectiveStartHour;
 
@@ -114,15 +142,17 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
     setSelectedDate(now);
   };
 
-  // 生成当天自动排程（结合当前时间基线约束与多日滚动顺延）
+  // 生成当天自动排程（同步服务端 Work Slots 与当前时间基线约束）
   const schedulePlan = useMemo(() => {
     return generateDaySchedule(tasks, fixedEvents, {
       targetDate: selectedDate,
-      workStartHour: effectiveStartHour,
-      workEndHour: effectiveEndHour,
+      workStartHour: workConfig.workStartHour,
+      workEndHour: workConfig.workEndHour,
+      workWindows: workConfig.workWindows,
+      bufferMinutes: workConfig.bufferMinutes,
       allowSplit,
     });
-  }, [tasks, fixedEvents, selectedDate, effectiveStartHour, effectiveEndHour, allowSplit, nowTime]);
+  }, [tasks, fixedEvents, selectedDate, workConfig, allowSplit, nowTime]);
 
   // 扫描线 + 区间图着色分栏算法：统一计算固定日程、休息区与排程任务的水平分栏坐标，杜绝任何重叠遮挡
   const timelineLayoutMap = useMemo(() => {

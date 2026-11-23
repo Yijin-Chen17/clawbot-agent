@@ -4,7 +4,7 @@ import axios from 'axios';
 import { db } from '../config/database.js';
 import { UserSettings, Task, ConversationState, ExternalEvent } from '../models/types.js';
 import { parseUserMessageWithLLM, getEffectiveLlmConfig } from './llm.js';
-import { scheduleTask, replanUserTasks, completeTaskPart, extendTaskDuration, computeTodayBusyMinutes } from './scheduler.js';
+import { scheduleTask, replanUserTasks, completeTaskPart, extendTaskDuration, computeTodayBusyMinutes, normalizeDeadlineIso } from './scheduler.js';
 import {
   calculateDynamicImportance,
   calculateDynamicUrgency,
@@ -916,6 +916,10 @@ export async function processWeChatMessage(
           id: activeTask.id,
           title: activeTask.title,
           duration_minutes: activeTask.duration_minutes,
+          time_mode: activeTask.time_mode,
+          is_concurrent: activeTask.is_concurrent,
+          deadline_kind: activeTask.deadline_kind,
+          urgency_pace: activeTask.urgency_pace,
           urgency: activeTask.urgency,
           importance: activeTask.importance,
           deadline: activeTask.deadline,
@@ -1213,12 +1217,15 @@ export async function processWeChatMessage(
           };
         }
 
+        const normalizedWeixinDeadline = normalizeDeadlineIso(resolvedDeadline);
         const plan = scheduleTask(userId, {
           title,
           duration_minutes: duration!,
+          time_mode: timeMode,
+          is_concurrent: isConcurrent ? 1 : 0,
           urgency: urgency!,
           importance: importance!,
-          deadline: resolvedDeadline,
+          deadline: normalizedWeixinDeadline,
         });
 
         // 如果触发了顶替或有效时间内无法完成的调整建议，提醒用户是否同步修改

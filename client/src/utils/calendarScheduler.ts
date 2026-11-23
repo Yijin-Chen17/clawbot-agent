@@ -9,10 +9,16 @@ import type {
   EnergyZoneType,
 } from '../types/calendar';
 
+export interface WorkWindow {
+  startHour: number;
+  endHour: number;
+}
+
 export interface ScheduleOptions {
   targetDate: Date;
   workStartHour?: number;          // 默认 08:00
   workEndHour?: number;            // 默认 22:00
+  workWindows?: WorkWindow[];      // 细分可用工作时段（缺省则使用 [workStartHour, workEndHour]）
   bufferMinutes?: number;          // 固定课程/会议后过渡缓冲，默认 10 分钟
   taskRestMinutes?: number;        // 专注周期/任务间歇休息，默认 10 分钟
   maxContinuousMinutes?: number;   // 单次最长连续专注时长上限，默认 60 分钟 (Ultradian Rhythm)
@@ -24,6 +30,85 @@ export interface ScheduleOptions {
   dinnerEndHour?: number;          // 默认 19.0
   minChunkMinutes?: number;        // 跨槽拆分时的最小单块时长，默认 30 分钟
   allowSplit?: boolean;            // 当全天无单槽可完整容纳时，是否允许跨槽拆分
+}
+
+function parseClockToHour(clock: string, isEndBoundary: boolean): number | null {
+  const match = String(clock || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 24 || m < 0 || m >= 60) {
+    return null;
+  }
+  if (h === 24 && m > 0) return 24;
+  if (isEndBoundary && h === 0 && m === 0) return 24;
+  return h + m / 60;
+}
+
+/**
+ * 解析用户配置的 work_slots 为有序工作窗口（与服务端 scheduler.ts 对齐）
+ */
+export function parseClientWorkSlots(rawSlots?: string | Array<{ start: string; end: string }> | null): {
+  workStartHour: number;
+  workEndHour: number;
+  workWindows: WorkWindow[];
+} {
+  const fallback: WorkWindow[] = [{ startHour: 8, endHour: 22 }];
+  if (!rawSlots) {
+    return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+  }
+
+  try {
+    let parsedSlots: Array<{ start: string; end: string }> = [];
+    if (Array.isArray(rawSlots)) {
+      parsedSlots = rawSlots;
+    } else if (typeof rawSlots === 'string') {
+      const trimmed = rawSlots.trim();
+      if (!trimmed) return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+      if (trimmed.startsWith('[')) {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) parsedSlots = parsed;
+      } else {
+        const parts = trimmed.split(/[,，;\n\r]+/).map((p) => p.trim()).filter(Boolean);
+        for (const part of parts) {
+          const match = part.match(/^(\d{1,2}:\d{2})\s*[-~至到]\s*(\d{1,2}:\d{2})$/);
+          if (match) parsedSlots.push({ start: match[1], end: match[2] });
+        }
+      }
+    }
+
+    const raw: WorkWindow[] = [];
+    for (const s of parsedSlots) {
+      const startHour = parseClockToHour(s?.start, false);
+      const endHour = parseClockToHour(s?.end, true);
+      if (startHour === null || endHour === null) continue;
+      if (endHour <= startHour) {
+        if (startHour < 24) raw.push({ startHour: Math.max(0, startHour), endHour: 24 });
+        if (endHour > 0 && endHour < 24) raw.push({ startHour: 0, endHour: Math.min(24, endHour) });
+      } else {
+        raw.push({ startHour: Math.max(0, startHour), endHour: Math.min(24, endHour) });
+      }
+    }
+
+    if (raw.length === 0) return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+    raw.sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour);
+    const merged: WorkWindow[] = [];
+    for (const w of raw) {
+      const prev = merged[merged.length - 1];
+      if (prev && w.startHour <= prev.endHour) {
+        prev.endHour = Math.max(prev.endHour, w.endHour);
+      } else {
+        merged.push({ ...w });
+      }
+    }
+    return {
+      workStartHour: merged[0].startHour,
+      workEndHour: merged[merged.length - 1].endHour,
+      workWindows: merged,
+    };
+  } catch {
+    return { workStartHour: 8, workEndHour: 22, workWindows: fallback };
+  }
 }
 
 /**
@@ -277,6 +362,7 @@ function runSingleDaySchedule(
     targetDate,
     workStartHour = 8.0,
     workEndHour = 22.0,
+    workWindows,
     bufferMinutes = 10,
     taskRestMinutes = 10,
     maxContinuousMinutes = 60,
@@ -299,9 +385,8 @@ function runSingleDaySchedule(
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(Math.floor(workEndHour), Math.round((workEndHour % 1) * 60), 0, 0);
 
-  // 2. 提取当天的固定日历日程
+  // 2. 提取当天的固定日历日程（包含全天忙碌事件）
   const dayFixedEvents = fixedEvents
-    .filter((e) => !e.isAllDay)
     .map((e) => {
       const clippedStart = new Date(Math.max(e.start.getTime(), dayStart.getTime()));
       const clippedEnd = new Date(Math.min(e.end.getTime(), dayEnd.getTime()));
@@ -335,11 +420,13 @@ function runSingleDaySchedule(
     }
   }
 
-  // 3. 构造午餐保护区 (12:00 ~ 13:00) 与晚餐保护区 (18:00 ~ 19:00)，自适应避让拖堂或课程
+  // 3. 构造午餐保护区 (12:00 ~ 13:00，最晚结束 13:30) 与晚餐保护区 (18:00 ~ 19:00，最晚结束 19:30)
   const baseLunchStart = new Date(targetDate);
   baseLunchStart.setHours(Math.floor(lunchStartHour), Math.round((lunchStartHour % 1) * 60), 0, 0);
   const baseLunchEnd = new Date(targetDate);
   baseLunchEnd.setHours(Math.floor(lunchEndHour), Math.round((lunchEndHour % 1) * 60), 0, 0);
+  const maxLunchEnd = new Date(targetDate);
+  maxLunchEnd.setHours(13, 30, 0, 0);
 
   let actualLunchStart = new Date(baseLunchStart);
   for (const ev of dayFixedEvents) {
@@ -350,13 +437,15 @@ function runSingleDaySchedule(
     }
   }
   const actualLunchEnd = new Date(
-    Math.min(dayEnd.getTime(), actualLunchStart.getTime() + (lunchEndHour - lunchStartHour) * 3600 * 1000)
+    Math.min(dayEnd.getTime(), maxLunchEnd.getTime(), actualLunchStart.getTime() + (lunchEndHour - lunchStartHour) * 3600 * 1000)
   );
 
   const baseDinnerStart = new Date(targetDate);
   baseDinnerStart.setHours(Math.floor(dinnerStartHour), Math.round((dinnerStartHour % 1) * 60), 0, 0);
   const baseDinnerEnd = new Date(targetDate);
   baseDinnerEnd.setHours(Math.floor(dinnerEndHour), Math.round((dinnerEndHour % 1) * 60), 0, 0);
+  const maxDinnerEnd = new Date(targetDate);
+  maxDinnerEnd.setHours(19, 30, 0, 0);
 
   let actualDinnerStart = new Date(baseDinnerStart);
   for (const ev of dayFixedEvents) {
@@ -367,7 +456,7 @@ function runSingleDaySchedule(
     }
   }
   const actualDinnerEnd = new Date(
-    Math.min(dayEnd.getTime(), actualDinnerStart.getTime() + (dinnerEndHour - dinnerStartHour) * 3600 * 1000)
+    Math.min(dayEnd.getTime(), maxDinnerEnd.getTime(), actualDinnerStart.getTime() + (dinnerEndHour - dinnerStartHour) * 3600 * 1000)
   );
 
   if (actualLunchEnd > actualLunchStart) {
@@ -445,13 +534,40 @@ function runSingleDaySchedule(
     }
   }
 
+  // 4.5 裁剪至用户配置的 workWindows 交集，确保不越出工作时段
+  let constrainedFreeSlots: TimeSlot[] = rawFreeSlots;
+  if (Array.isArray(workWindows) && workWindows.length > 0) {
+    const allowedIntervals = workWindows
+      .map((w) => {
+        const ws = new Date(targetDate);
+        ws.setHours(Math.floor(w.startHour), Math.round((w.startHour % 1) * 60), 0, 0);
+        const we = new Date(targetDate);
+        we.setHours(Math.floor(w.endHour), Math.round((w.endHour % 1) * 60), 0, 0);
+        return { startMs: ws.getTime(), endMs: we.getTime() };
+      })
+      .filter((iv) => iv.endMs > iv.startMs);
+
+    const intersected: TimeSlot[] = [];
+    for (const slot of rawFreeSlots) {
+      for (const win of allowedIntervals) {
+        const sMs = Math.max(slot.start.getTime(), win.startMs);
+        const eMs = Math.min(slot.end.getTime(), win.endMs);
+        const durMin = Math.floor((eMs - sMs) / 60000);
+        if (durMin >= 15) {
+          intersected.push({ start: new Date(sMs), end: new Date(eMs), durationMinutes: durMin });
+        }
+      }
+    }
+    constrainedFreeSlots = intersected.sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+
   // 5. 生理节律分界切分：若下午大块空闲跨越 14:30（且 14:30 前 >= 30m，14:30 后 >= 90m），
   //    则在 14:30 处划分为「午后恢复区 (13:00~14:30)」与「下午黄金深度区 (14:30~18:00)」
   const afternoonPivot = new Date(targetDate);
   afternoonPivot.setHours(14, 30, 0, 0);
 
   const workingFreeSlots: TimeSlot[] = [];
-  for (const slot of rawFreeSlots) {
+  for (const slot of constrainedFreeSlots) {
     if (
       slot.start.getTime() < afternoonPivot.getTime() &&
       slot.end.getTime() > afternoonPivot.getTime()
@@ -485,7 +601,7 @@ function runSingleDaySchedule(
   // 辅助函数：实时更新所有剩余空闲槽的时长与精力标签
   const refreshSlots = () => {
     for (const s of workingFreeSlots) {
-      s.durationMinutes = Math.max(0, Math.round((s.end.getTime() - s.start.getTime()) / 60000));
+      s.durationMinutes = Math.max(0, Math.floor((s.end.getTime() - s.start.getTime()) / 60000));
       if (s.durationMinutes > 0) {
         s.energyZone = classifySlotEnergy(s.start, s.durationMinutes);
       }

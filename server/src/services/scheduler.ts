@@ -434,7 +434,7 @@ export function computeTodayBusyMinutes(
   `).all(userId, startIso, endIso) as { start_time: string; end_time: string }[];
 
   const scheduledTasks = db.prepare(`
-    SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, is_fixed, completed_dates
+    SELECT id, title, scheduled_start, scheduled_end, schedule_blocks, time_mode, is_fixed, is_concurrent, completed_dates
     FROM tasks
     WHERE user_id = ? AND status IN ('scheduled', 'in_progress')
       AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
@@ -451,6 +451,7 @@ export function computeTodayBusyMinutes(
   }
   for (const t of scheduledTasks) {
     if (excludeTaskId !== undefined && t.id === excludeTaskId) continue;
+    if (t.is_concurrent === 1) continue;
     if (t.time_mode === 'daily_fixed' && t.completed_dates) {
       try {
         const doneDates = JSON.parse(t.completed_dates);
@@ -836,6 +837,98 @@ function getHorizonWindows(now: Date, days: number, events: FixedCalendarBlock[]
 }
 
 /**
+ * 在 14 天规划窗口内为同轨待办（独占轨或双线程并行轨）执行多日滚动排程
+ */
+export function scheduleTaskGroupInHorizon(
+  groupTasks: Task[],
+  fixedEvents: FixedCalendarBlock[],
+  now: Date,
+  horizonDays: number,
+  config: {
+    workStartHour: number;
+    workEndHour: number;
+    workWindows: WorkWindow[];
+    bufferMinutes: number;
+    advanceDeadlineDays: number;
+    releaseTimeMsToday: number;
+  },
+  taskAllocations: Map<number, ScheduledTaskBlock[]>,
+  remainingTaskIds: Set<number>
+): void {
+  if (groupTasks.length === 0) return;
+
+  const taskMap = new Map<number, Task>(groupTasks.map(t => [t.id, { ...t }]));
+  const progress = groupTasks.map(task => Math.max(0, (task.original_duration_minutes || 0) - task.duration_minutes));
+  const totalProgress = progress.reduce((sum, minutes) => sum + minutes, 0);
+  const weights = groupTasks.map(task => 0.2 + (normalizeScoreTo100(task.importance, task.score_scale) / 100) ** 2);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const balances = weights.map((weight, index) => totalProgress * weight / totalWeight - progress[index]);
+  const scale = Math.max(1, ...balances.map(balance => Math.abs(balance) / 120));
+  const allocationDebt = new Map(groupTasks.map((task, index) => [task.id, balances[index] / scale]));
+  const horizonWindows = getHorizonWindows(now, horizonDays, fixedEvents, {
+    workStartHour: config.workStartHour,
+    workEndHour: config.workEndHour,
+    workWindows: config.workWindows,
+    bufferMinutes: config.bufferMinutes,
+    releaseTimeMs: config.releaseTimeMsToday,
+  });
+
+  for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
+    const candidates = Array.from(remainingTaskIds)
+      .map(id => taskMap.get(id)!)
+      .filter(Boolean);
+    if (candidates.length === 0) break;
+
+    const targetDate = new Date(now);
+    targetDate.setDate(targetDate.getDate() + dayOffset);
+
+    const dayResult = runSingleDaySchedule(candidates, fixedEvents, {
+      targetDate,
+      workStartHour: config.workStartHour,
+      workEndHour: config.workEndHour,
+      workWindows: config.workWindows,
+      bufferMinutes: config.bufferMinutes,
+      taskRestMinutes: 10,
+      maxContinuousMinutes: 90,
+      maxDailyTaskMinutes: 330,
+      autoFilterQ4: true,
+      lunchStartHour: 12.0,
+      lunchEndHour: 13.0,
+      dinnerStartHour: 18.0,
+      dinnerEndHour: 19.0,
+      minChunkMinutes: 30,
+      allowSplit: true,
+      advanceDeadlineDays: config.advanceDeadlineDays,
+      releaseTimeMs: dayOffset === 0 ? config.releaseTimeMsToday : undefined,
+      allocationDebt,
+      futureWindows: horizonWindows.slice(dayOffset + 1).flat(),
+    });
+
+    for (const block of dayResult.scheduledBlocks) {
+      if (!taskAllocations.has(block.taskId)) {
+        taskAllocations.set(block.taskId, []);
+      }
+      taskAllocations.get(block.taskId)!.push(block);
+    }
+
+    for (const scheduledId of dayResult.scheduledTaskIds) {
+      remainingTaskIds.delete(scheduledId);
+    }
+
+    for (const unsched of dayResult.unscheduledTaskIds) {
+      if (!unsched.reason.includes('象限 IV')) {
+        const tRef = taskMap.get(unsched.taskId);
+        if (tRef) {
+          tRef.duration_minutes = unsched.remainingMinutes;
+        }
+      } else {
+        remainingTaskIds.delete(unsched.taskId);
+      }
+    }
+  }
+}
+
+/**
  * 依据用户配置与 oxoxox 算法执行全局多日滚动智能排程
  */
 export function replanUserTasks(
@@ -846,6 +939,7 @@ export function replanUserTasks(
   totalTasks: number;
   scheduledCount: number;
   failedCount: number;
+  partialCount: number;
   tasks: Task[];
   summary: string;
 } {
@@ -860,6 +954,7 @@ export function replanUserTasks(
       totalTasks: 0,
       scheduledCount: 0,
       failedCount: 0,
+      partialCount: 0,
       tasks: [],
       summary: '暂无可排程的待办事项',
     };
@@ -1004,8 +1099,14 @@ export function replanUserTasks(
     }
   };
 
+  const concurrentFixedEvents: FixedCalendarBlock[] = [];
   for (const ft of fixedTasks) {
-    parsedFixedEvents.push(...taskToBusyEvents(ft, 'fixed-task', now, horizonDays));
+    const busy = taskToBusyEvents(ft, 'fixed-task', now, horizonDays);
+    if (ft.is_concurrent === 1) {
+      concurrentFixedEvents.push(...busy);
+    } else {
+      parsedFixedEvents.push(...busy);
+    }
     seedPreservedAllocations(ft, 'sched-fixed');
   }
 
@@ -1017,81 +1118,29 @@ export function replanUserTasks(
 
   // 对齐当前时间至 5 分钟刻度下界
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
-
-  const taskMap = new Map<number, Task>(nonFixedTasks.map(t => [t.id, { ...t }]));
-  let remainingTaskIds = new Set<number>(nonFixedTasks.map(t => t.id));
-  // Reconstruct an initial balance from recorded progress after a replan.
-  const progress = nonFixedTasks.map(task => Math.max(0, (task.original_duration_minutes || 0) - task.duration_minutes));
-  const totalProgress = progress.reduce((sum, minutes) => sum + minutes, 0);
-  const weights = nonFixedTasks.map(task => 0.2 + (normalizeScoreTo100(task.importance, task.score_scale) / 100) ** 2);
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  const balances = weights.map((weight, index) => totalProgress * weight / totalWeight - progress[index]);
-  const scale = Math.max(1, ...balances.map(balance => Math.abs(balance) / 120));
-  const allocationDebt = new Map(nonFixedTasks.map((task, index) => [task.id, balances[index] / scale]));
-  const horizonWindows = getHorizonWindows(now, horizonDays, parsedFixedEvents, {
-    workStartHour, workEndHour, workWindows, bufferMinutes, releaseTimeMs: releaseTimeMsToday,
-  });
+  const remainingTaskIds = new Set<number>(nonFixedTasks.map(t => t.id));
   const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
 
-  for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
-    if (remainingTaskIds.size === 0) break;
+  const exclusiveTasks = nonFixedTasks.filter(t => t.is_concurrent !== 1);
+  const concurrentTasks = nonFixedTasks.filter(t => t.is_concurrent === 1);
 
-    const targetDate = new Date(now);
-    targetDate.setDate(targetDate.getDate() + dayOffset);
+  const horizonConfig = {
+    workStartHour,
+    workEndHour,
+    workWindows,
+    bufferMinutes,
+    advanceDeadlineDays,
+    releaseTimeMsToday,
+  };
 
-    const candidates = Array.from(remainingTaskIds)
-      .map(id => taskMap.get(id)!)
-      .filter(Boolean);
-
-    const dayResult = runSingleDaySchedule(candidates, parsedFixedEvents, {
-      targetDate,
-      workStartHour,
-      workEndHour,
-      workWindows,
-      bufferMinutes,
-      taskRestMinutes: 10,
-      maxContinuousMinutes: 90,
-      maxDailyTaskMinutes: 330,
-      autoFilterQ4: true,
-      lunchStartHour: 12.0,
-      lunchEndHour: 13.0,
-      dinnerStartHour: 18.0,
-      dinnerEndHour: 19.0,
-      minChunkMinutes: 30,
-      allowSplit: true,
-      advanceDeadlineDays,
-      releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
-      allocationDebt,
-      futureWindows: horizonWindows.slice(dayOffset + 1).flat(),
-    });
-
-    for (const block of dayResult.scheduledBlocks) {
-      if (!taskAllocations.has(block.taskId)) {
-        taskAllocations.set(block.taskId, []);
-      }
-      taskAllocations.get(block.taskId)!.push(block);
-    }
-
-    for (const scheduledId of dayResult.scheduledTaskIds) {
-      remainingTaskIds.delete(scheduledId);
-    }
-
-    // 次日顺延
-    for (const unsched of dayResult.unscheduledTaskIds) {
-      if (!unsched.reason.includes('象限 IV')) {
-        const tRef = taskMap.get(unsched.taskId);
-        if (tRef) {
-          tRef.duration_minutes = unsched.remainingMinutes;
-        }
-      } else {
-        remainingTaskIds.delete(unsched.taskId);
-      }
-    }
-  }
+  scheduleTaskGroupInHorizon(exclusiveTasks, parsedFixedEvents, now, horizonDays, horizonConfig, taskAllocations, remainingTaskIds);
+  // 双线程并行任务不占独占日程与外部会议槽位，只相互避让并行轨已有固定段
+  scheduleTaskGroupInHorizon(concurrentTasks, concurrentFixedEvents, now, horizonDays, { ...horizonConfig, bufferMinutes: 0 }, taskAllocations, remainingTaskIds);
 
   // 批量持久化到 SQLite 数据库
   let scheduledCount = 0;
   let failedCount = 0;
+  let partialCount = 0;
   let hardPending = 0;
 
   for (const t of activeTasks) {
@@ -1132,6 +1181,9 @@ export function replanUserTasks(
       t.is_fixed = isFixedFlag;
       t.status = 'scheduled';
       scheduledCount++;
+      if (!t.is_fixed && remainingTaskIds.has(t.id)) {
+        partialCount++;
+      }
     } else {
       db.prepare(`
         UPDATE tasks
@@ -1162,8 +1214,9 @@ export function replanUserTasks(
     totalTasks: activeTasks.length,
     scheduledCount,
     failedCount,
+    partialCount,
     tasks: allUpdatedTasks,
-    summary: `智能排程完成：共将 ${scheduledCount} 项任务排入日历${failedCount > 0 ? `，${failedCount} 项待办未分配` : ''}${hardPending ? `，其中 ${hardPending} 项不可逾期任务未找到完整方案` : ''}`,
+    summary: `智能排程完成：共将 ${scheduledCount} 项任务排入日历${partialCount > 0 ? `（其中 ${partialCount} 项超出 14 天窗口仅部分排入）` : ''}${failedCount > 0 ? `，${failedCount} 项待办未分配` : ''}${hardPending ? `，其中 ${hardPending} 项不可逾期任务未找到完整方案` : ''}`,
   };
 }
 
@@ -1179,13 +1232,17 @@ function simulateTaskInHorizon(
     session_plan?: string | null;
     deadline_kind?: Task['deadline_kind'];
     urgency_pace?: Task['urgency_pace'];
+    time_mode?: Task['time_mode'];
+    is_concurrent?: number;
+    completed_dates?: string | null;
     score_scale?: number | null;
     urgency: number;
     importance: number;
     deadline?: string | null;
   },
   fixedEvents: { id: string; title: string; start: Date; end: Date; isAllDay: boolean }[],
-  settings?: UserSettings
+  settings?: UserSettings,
+  occupiedDailyMinutes?: Map<string, number>
 ): {
   success: boolean;
   scheduled_start?: string;
@@ -1203,6 +1260,9 @@ function simulateTaskInHorizon(
     session_plan: task.session_plan,
     deadline_kind: task.deadline_kind,
     urgency_pace: task.urgency_pace,
+    time_mode: task.time_mode,
+    is_concurrent: task.is_concurrent,
+    completed_dates: task.completed_dates,
     score_scale: task.score_scale,
     urgency: task.urgency,
     importance: task.importance,
@@ -1216,20 +1276,36 @@ function simulateTaskInHorizon(
     updated_at: now.toISOString(),
   };
 
+  // Q4 且非硬截止任务默认不自动占用核心日历时段（与 replanUserTasks 保持一致）
+  const simQuad = calculateQuadrant(task.importance, task.urgency, task.score_scale);
+  if (simQuad === 'q4' && task.deadline_kind !== 'hard') {
+    return {
+      success: false,
+      message: '象限 IV（不重要且不紧急）：默认不自动排程占用核心时段',
+      accumulatedBlocks: [],
+    };
+  }
+
   const { workStartHour, workEndHour, workWindows } = parseWorkSlotWindows(settings);
-  const bufferMinutes = settings?.task_buffer_minutes ?? 10;
+  const bufferMinutes = task.is_concurrent === 1 ? 0 : (settings?.task_buffer_minutes ?? 10);
   const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
   const releaseTimeMsToday = Math.ceil(now.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
   const accumulatedBlocks: ScheduledTaskBlock[] = [];
   let remainingMinutesToSim = task.duration_minutes;
-  const horizonWindows = getHorizonWindows(now, 14, fixedEvents, {
+  const maxDays = task.time_mode === 'daily_fixed' ? 1 : 14;
+  const horizonWindows = getHorizonWindows(now, maxDays, fixedEvents, {
     workStartHour, workEndHour, workWindows, bufferMinutes, releaseTimeMs: releaseTimeMsToday,
   });
 
-  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+  for (let dayOffset = 0; dayOffset < maxDays; dayOffset++) {
     if (remainingMinutesToSim <= 0) break;
     const targetDate = new Date(now);
     targetDate.setDate(targetDate.getDate() + dayOffset);
+
+    const dayKey = formatLocalDate(targetDate);
+    const usedOnDay = occupiedDailyMinutes?.get(dayKey) || 0;
+    const remainingCapMinutes = 330 - usedOnDay;
+    if (remainingCapMinutes <= -30) continue;
 
     simTask.duration_minutes = remainingMinutesToSim;
 
@@ -1241,8 +1317,8 @@ function simulateTaskInHorizon(
       bufferMinutes,
       taskRestMinutes: 10,
       maxContinuousMinutes: 90,
-      maxDailyTaskMinutes: 330,
-      autoFilterQ4: false,
+      maxDailyTaskMinutes: remainingCapMinutes,
+      autoFilterQ4: true,
       advanceDeadlineDays,
       releaseTimeMs: dayOffset === 0 ? releaseTimeMsToday : undefined,
       futureWindows: horizonWindows.slice(dayOffset + 1).flat(),
@@ -1254,7 +1330,6 @@ function simulateTaskInHorizon(
       const allocatedToday = blocks.reduce((sum, b) => sum + b.durationMinutes, 0);
       remainingMinutesToSim = Math.max(0, remainingMinutesToSim - allocatedToday);
     }
-
   }
 
   if (accumulatedBlocks.length > 0 && remainingMinutesToSim <= 0) {
@@ -1305,6 +1380,9 @@ export function scheduleTask(
     session_plan?: string | null;
     deadline_kind?: Task['deadline_kind'];
     urgency_pace?: Task['urgency_pace'];
+    time_mode?: Task['time_mode'];
+    is_concurrent?: number;
+    completed_dates?: string | null;
     score_scale?: number | null;
     urgency: number;
     importance: number;
@@ -1331,8 +1409,7 @@ export function scheduleTask(
     isAllDay: Boolean(e.is_all_day),
   }));
 
-  // 2. 核心原则：一旦安排日历，就不再做更改（该项事件固定）
-  // 查询用户所有已安排在日历中的任务（排除当前正在重排的任务自身，若有）
+  // 2. 查询用户已安排在日历中的任务（区分独占轨 vs 双线程并行轨，并累计每日已有专注负荷）
   const existingScheduledTasks = db.prepare(`
     SELECT * FROM tasks
     WHERE user_id = ?
@@ -1343,14 +1420,44 @@ export function scheduleTask(
     ORDER BY scheduled_start ASC
   `).all(userId, task.id || null, task.id || null) as Task[];
 
-  // 将所有已排程的待办事项按独立 schedule_blocks 加入固定日历事件集合（避免跨日任务锁死中间间隔）
-  const baseFixedEvents = [...parsedFixedEvents];
-  for (const et of existingScheduledTasks) {
-    baseFixedEvents.push(...taskToBusyEvents(et, 'task', now, 14));
-  }
+  const buildBusyAndDailyLoad = (items: Task[], isConcurrentTrack: boolean) => {
+    const busy: FixedCalendarBlock[] = isConcurrentTrack ? [] : [...parsedFixedEvents];
+    const dailyMinutes = new Map<string, number>();
+
+    for (const et of items) {
+      if (isConcurrentTrack) {
+        if (et.is_concurrent === 1) {
+          busy.push(...taskToBusyEvents(et, 'task', now, 14));
+        }
+        continue;
+      }
+      if (et.is_concurrent === 1) continue;
+      const blocks = taskToBusyEvents(et, 'task', now, 14);
+      busy.push(...blocks);
+      for (const b of blocks) {
+        const dayKey = formatLocalDate(b.start);
+        const mins = Math.max(0, Math.round((b.end.getTime() - b.start.getTime()) / 60000));
+        dailyMinutes.set(dayKey, (dailyMinutes.get(dayKey) || 0) + mins);
+      }
+    }
+
+    return { busy, dailyMinutes };
+  };
+
+  const isConcurrentTask = task.is_concurrent === 1;
+  const { busy: baseFixedEvents, dailyMinutes: occupiedDailyMinutes } = buildBusyAndDailyLoad(existingScheduledTasks, isConcurrentTask);
 
   // 3. 首先尝试在完全不改动已有日程的前提下，在空闲时段排入
-  const directPlan = simulateTaskInHorizon(userId, task, baseFixedEvents, settings);
+  const directPlan = simulateTaskInHorizon(userId, task, baseFixedEvents, settings, occupiedDailyMinutes);
+
+  // 若是并行轨、每日固定任务、或 Q4 非硬截止（默认不排程），不触发冲突顶替提案
+  if (
+    isConcurrentTask ||
+    task.time_mode === 'daily_fixed' ||
+    (calculateQuadrant(task.importance, task.urgency, task.score_scale) === 'q4' && task.deadline_kind !== 'hard')
+  ) {
+    return directPlan;
+  }
 
   // 4. 检查是否触发顶替/调整提醒逻辑：
   // 条件一：新日历无法在有效时间内完成（排程失败，或安排的结束时间晚于截止时间 deadline）
@@ -1369,10 +1476,14 @@ export function scheduleTask(
 
   const newTaskScore = computeTaskPriorityScore(task, now);
 
-  // 候选可被顶替/调整的任务（未来的且尚未结束的任务）
+  // 候选可被顶替/调整的任务：仅限未固定 (is_fixed != 1)、非每日习惯、非并行轨且尚未开始的未来任务
   const futureCandidates = existingScheduledTasks.filter(t => {
+    if (t.is_fixed === 1 || t.time_mode === 'daily_fixed' || t.is_concurrent === 1) {
+      return false;
+    }
+    const startTime = new Date(t.scheduled_start!).getTime();
     const endTime = new Date(t.scheduled_end!).getTime();
-    return endTime > now.getTime();
+    return startTime > now.getTime() && endTime > now.getTime();
   });
 
   interface ViableProposal {
@@ -1419,13 +1530,12 @@ export function scheduleTask(
 
     if (!isCandidateEligible) continue;
 
-    // 模拟测试顶替：
-    // a. 临时将 candidate 的全部占用块从固定事件中移出
-    const candidatePrefix = `task-${candidate.id}-`;
-    const testFixedWithoutCandidate = baseFixedEvents.filter(ev => !ev.id.startsWith(candidatePrefix));
+    // a. 临时将 candidate 从占用和每日负荷中移出
+    const remainingWithoutCandidate = existingScheduledTasks.filter(t => t.id !== candidate.id);
+    const { busy: testFixedWithoutCandidate, dailyMinutes: dailyWithoutCandidate } = buildBusyAndDailyLoad(remainingWithoutCandidate, false);
 
     // b. 尝试为新任务排程
-    const simNew = simulateTaskInHorizon(userId, task, testFixedWithoutCandidate, settings);
+    const simNew = simulateTaskInHorizon(userId, task, testFixedWithoutCandidate, settings, dailyWithoutCandidate);
     if (!simNew.success || !simNew.scheduled_start || !simNew.scheduled_end) continue;
 
     // 若新任务有截止期，新计划必须能在截止期前完成
@@ -1440,7 +1550,7 @@ export function scheduleTask(
       }
     }
 
-    // c. 尝试将 candidate 顺延同步调整至其他可用空闲时段（按新任务实际 block 占位）
+    // c. 尝试将 candidate 顺延同步调整至其他可用空闲时段（按新任务实际 block 占位并叠加负荷）
     const newSimBusyBlocks = simNew.accumulatedBlocks.length > 0
       ? simNew.accumulatedBlocks.map((b, idx) => ({
           id: `sim-new-task-${idx}`,
@@ -1461,8 +1571,14 @@ export function scheduleTask(
       ...testFixedWithoutCandidate,
       ...newSimBusyBlocks,
     ];
+    const dailyWithNewTask = new Map(dailyWithoutCandidate);
+    for (const b of newSimBusyBlocks) {
+      const dk = formatLocalDate(b.start);
+      const mins = Math.max(0, Math.round((b.end.getTime() - b.start.getTime()) / 60000));
+      dailyWithNewTask.set(dk, (dailyWithNewTask.get(dk) || 0) + mins);
+    }
 
-    const simCandidate = simulateTaskInHorizon(userId, candidate, testFixedWithNewTask, settings);
+    const simCandidate = simulateTaskInHorizon(userId, candidate, testFixedWithNewTask, settings, dailyWithNewTask);
     if (!simCandidate.success || !simCandidate.scheduled_start || !simCandidate.scheduled_end) {
       // 候选任务无处可移，不能强制顶替（避免损坏已有任务的有效执行）
       continue;
