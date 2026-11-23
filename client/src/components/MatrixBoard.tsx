@@ -310,17 +310,17 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                     ? 'border-blue-400 dark:border-blue-500/60 hover:border-blue-600 dark:hover:border-blue-400 ring-1 ring-blue-500/10'
                     : 'border-gray-200/90 dark:border-neutral-700 hover:border-blue-500/60 dark:hover:border-blue-400/60'
                 }`}
-                title={isMulti ? `该位置有 ${clusterTasks.length} 个事项重叠，点击查看全部` : '点击查看或编辑'}
+                title={isMulti ? (language === 'zh' ? `该位置有 ${clusterTasks.length} 个事项重叠，点击查看全部` : `${clusterTasks.length} tasks overlap here, click to view all`) : (language === 'zh' ? '点击查看或编辑' : 'Click to view or edit')}
               >
                 {/* 第一行：任务标题 + 重叠提示 */}
                 <div className="flex items-center gap-1 min-w-0">
                   {primaryTask.isFixed && (
-                    <span title="固定时间任务" className="text-[10px] shrink-0">
+                    <span title={language === 'zh' ? '固定时间任务' : 'Fixed time task'} className="text-[10px] shrink-0">
                       📌
                     </span>
                   )}
                   {primaryTask.isConcurrent && (
-                    <span title="双线程任务" className="text-[10px] shrink-0">
+                    <span title={language === 'zh' ? '双线程任务' : 'Dual-thread task'} className="text-[10px] shrink-0">
                       ⚡
                     </span>
                   )}
@@ -344,7 +344,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                         className={`flex items-center gap-0.5 truncate shrink-0 ${
                           primaryTask.algorithmStatusText ? 'text-blue-600 dark:text-blue-400 font-medium' : ''
                         }`}
-                        title={primaryTask.algorithmStatusText ? `测算状态：${primaryTask.algorithmStatusText}` : `截止日: ${primaryTask.dueDate}`}
+                        title={primaryTask.algorithmStatusText ? `${language === 'zh' ? '测算状态：' : 'Status: '}${primaryTask.algorithmStatusText}` : `${language === 'zh' ? '截止日: ' : 'Due: '}${primaryTask.dueDate}`}
                       >
                         <Calendar className="h-2 w-2 sm:h-2.5 sm:w-2.5 shrink-0" />
                         <span>{primaryTask.algorithmStatusText || primaryTask.dueDate.slice(5)}</span>
@@ -441,12 +441,12 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                       </span>
                       {task.isFixed && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium border border-amber-200 dark:border-amber-800/40">
-                          📌 固定
+                          📌 {language === 'zh' ? '固定' : 'Fixed'}
                         </span>
                       )}
                       {task.isConcurrent && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium border border-emerald-200 dark:border-emerald-800/40">
-                          ⚡ 双线程
+                          ⚡ {language === 'zh' ? '双线程' : 'Dual'}
                         </span>
                       )}
                     </div>
@@ -461,7 +461,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                       {task.estimatedMinutes ? (
                         <span className="flex items-center gap-1 font-mono">
                           <Clock className="w-3 h-3 text-gray-400 shrink-0" />
-                          <span>{task.estimatedMinutes}分钟</span>
+                          <span>{task.estimatedMinutes}{language === 'zh' ? '分钟' : 'm'}</span>
                         </span>
                       ) : null}
                       {task.tags && task.tags.length > 0 && (

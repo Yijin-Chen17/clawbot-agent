@@ -88,7 +88,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
   isBackupOpen: propsIsBackupOpen,
   setIsBackupOpen: propsSetIsBackupOpen,
 }) => {
-  const { t, themeMode, setThemeMode } = useTheme();
+  const { t, language, themeMode, setThemeMode } = useTheme();
 
   const cycleTheme = () => {
     if (themeMode === 'light') {
@@ -541,7 +541,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
     importance: number;
     urgency: number;
   }) => {
-    setPlanning({ title: editingTask ? '正在更新日程' : '正在规划全部日程', status: 'working' });
+    setPlanning({ title: editingTask ? (language === 'zh' ? '正在更新日程' : 'Updating schedule...') : (language === 'zh' ? '正在规划全部日程' : 'Planning all schedules...'), status: 'working' });
     try {
       const payload = {
         title: data.title,
@@ -567,13 +567,13 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
       const response = editingTask
         ? await api.put(`/tasks/${editingTask.id}`, payload)
         : await api.post('/tasks', payload);
-      setPlanning({ title: '日程已更新', status: 'success', detail: response.data.replan?.summary || response.data.message });
+      setPlanning({ title: language === 'zh' ? '日程已更新' : 'Schedule updated', status: 'success', detail: response.data.replan?.summary || response.data.message });
       await fetchTasks();
       setIsTaskModalOpen(false);
       setEditingTask(null);
       setClickCoords(null);
     } catch (err: any) {
-      setPlanning({ title: '保存失败', status: 'error', detail: err.response?.data?.error || '请重试' });
+      setPlanning({ title: language === 'zh' ? '保存失败' : 'Save failed', status: 'error', detail: err.response?.data?.error || (language === 'zh' ? '请重试' : 'Please retry') });
     }
   };
 
@@ -708,7 +708,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   // 删除任务
   const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm('确定要删除该待办事项吗？')) return;
+    if (!window.confirm(t('workspace.delete_confirm', '确定要删除该待办事项吗？'))) return;
 
     setRawServerTasks((prev) => prev.filter((t) => String(t.id) !== taskId));
     try {
@@ -748,7 +748,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
 
   // 清空所有任务
   const handleClearAll = async () => {
-    if (!window.confirm('确定要清空全部事项吗？此操作无法撤销！')) return;
+    if (!window.confirm(t('workspace.clear_all_confirm', '确定要清空全部事项吗？此操作无法撤销！'))) return;
     for (const t of tasks) {
       try {
         await api.delete(`/tasks/${t.id}`);
@@ -770,7 +770,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
               type="button"
               onClick={onOpenMobileMenu}
               className="md:hidden p-2 rounded-full text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
-              title="打开侧边导航"
+              title={t('nav.open_sidebar', '打开侧边导航')}
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -817,10 +817,10 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
             className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-neutral-300 transition-colors cursor-pointer"
             title={
               themeMode === 'light'
-                ? '当前：亮色模式 (点击切换为暗色)'
+                ? (language === 'zh' ? '当前：浅色模式 (点击切换为暗色)' : 'Current: Light Mode (Click for Dark)')
                 : themeMode === 'dark'
-                ? '当前：暗色模式 (点击切换为跟随系统)'
-                : '当前：跟随系统 (点击切换为亮色)'
+                ? (language === 'zh' ? '当前：深色模式 (点击切换为跟随系统)' : 'Current: Dark Mode (Click for System)')
+                : (language === 'zh' ? '当前：跟随系统 (点击切换为浅色)' : 'Current: System (Click for Light)')
             }
           >
             {themeMode === 'light' && <Sun className="w-4 h-4 text-amber-500" />}
@@ -879,7 +879,7 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
                   <CheckCircle2 className="w-8 h-8 stroke-[1.8]" />
                 </div>
                 <div className="text-gray-800 dark:text-neutral-200 font-semibold text-base">
-                  {searchQuery ? t('workspace.no_search_results') : (currentCategory === 'completed' ? '暂无已完成事项' : '所有待办已完成')}
+                  {searchQuery ? t('workspace.no_search_results') : (currentCategory === 'completed' ? (language === 'zh' ? '暂无已完成事项' : 'No completed tasks yet') : (language === 'zh' ? '所有待办已完成' : 'All tasks completed!'))}
                 </div>
                 <p className="text-gray-400 dark:text-neutral-500 text-xs max-w-sm mx-auto">
                   {t('workspace.empty_hint', '享受高效整理的美好时光，或点击上方输入框快速添加新事项。')}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { AuthPage } from './pages/AuthPage';
 import { Sidebar } from './components/Sidebar';
 import { EisenhowerWorkspace } from './components/EisenhowerWorkspace';
@@ -13,6 +13,7 @@ import { api } from './api/client';
 
 const DashboardContent: React.FC = () => {
   const { user, loading } = useAuth();
+  const { t } = useTheme();
   // 当前活动视图：四象限看板 (matrix) / 待办清单 (list) / 日历日程 (calendar) / 设置 (settings) / 审核 (admin) / 调试 (debug)
   const [activeTab, setActiveTab] = useState<string>('matrix');
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -57,7 +58,7 @@ const DashboardContent: React.FC = () => {
       <div className="min-h-screen bg-white dark:bg-[#1e1f20] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-3 border-blue-600 dark:border-blue-400 border-t-transparent"></div>
-          <span className="text-gray-500 dark:text-neutral-400 text-xs font-medium">Clawbot Tasks 加载中...</span>
+          <span className="text-gray-500 dark:text-neutral-400 text-xs font-medium">Clawbot Tasks {t('common.loading', '加载中...')}</span>
         </div>
       </div>
     );
@@ -138,19 +139,19 @@ const DashboardContent: React.FC = () => {
         )}
         {activeTab === 'admin' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
-            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
             <AdminUsersView onRefreshCount={fetchPendingCount} />
           </div>
         )}
         {activeTab === 'api' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
-            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
             <AdminApiView />
           </div>
         )}
         {activeTab === 'debug' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
-            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="打开侧边导航" className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ 菜单</button>
+            <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
             <SystemDebugger />
           </div>
         )}

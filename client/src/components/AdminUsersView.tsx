@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import {
   ShieldCheck,
   Trash2,
@@ -29,6 +30,7 @@ interface ManagedUser {
 
 export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRefreshCount }) => {
   const { user: currentUser } = useAuth();
+  const { t, language } = useTheme();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'approved' | 'banned' | 'pending'>('all');
@@ -57,26 +59,32 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
   }, []);
 
   const handleBan = async (id: number, username: string) => {
-    if (!window.confirm(`确定要封禁用户「${username}」吗？封禁后该用户将无法登录系统。`)) return;
+    const confirmText = language === 'en'
+      ? `Are you sure you want to ban user "${username}"? They will not be able to log in.`
+      : `确定要封禁用户「${username}」吗？封禁后该用户将无法登录系统。`;
+    if (!window.confirm(confirmText)) return;
     try {
       const res = await api.put(`/admin/users/${id}/ban`);
       alert(res.data.message);
       fetchUsers();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '封禁操作失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Ban failed' : '封禁操作失败'));
     }
   };
 
   const handleUnban = async (id: number, username: string) => {
-    if (!window.confirm(`确定要解封用户「${username}」吗？`)) return;
+    const confirmText = language === 'en'
+      ? `Are you sure you want to unban user "${username}"?`
+      : `确定要解封用户「${username}」吗？`;
+    if (!window.confirm(confirmText)) return;
     try {
       const res = await api.put(`/admin/users/${id}/unban`);
       alert(res.data.message);
       fetchUsers();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '解封操作失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Unban failed' : '解封操作失败'));
     }
   };
 
@@ -87,32 +95,38 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
       fetchUsers();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '操作失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Operation failed' : '操作失败'));
     }
   };
 
   const handleToggleRole = async (id: number, currentRole: string) => {
     const newRole = currentRole === 'admin' ? 'user' : 'admin';
-    if (!window.confirm(`确定将该用户的角色切换为「${newRole}」吗？`)) return;
+    const confirmText = language === 'en'
+      ? `Are you sure you want to change user role to "${newRole}"?`
+      : `确定将该用户的角色切换为「${newRole}」吗？`;
+    if (!window.confirm(confirmText)) return;
     try {
       const res = await api.put(`/admin/users/${id}/role`, { role: newRole });
       alert(res.data.message);
       fetchUsers();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '修改角色失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Failed to modify role' : '修改角色失败'));
     }
   };
 
   const handleDelete = async (id: number, username: string) => {
-    if (!window.confirm(`确定要彻底删除用户「${username}」吗？其所有待办日程、配置数据将被彻底清空且不可恢复！`)) return;
+    const confirmText = language === 'en'
+      ? `Are you sure you want to permanently delete user "${username}"? All tasks and settings will be wiped out!`
+      : `确定要彻底删除用户「${username}」吗？其所有待办日程、配置数据将被彻底清空且不可恢复！`;
+    if (!window.confirm(confirmText)) return;
     try {
       await api.delete(`/admin/users/${id}`);
-      alert('用户已成功删除');
+      alert(language === 'en' ? 'User successfully deleted' : '用户已成功删除');
       fetchUsers();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      alert(error.response?.data?.error || '删除失败');
+      alert(error.response?.data?.error || (language === 'en' ? 'Delete failed' : '删除失败'));
     }
   };
 
@@ -120,7 +134,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
     if (!rechargeUser) return;
     const amountNum = parseFloat(rechargeAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
-      alert('请输入大于 0 的有效充值金额');
+      alert(t('admin.recharge_amount_invalid', '请输入大于 0 的有效充值金额'));
       return;
     }
 
@@ -128,7 +142,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
     setRechargeMsg(null);
     try {
       const res = await api.post(`/admin/users/${rechargeUser.id}/recharge`, { amount: amountNum });
-      setRechargeMsg({ success: true, text: res.data.message || '充值成功！' });
+      setRechargeMsg({ success: true, text: res.data.message || t('admin.recharge_success', '充值成功！') });
       fetchUsers();
       setTimeout(() => {
         setRechargeUser(null);
@@ -137,7 +151,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
       }, 1500);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
-      setRechargeMsg({ success: false, text: error.response?.data?.error || error.message || '充值失败' });
+      setRechargeMsg({ success: false, text: error.response?.data?.error || error.message || t('admin.recharge_fail', '充值失败') });
     } finally {
       setRecharging(false);
     }
@@ -158,25 +172,25 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
       <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <span>用户账号与审核管理</span>
+            <span>{t('admin.users_title', '用户账号与审核管理')}</span>
             {bannedCount > 0 && (
               <span className="bg-rose-500 text-white text-xs px-2.5 py-0.5 rounded-full font-semibold">
-                {bannedCount} 已封禁
+                {bannedCount} {t('admin.banned_badge', '已封禁')}
               </span>
             )}
           </h2>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
-            审核新注册用户、管理账号权限状态、查看账户额度、支持快捷封禁、解封或彻底删除用户
+            {t('admin.users_subtitle', '审核新注册用户、管理账号权限状态、查看账户额度、支持快捷封禁、解封或彻底删除用户')}
           </p>
         </div>
 
         {/* Filter Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           {[
-            { key: 'all', label: `全部 (${users.length})` },
-            { key: 'approved', label: `正常 (${approvedCount})` },
-            { key: 'banned', label: `已封禁 (${bannedCount})` },
-            ...(pendingCount > 0 ? [{ key: 'pending', label: `待审核 (${pendingCount})` }] : []),
+            { key: 'all', label: `${t('admin.filter_all', '全部')} (${users.length})` },
+            { key: 'approved', label: `${t('admin.filter_approved', '正常')} (${approvedCount})` },
+            { key: 'banned', label: `${t('admin.filter_banned', '已封禁')} (${bannedCount})` },
+            ...(pendingCount > 0 ? [{ key: 'pending', label: `${t('admin.filter_pending', '待审核')} (${pendingCount})` }] : []),
           ].map((item) => (
             <button
               key={item.key}
@@ -200,20 +214,20 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
           <table className="w-full text-left text-xs sm:text-sm">
             <thead className="bg-[#f8fafd] dark:bg-[#28292a] text-gray-500 dark:text-neutral-400 font-semibold sticky top-0 border-b border-gray-200 dark:border-neutral-800 z-10">
               <tr>
-                <th className="px-5 py-3.5">账号 / 注册邮箱</th>
-                <th className="px-5 py-3.5">账户余额 (¥)</th>
-                <th className="px-5 py-3.5">角色权限</th>
-                <th className="px-5 py-3.5">账号状态</th>
-                <th className="px-5 py-3.5">任务 / 订阅</th>
-                <th className="px-5 py-3.5">注册时间</th>
-                <th className="px-5 py-3.5 text-right">操作</th>
+                <th className="px-5 py-3.5">{t('admin.th_account', '账号 / 注册邮箱')}</th>
+                <th className="px-5 py-3.5">{t('admin.th_balance', '账户余额 (¥)')}</th>
+                <th className="px-5 py-3.5">{t('admin.th_role', '角色权限')}</th>
+                <th className="px-5 py-3.5">{t('admin.th_status', '账号状态')}</th>
+                <th className="px-5 py-3.5">{t('admin.th_data', '任务 / 订阅')}</th>
+                <th className="px-5 py-3.5">{t('admin.th_created', '注册时间')}</th>
+                <th className="px-5 py-3.5 text-right">{t('common.actions', '操作')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-neutral-800/80">
               {filteredUsers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-gray-400 text-xs">
-                    暂无符合条件的用户
+                    {t('admin.no_matching_users', '暂无符合条件的用户')}
                   </td>
                 </tr>
               ) : (
@@ -233,7 +247,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                             <span>{u.username}</span>
                             {isSelf && (
                               <span className="text-[10px] bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 px-1.5 py-0.2 rounded-full border border-blue-200 dark:border-blue-800">
-                                当前账号
+                                {t('admin.current_user', '当前账号')}
                               </span>
                             )}
                           </div>
@@ -268,10 +282,10 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               setRechargeMsg(null);
                             }}
                             className="px-2 py-0.5 text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-md transition cursor-pointer flex items-center gap-1"
-                            title="直接充值指定金额到该账户额度"
+                            title={t('admin.recharge_modal_title', '直接充值指定金额到该账户额度')}
                           >
                             <Coins className="w-3 h-3 text-emerald-500" />
-                            <span>充值</span>
+                            <span>{t('admin.action_recharge', '充值')}</span>
                           </button>
                         </div>
                       </td>
@@ -285,10 +299,10 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                               : 'bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-300'
                           } ${isSelf || isRootAdmin ? 'cursor-default opacity-80' : 'cursor-pointer hover:opacity-80'}`}
-                          title={isSelf ? '不能修改自身角色' : '点击切换角色权限'}
+                          title={isSelf ? t('admin.cannot_modify_self_role', '不能修改自身角色') : t('admin.click_to_change_role', '点击切换角色权限')}
                         >
                           <ShieldCheck className="w-3 h-3" />
-                          {u.role === 'admin' ? '系统管理员' : '普通用户'}
+                          {u.role === 'admin' ? t('admin.role_admin', '系统管理员') : t('admin.role_user', '普通用户')}
                         </button>
                       </td>
 
@@ -296,37 +310,37 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                         {u.status === 'approved' && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                             <Check className="w-3 h-3" />
-                            正常
+                            {t('admin.status_approved', '正常')}
                           </span>
                         )}
                         {u.status === 'banned' && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                             <Ban className="w-3 h-3" />
-                            已封禁
+                            {t('admin.status_banned', '已封禁')}
                           </span>
                         )}
                         {u.status === 'pending' && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                             <Clock className="w-3 h-3" />
-                            待审核
+                            {t('admin.status_pending', '待审核')}
                           </span>
                         )}
                         {u.status === 'rejected' && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400">
                             <AlertCircle className="w-3 h-3" />
-                            已拒绝
+                            {t('admin.status_rejected', '已拒绝')}
                           </span>
                         )}
                       </td>
 
                       <td className="px-5 py-4 text-gray-600 dark:text-neutral-400">
-                        <span>{u.task_count} 条待办</span>
+                        <span>{u.task_count} {t('admin.tasks_unit', '条待办')}</span>
                         <span className="text-gray-300 dark:text-neutral-600 mx-1.5">/</span>
-                        <span>{u.subscription_count} 订阅</span>
+                        <span>{u.subscription_count} {t('admin.subs_unit', '订阅')}</span>
                       </td>
 
                       <td className="px-5 py-4 text-gray-400 dark:text-neutral-500 font-mono text-[11px]">
-                        {new Date(u.created_at).toLocaleDateString('zh-CN')}
+                        {new Date(u.created_at).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN')}
                       </td>
 
                       <td className="px-5 py-4 text-right">
@@ -336,7 +350,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               onClick={() => handleApprove(u.id)}
                               className="px-3.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-full shadow-xs transition cursor-pointer"
                             >
-                              放行
+                              {t('admin.action_approve', '放行')}
                             </button>
                           )}
 
@@ -346,7 +360,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               className="px-3 py-1 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 font-medium rounded-full border border-emerald-200 dark:border-emerald-800 transition cursor-pointer flex items-center gap-1"
                             >
                               <UserCheck className="w-3 h-3" />
-                              解封
+                              {t('admin.action_unban', '解封')}
                             </button>
                           )}
 
@@ -356,7 +370,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                               className="px-3 py-1 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-medium rounded-full border border-rose-200 dark:border-rose-800 transition cursor-pointer flex items-center gap-1"
                             >
                               <Ban className="w-3 h-3" />
-                              封禁
+                              {t('admin.action_ban', '封禁')}
                             </button>
                           )}
 
@@ -364,7 +378,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                             <button
                               onClick={() => handleDelete(u.id, u.username)}
                               className="p-1.5 text-gray-400 dark:text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-full transition cursor-pointer"
-                              title="彻底删除用户"
+                              title={t('admin.action_delete', '彻底删除用户')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -382,7 +396,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
         {/* 移动端卡片视图 */}
         <div className="sm:hidden divide-y divide-gray-100 dark:divide-neutral-800 overflow-y-auto">
           {filteredUsers.length === 0 ? (
-            <div className="p-8 text-center text-gray-400 text-xs">暂无用户</div>
+            <div className="p-8 text-center text-gray-400 text-xs">{t('admin.no_users', '暂无用户')}</div>
           ) : (
             filteredUsers.map((u) => {
               const isSelf = u.id === currentUser?.id;
@@ -397,7 +411,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                         <span>{u.username}</span>
                         {isSelf && (
                           <span className="text-[10px] bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 px-1.5 py-0.2 rounded-full">
-                            自己
+                            {t('admin.current_user', '自己')}
                           </span>
                         )}
                       </div>
@@ -421,14 +435,14 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                         }}
                         className="px-2 py-0.5 text-[11px] bg-emerald-50 dark:bg-emerald-950 text-emerald-600 rounded-md border border-emerald-200"
                       >
-                        充值
+                        {t('admin.action_recharge', '充值')}
                       </button>
                     </div>
                   </div>
 
                   <div className="flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400">
-                    <span>{u.role === 'admin' ? '系统管理员' : '普通用户'}</span>
-                    <span>{u.task_count} 任务 · {u.subscription_count} 订阅</span>
+                    <span>{u.role === 'admin' ? t('admin.role_admin', '系统管理员') : t('admin.role_user', '普通用户')}</span>
+                    <span>{u.task_count} {t('admin.tasks_unit', '任务')} · {u.subscription_count} {t('admin.subs_unit', '订阅')}</span>
                   </div>
 
                   <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-neutral-800/80">
@@ -437,7 +451,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                         onClick={() => handleUnban(u.id, u.username)}
                         className="px-3 py-1 bg-emerald-600 text-white rounded-full text-xs font-medium"
                       >
-                        解封
+                        {t('admin.action_unban', '解封')}
                       </button>
                     )}
                     {u.status === 'approved' && !isSelf && !isRootAdmin && (
@@ -445,7 +459,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                         onClick={() => handleBan(u.id, u.username)}
                         className="px-3 py-1 bg-rose-50 dark:bg-rose-950/50 text-rose-600 rounded-full text-xs font-medium border border-rose-200"
                       >
-                        封禁
+                        {t('admin.action_ban', '封禁')}
                       </button>
                     )}
                     {!isSelf && !isRootAdmin && (
@@ -471,7 +485,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-neutral-800">
               <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Coins className="w-5 h-5 text-emerald-500" />
-                <span>直接充值账户额度</span>
+                <span>{t('admin.recharge_modal_title', '直接充值账户额度')}</span>
               </h3>
               <button
                 type="button"
@@ -484,17 +498,17 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
 
             <div className="space-y-3 text-xs">
               <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#28292a] flex items-center justify-between">
-                <span className="text-gray-500 dark:text-neutral-400">充值目标用户</span>
+                <span className="text-gray-500 dark:text-neutral-400">{t('admin.recharge_target', '充值目标用户')}</span>
                 <span className="font-bold text-gray-900 dark:text-gray-100">{rechargeUser.username} (UID: #{rechargeUser.id})</span>
               </div>
 
               <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#28292a] flex items-center justify-between">
-                <span className="text-gray-500 dark:text-neutral-400">当前余额</span>
-                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">¥{(rechargeUser.balance || 0).toFixed(4)} 元</span>
+                <span className="text-gray-500 dark:text-neutral-400">{t('admin.recharge_current_bal', '当前余额')}</span>
+                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">¥{(rechargeUser.balance || 0).toFixed(4)}</span>
               </div>
 
               <div className="space-y-1.5 pt-1">
-                <label className="font-bold text-gray-800 dark:text-gray-200 block">充值金额 (元)</label>
+                <label className="font-bold text-gray-800 dark:text-gray-200 block">{t('admin.recharge_amount', '充值金额 (元)')}</label>
                 <div className="relative">
                   <span className="absolute left-3.5 top-2.5 text-gray-400 text-sm font-bold">¥</span>
                   <input
@@ -545,7 +559,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                 onClick={() => setRechargeUser(null)}
                 className="flex-1 py-2 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 rounded-xl text-xs font-medium transition cursor-pointer"
               >
-                取消
+                {t('common.cancel', '取消')}
               </button>
               <button
                 type="button"
@@ -554,7 +568,7 @@ export const AdminUsersView: React.FC<{ onRefreshCount?: () => void }> = ({ onRe
                 className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
               >
                 {recharging ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
-                <span>{recharging ? '充值中...' : '确认直接充值'}</span>
+                <span>{recharging ? t('admin.recharging', '充值中...') : t('admin.recharge_confirm_btn', '确认直接充值')}</span>
               </button>
             </div>
           </div>
