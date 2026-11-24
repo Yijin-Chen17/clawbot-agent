@@ -244,7 +244,7 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
     assert.equal(icsBlockedMock.getStatus(), 403);
   });
 
-  it('schedules all 14-day recurring movable occurrences at the same wall-clock slot with exception fallback, and schedules Q4 flexible tasks when slots are free', async () => {
+  it('schedules 14-day recurring movable occurrences independently per day without dragging normal days to conflict slots, and schedules Q4 flexible tasks when slots are free', async () => {
     // 1. Add movable weekly recurring task (Mon/Wed/Fri) + external blocker ONLY on Wednesday 09:00-10:00
     const resWeekly = db.prepare(`
       INSERT INTO tasks (
@@ -292,13 +292,13 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
       ['2026-12-07', '2026-12-09', '2026-12-11', '2026-12-14', '2026-12-16', '2026-12-18']
     );
 
-    // Non-conflicting days must share identical wall-clock position!
+    // Non-conflicting days keep optimal 09:00 morning slot instead of being dragged to 10:10 by Wednesday's meeting
     const normalDaysHm = weeklyBlocks
       .filter(b => b.business_date !== '2026-12-09')
       .map(b => getAccountLocalTimeHm(new Date(b.start_time), 'Asia/Shanghai'));
-    assert.ok(new Set(normalDaysHm).size === 1, `Expected uniform slot across normal days, got ${normalDaysHm.join(', ')}`);
+    assert.deepEqual(Array.from(new Set(normalDaysHm)), ['09:00']);
 
-    // Conflict day (12-09) automatically falls back to a valid non-overlapping time
+    // Conflict day (12-09) automatically falls back to a valid non-overlapping time after 10:00
     const wedBlock = weeklyBlocks.find(b => b.business_date === '2026-12-09')!;
     assert.ok(new Date(wedBlock.start_time).getTime() >= new Date(wallClockIso('2026-12-09', 10, 0)).getTime());
 
@@ -326,7 +326,7 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
         user_id, title, duration_minutes, original_duration_minutes,
         urgency, importance, importance_tier, time_mode, recurrence_rule,
         is_fixed, is_concurrent, status, score_scale, active_template
-      ) VALUES (?, '每周一三五练琴', 45, 45, 65, 70, 'support', 'daily_fixed', '{"type":"weekly","daysOfWeek":[1,3,5]}', 0, 0, 'pending_slot', 100, 1)
+      ) VALUES (?, '每周一三五练琴', 30, 30, 65, 70, 'support', 'daily_fixed', '{"type":"weekly","daysOfWeek":[1,3,5]}', 0, 0, 'pending_slot', 100, 1)
     `).run(userId);
     const weeklyTaskId = Number(resWeekly.lastInsertRowid);
 
@@ -352,17 +352,19 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
       assert.equal(inst.unallocated_minutes, 0);
     }
 
-    // Future normal days for the Q1 daily task must pick a peak slot (not 13:05 afternoon low-energy!)
-    const firstFutureDailyBlock = db
+    // Future normal days for the Q1 120m daily task must schedule consecutively in the morning peak (09:00 & 10:10)
+    const futureDailyBlocks = db
       .prepare(`
-        SELECT sb.start_time FROM schedule_blocks sb
+        SELECT sb.start_time, sb.duration_minutes FROM schedule_blocks sb
         JOIN task_instances ti ON ti.id = sb.instance_id
         WHERE sb.task_id = ? AND ti.business_date = '2026-12-10' AND sb.status = 'planned'
-        ORDER BY sb.start_time ASC LIMIT 1
+        ORDER BY sb.start_time ASC
       `)
-      .get(dailyTaskId) as { start_time: string };
-    const hmFuture = getAccountLocalTimeHm(new Date(firstFutureDailyBlock.start_time), 'Asia/Shanghai');
-    assert.notEqual(hmFuture, '13:05');
+      .all(dailyTaskId) as Array<{ start_time: string; duration_minutes: number }>;
+    assert.deepEqual(
+      futureDailyBlocks.map(b => [getAccountLocalTimeHm(new Date(b.start_time), 'Asia/Shanghai'), b.duration_minutes]),
+      [['09:00', 60], ['10:10', 60]]
+    );
 
     // Weekly task on 2026-12-09 (future conflict day) MUST fall back to evening >= 19:00 instead of being dropped
     const wedWeeklyBlocks = db
