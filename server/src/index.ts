@@ -8,6 +8,7 @@ import { router as apiRouter } from './routes/api.js';
 import { startReminderScheduler } from './services/reminder.js';
 import { weixinTransitManager } from './services/weixinGateway.js';
 import { installConsoleInterceptor } from './services/debugLogger.js';
+import { createCompressionMiddleware } from './middleware/compression.js';
 
 // Intercept logs for Admin Debugger
 installConsoleInterceptor();
@@ -15,6 +16,7 @@ installConsoleInterceptor();
 const app = express();
 
 app.use(cors());
+app.use(createCompressionMiddleware());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -39,9 +41,23 @@ app.get('/api/health', (req, res) => {
 // Serve frontend if built (for production or standalone deployment)
 const clientDistPath = path.resolve(process.cwd(), 'client/dist');
 if (fs.existsSync(clientDistPath)) {
-  app.use(express.static(clientDistPath));
+  app.use(
+    express.static(clientDistPath, {
+      setHeaders: (res, filePath) => {
+        const normalized = filePath.replace(/\\/g, '/');
+        if (normalized.endsWith('/index.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (normalized.includes('/assets/')) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=300');
+        }
+      },
+    })
+  );
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }

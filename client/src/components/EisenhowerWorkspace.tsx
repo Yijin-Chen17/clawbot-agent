@@ -18,9 +18,11 @@ import { api } from '../api/client';
 import { useTheme } from '../context/ThemeContext';
 import { MatrixBoard } from './MatrixBoard';
 import { TaskModal, type TaskModalSavePayload } from './TaskModal';
-import { WizardModal } from './WizardModal';
-import { StatsModal } from './StatsModal';
-import { BackupModal } from './BackupModal';
+import { LazyBoundary, lazyNamed } from '../utils/lazyNamed';
+
+const WizardModal = lazyNamed(() => import('./WizardModal'), 'WizardModal');
+const StatsModal = lazyNamed(() => import('./StatsModal'), 'StatsModal');
+const BackupModal = lazyNamed(() => import('./BackupModal'), 'BackupModal');
 import {
   Plus,
   RefreshCw,
@@ -1075,26 +1077,38 @@ export const EisenhowerWorkspace: React.FC<EisenhowerWorkspaceProps> = ({
         dailyBusyMinutesAhead={todayBusyMinutesAhead}
       />
 
-      <WizardModal
-        isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
-        dailyBusyMinutesAhead={todayBusyMinutesAhead}
-        onConfirmTask={handleWizardConfirm}
-      />
+      {isWizardOpen && (
+        <LazyBoundary fallback={null}>
+          <WizardModal
+            isOpen={isWizardOpen}
+            onClose={() => setIsWizardOpen(false)}
+            dailyBusyMinutesAhead={todayBusyMinutesAhead}
+            onConfirmTask={handleWizardConfirm}
+          />
+        </LazyBoundary>
+      )}
 
-      <StatsModal
-        isOpen={isStatsOpen}
-        onClose={() => setIsStatsOpen(false)}
-        stats={stats}
-      />
+      {isStatsOpen && (
+        <LazyBoundary fallback={null}>
+          <StatsModal
+            isOpen={isStatsOpen}
+            onClose={() => setIsStatsOpen(false)}
+            stats={stats}
+          />
+        </LazyBoundary>
+      )}
 
-      <BackupModal
-        isOpen={isBackupOpen}
-        onClose={() => setIsBackupOpen(false)}
-        tasks={tasks}
-        onImport={handleImportTasks}
-        onClearAll={handleClearAll}
-      />
+      {isBackupOpen && (
+        <LazyBoundary fallback={null}>
+          <BackupModal
+            isOpen={isBackupOpen}
+            onClose={() => setIsBackupOpen(false)}
+            tasks={tasks}
+            onImport={handleImportTasks}
+            onClearAll={handleClearAll}
+          />
+        </LazyBoundary>
+      )}
     </div>
   );
 };

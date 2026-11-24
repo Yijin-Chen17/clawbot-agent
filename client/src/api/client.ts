@@ -12,13 +12,16 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let isReloading = false;
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('clawbot_token');
       localStorage.removeItem('clawbot_user');
-      if (window.location.pathname !== '/login') {
+      if (!isReloading && window.location.pathname !== '/login') {
+        isReloading = true;
         window.location.reload();
       }
     }

@@ -16,6 +16,8 @@ function openDatabase(dbPath: string): Database.Database {
   const instance = new Database(dbPath);
   instance.pragma('journal_mode = WAL');
   instance.pragma('foreign_keys = ON');
+  instance.pragma('busy_timeout = 5000');
+  instance.pragma('synchronous = NORMAL');
   return instance;
 }
 

@@ -325,6 +325,24 @@ const MIGRATIONS: Migration[] = [
       backfillLegacyData(db);
     },
   },
+  {
+    version: 6,
+    name: 'add_query_indexes',
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_user_status
+          ON tasks(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_external_events_user_range
+          ON external_events(user_id, start_time, end_time);
+        CREATE INDEX IF NOT EXISTS idx_calendar_subscriptions_user
+          ON calendar_subscriptions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_api_usage_logs_user_created
+          ON api_usage_logs(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_email_codes_email_type
+          ON email_verification_codes(email, type, created_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -531,21 +531,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [weekStart, viewMode, activeMonthYear, activeMonthIndex]);
-
-  // When tab becomes active, silently re-fetch to keep synced with tasks modified in other tabs
   const hasLoadedOnceRef = useRef(false);
+  const prevActiveRef = useRef(isActive);
   useEffect(() => {
-    if (isActive) {
-      if (hasLoadedOnceRef.current) {
-        fetchData(true);
-      } else {
-        hasLoadedOnceRef.current = true;
-      }
+    if (!isActive) {
+      prevActiveRef.current = false;
+      return;
     }
-  }, [isActive]);
+    const returningToTab = !prevActiveRef.current && hasLoadedOnceRef.current;
+    prevActiveRef.current = true;
+    hasLoadedOnceRef.current = true;
+    fetchData(returningToTab);
+  }, [isActive, weekStart, viewMode, activeMonthYear, activeMonthIndex]);
 
   // Auto-scroll to morning hours (08:00) on mount / week change / activation
   useEffect(() => {

@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
-import { AuthPage } from './pages/AuthPage';
 import { Sidebar } from './components/Sidebar';
 import { EisenhowerWorkspace } from './components/EisenhowerWorkspace';
-import { CalendarView } from './components/CalendarView';
-import { SettingsView } from './components/SettingsView';
-import { AdminUsersView } from './components/AdminUsersView';
-import { AdminApiView } from './components/AdminApiView';
-import { SystemDebugger } from './components/SystemDebugger';
+import { LazyBoundary, lazyNamed } from './utils/lazyNamed';
 import { api } from './api/client';
+
+const AuthPage = lazyNamed(() => import('./pages/AuthPage'), 'AuthPage');
+const CalendarView = lazyNamed(() => import('./components/CalendarView'), 'CalendarView');
+const SettingsView = lazyNamed(() => import('./components/SettingsView'), 'SettingsView');
+const AdminUsersView = lazyNamed(() => import('./components/AdminUsersView'), 'AdminUsersView');
+const AdminApiView = lazyNamed(() => import('./components/AdminApiView'), 'AdminApiView');
+const SystemDebugger = lazyNamed(() => import('./components/SystemDebugger'), 'SystemDebugger');
 
 const DashboardContent: React.FC = () => {
   const { user, loading } = useAuth();
@@ -26,6 +28,14 @@ const DashboardContent: React.FC = () => {
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [hasVisitedCalendar, setHasVisitedCalendar] = useState(false);
+
+  const handleTabChange = useCallback((tab: string) => {
+    if (tab === 'calendar') {
+      setHasVisitedCalendar(true);
+    }
+    setActiveTab(tab);
+  }, []);
 
   // 新用户首次登录默认进设置页完成微信/外部对接，后续默认进入四象限看板
   useEffect(() => {
@@ -39,19 +49,26 @@ const DashboardContent: React.FC = () => {
     }
   }, [user?.id]);
 
-  const fetchPendingCount = async () => {
-    if (user?.role === 'admin') {
+  const userRole = user?.role;
+  const userId = user?.id;
+
+  const fetchPendingCount = useCallback(async () => {
+    if (userRole === 'admin') {
       try {
         const res = await api.get('/admin/users');
         const count = res.data.users.filter((u: any) => u.status === 'pending').length;
         setPendingCount(count);
       } catch {}
     }
-  };
+  }, [userRole]);
 
   useEffect(() => {
-    fetchPendingCount();
-  }, [user]);
+    if (userId && userRole === 'admin') {
+      fetchPendingCount();
+    } else {
+      setPendingCount(0);
+    }
+  }, [userId, userRole, fetchPendingCount]);
 
   if (loading) {
     return (
@@ -65,7 +82,11 @@ const DashboardContent: React.FC = () => {
   }
 
   if (!user) {
-    return <AuthPage />;
+    return (
+      <LazyBoundary>
+        <AuthPage />
+      </LazyBoundary>
+    );
   }
 
   return (
@@ -73,7 +94,7 @@ const DashboardContent: React.FC = () => {
       {/* 主流 AI Agent 风格左侧边栏 */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         activeCategory={activeCategory}
         setActiveCategory={setActiveCategory}
         categoryCounts={categoryCounts}
@@ -111,7 +132,7 @@ const DashboardContent: React.FC = () => {
         <div className={`w-full h-full flex flex-col overflow-hidden ${activeTab === 'matrix' || activeTab === 'list' || activeTab === 'todos' ? '' : 'hidden'}`}>
           <EisenhowerWorkspace
             currentView={activeTab === 'list' ? 'list' : 'matrix'}
-            onSwitchView={(v) => setActiveTab(v)}
+            onSwitchView={(v) => handleTabChange(v)}
             activeCategory={activeCategory}
             setActiveCategory={setActiveCategory}
             onCountsUpdate={setCategoryCounts}
@@ -127,32 +148,44 @@ const DashboardContent: React.FC = () => {
           />
         </div>
         <div className={`w-full h-full flex flex-col overflow-hidden ${activeTab === 'calendar' ? '' : 'hidden'}`}>
-          <CalendarView
-            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
-            isActive={activeTab === 'calendar'}
-          />
+          {hasVisitedCalendar && (
+            <LazyBoundary>
+              <CalendarView
+                onOpenMobileMenu={() => setMobileSidebarOpen(true)}
+                isActive={activeTab === 'calendar'}
+              />
+            </LazyBoundary>
+          )}
         </div>
         {activeTab === 'settings' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
-            <SettingsView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />
+            <LazyBoundary>
+              <SettingsView onOpenMobileMenu={() => setMobileSidebarOpen(true)} />
+            </LazyBoundary>
           </div>
         )}
         {activeTab === 'admin' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
             <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
-            <AdminUsersView onRefreshCount={fetchPendingCount} />
+            <LazyBoundary>
+              <AdminUsersView onRefreshCount={fetchPendingCount} />
+            </LazyBoundary>
           </div>
         )}
         {activeTab === 'api' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
             <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
-            <AdminApiView />
+            <LazyBoundary>
+              <AdminApiView />
+            </LazyBoundary>
           </div>
         )}
         {activeTab === 'debug' && user.role === 'admin' && (
           <div className="w-full h-full flex flex-col overflow-hidden p-3 sm:p-5">
             <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label={t('nav.open_sidebar', '打开侧边导航')} className="md:hidden self-start mb-2 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800">☰ {t('nav.menu', '菜单')}</button>
-            <SystemDebugger />
+            <LazyBoundary>
+              <SystemDebugger />
+            </LazyBoundary>
           </div>
         )}
       </main>
