@@ -254,3 +254,12 @@ export function queryTodoSummary(
     items,
   };
 }
+
+export function queryUnscheduledTasks(userId: number, limit: number = 10): Task[] {
+  return db.prepare(`
+    SELECT * FROM tasks
+    WHERE user_id = ? AND status IN ('pending_slot', 'pending', 'delayed')
+    ORDER BY urgency DESC, importance DESC, created_at ASC
+    LIMIT ?
+  `).all(userId, limit) as Task[];
+}

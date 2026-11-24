@@ -170,6 +170,20 @@ export function commitSchedulePlan(input: CommitPlanInput): CommitPlanResult {
     for (const instPlan of input.instancePlans) {
       touchedTaskIds.add(instPlan.taskId);
       const conflictSet = new Set(instPlan.conflictedBlockIds || []);
+      const preservedIds = new Set(instPlan.preservedBlocks.map(p => p.id));
+
+      // Supersede any replaced fixed/committed/conflict blocks on this instance when explicitly rescheduling
+      if (instPlan.newBlocks.length > 0) {
+        const instActiveOld = db.prepare(`
+          SELECT id FROM schedule_blocks
+          WHERE instance_id = ? AND user_id = ? AND status IN ('planned', 'conflict')
+        `).all(instPlan.instanceId, input.userId) as Array<{ id: string }>;
+        for (const oldB of instActiveOld) {
+          if (!preservedIds.has(oldB.id)) {
+            db.prepare("UPDATE schedule_blocks SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(oldB.id);
+          }
+        }
+      }
 
       // 1. Keep preserved blocks (in_progress, completed, fixed, committed, conflict)
       for (const pb of instPlan.preservedBlocks) {

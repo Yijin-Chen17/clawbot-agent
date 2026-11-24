@@ -144,7 +144,7 @@ export const templates = {
   },
 
   reminderBeforeStart: (title: string, startStr: string, endStr: string, minutes: number) => {
-    return `🔔「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})。开始执行请回复「开始」`;
+    return `🔔「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})。开始执行请回复「开始」，需改期可回复「换个时间」`;
   },
 
   reminderBeforeEnd: (title: string, minutes: number) => {

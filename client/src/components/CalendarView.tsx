@@ -107,6 +107,10 @@ interface TaskItem {
   scheduled_end: string | null;
   schedule_blocks?: string | null;
   status: string;
+  plan_status?: 'pending' | 'scheduled' | 'partial' | 'conflict';
+  allocated_minutes?: number;
+  unallocated_minutes?: number;
+  plan_reason?: string | null;
   notes: string | null;
   is_fixed?: number;
   is_concurrent?: number;
@@ -130,6 +134,9 @@ type TimedSegment =
       id: string;
       blockId?: string;
       partIndex?: number;
+      blockStatus?: string;
+      planStatus?: string;
+      businessDate?: string;
       title: string;
       start: string;
       end: string;
@@ -345,12 +352,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
   // Dialogs & Modals
+  const [sidebarTaskTab, setSidebarTaskTab] = useState<'unscheduled' | 'scheduled' | 'due'>('unscheduled');
   const [showCalendarsModal, setShowCalendarsModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
   const [selectedDueTask, setSelectedDueTask] = useState<TaskItem | null>(null);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [editError, setEditError] = useState('');
+  const [rescheduleTarget, setRescheduleTarget] = useState<{
+    task: TaskItem;
+    blockId?: string;
+    businessDate?: string;
+  } | null>(null);
+  const [reschedMode, setReschedMode] = useState<'next_slot' | 'auto' | 'specific_date' | 'specific_time'>('next_slot');
+  const [reschedDate, setReschedDate] = useState(() => localDateKey(addDays(new Date(), 1)));
+  const [reschedPeriod, setReschedPeriod] = useState<'' | 'morning' | 'afternoon' | 'evening'>('');
+  const [reschedStartTime, setReschedStartTime] = useState('09:00');
+  const [reschedEndTime, setReschedEndTime] = useState('10:00');
+  const [reschedUnpinFixed, setReschedUnpinFixed] = useState(false);
+  const [reschedSubmitting, setReschedSubmitting] = useState(false);
+  const [reschedError, setReschedError] = useState('');
+  const [pendingProposal, setPendingProposal] = useState<{
+    proposalId: string;
+    taskTitle: string;
+    conflictTask: { title: string; scheduled_start: string; scheduled_end: string };
+    newTaskSchedule: { start: string; end: string };
+    conflictTaskSchedule: { start: string; end: string };
+    reasonText: string;
+  } | null>(null);
 
   const openCalendarItem = (item: TimedSegment) => {
     setSelectedItem(item);
@@ -746,6 +775,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           id: `task-${taskItem.id}-${blockId || idx}-${blockDone ? 'done' : 'active'}`,
           blockId,
           partIndex: partIdx,
+          blockStatus: ev.extendedProps?.blockStatus,
+          planStatus: (ev.extendedProps as any)?.planStatus || taskItem.plan_status,
+          businessDate: (ev.extendedProps as any)?.businessDate || key,
           title: `${titlePrefix}${taskItem.title}${partSuffix}`,
           start: range.start,
           end: range.end,
@@ -817,6 +849,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             id: `task-${taskItem.id}-${bIdx}-${blockDone ? 'done' : 'active'}`,
             blockId: block.id,
             partIndex: block.partIndex || bIdx + 1,
+            planStatus: taskItem.plan_status,
+            businessDate: key,
             title: `${titlePrefix}${taskItem.title}${partSuffix}`,
             start: range.start,
             end: range.end,
@@ -886,6 +920,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       })
       .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
   }, [tasks, weekStartKey, todayKey]);
+
+  // Unscheduled & Scheduled task lists for Calendar view
+  const unscheduledTasks = useMemo(() => {
+    return tasks
+      .filter((t) => {
+        if (t.status === 'completed' || t.status === 'cancelled') return false;
+        return (
+          t.status === 'pending_slot' ||
+          t.plan_status === 'pending' ||
+          t.plan_status === 'partial' ||
+          (!t.scheduled_start && !t.is_fixed)
+        );
+      })
+      .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
+  }, [tasks]);
+
+  const scheduledTasksList = useMemo(() => {
+    return tasks
+      .filter((t) => {
+        if (t.status === 'completed' || t.status === 'cancelled') return false;
+        return Boolean(t.scheduled_start) && t.status !== 'pending_slot';
+      })
+      .sort((a, b) => {
+        const aMs = a.scheduled_start ? new Date(a.scheduled_start).getTime() : Infinity;
+        const bMs = b.scheduled_start ? new Date(b.scheduled_start).getTime() : Infinity;
+        return aMs - bMs;
+      });
+  }, [tasks]);
 
   // Due groups this week
   const dueGroups = useMemo(() => {
@@ -987,6 +1049,154 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       setPlanning({ title: t('calendar.replan_failed', '排程失败'), status: 'error', detail: e.response?.data?.error || e.message });
     } finally {
       setReplanLoading(false);
+    }
+  };
+
+  const openRescheduleModal = (task: TaskItem, blockId?: string, businessDate?: string) => {
+    const isScheduledNow = Boolean(task.scheduled_start) && task.status !== 'pending_slot';
+    setRescheduleTarget({ task, blockId, businessDate });
+    setReschedMode(isScheduledNow ? 'next_slot' : 'auto');
+    const baseDate = task.scheduled_start ? new Date(task.scheduled_start) : addDays(new Date(), 1);
+    setReschedDate(localDateKey(baseDate));
+    setReschedPeriod('');
+    const sH = task.scheduled_start ? formatTime(task.scheduled_start) : '09:00';
+    const dur = Math.max(15, task.duration_minutes || 60);
+    const [hh, mm] = sH.split(':').map(Number);
+    const endTotal = (hh * 60 + mm + dur) % (24 * 60);
+    setReschedStartTime(sH);
+    setReschedEndTime(`${String(Math.floor(endTotal / 60)).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`);
+    setReschedUnpinFixed(Boolean(task.is_fixed));
+    setReschedError('');
+  };
+
+  const handleQuickSingleReschedule = async (task: TaskItem, blockId?: string, businessDate?: string) => {
+    const isScheduledNow = Boolean(task.scheduled_start) && task.status !== 'pending_slot';
+    setPlanning({ title: t('calendar.replan_task_loading', '正在重新安排任务'), status: 'working' });
+    try {
+      const response = await api.post(`/tasks/${task.id}/reschedule`, {
+        mode: isScheduledNow ? 'next_slot' : 'auto',
+        ...(blockId ? { block_id: blockId } : {}),
+        ...(businessDate ? { business_date: businessDate } : {}),
+        ...(task.is_fixed ? { unpin_fixed: true } : {}),
+        allow_proposal: true,
+      });
+      if (response.data.proposal) {
+        setSelectedItem(null);
+        setSelectedDueTask(null);
+        setPlanning(null);
+        setPendingProposal({
+          proposalId: response.data.proposal.proposalId,
+          taskTitle: task.title,
+          conflictTask: response.data.proposal.conflictTask,
+          newTaskSchedule: response.data.proposal.newTaskSchedule,
+          conflictTaskSchedule: response.data.proposal.conflictTaskSchedule,
+          reasonText: response.data.proposal.reasonText,
+        });
+        return;
+      }
+      setSelectedItem(null);
+      setSelectedDueTask(null);
+      setPlanning({ title: t('calendar.replan_task_success', '单次再排期完成'), status: 'success', detail: response.data.message });
+      await fetchData();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      setPlanning({
+        title: t('calendar.replan_task_fail', '单次再排期失败'),
+        status: 'error',
+        detail: err.response?.data?.error || t('calendar.retry_text', '请重试'),
+      });
+    }
+  };
+
+  const handleSubmitSingleReschedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rescheduleTarget) return;
+    setReschedSubmitting(true);
+    setReschedError('');
+
+    const { task, blockId, businessDate } = rescheduleTarget;
+    const payload: Record<string, any> = {
+      mode: reschedMode,
+      ...(blockId ? { block_id: blockId } : {}),
+      ...(businessDate ? { business_date: businessDate } : {}),
+      unpin_fixed: reschedUnpinFixed,
+      allow_proposal: true,
+    };
+
+    if (reschedMode === 'specific_date') {
+      payload.target_date = reschedDate;
+      if (reschedPeriod) payload.target_time_period = reschedPeriod;
+    } else if (reschedMode === 'specific_time') {
+      const [y, m, d] = reschedDate.split('-').map(Number);
+      const [sh, sm] = reschedStartTime.split(':').map(Number);
+      const [eh, em] = reschedEndTime.split(':').map(Number);
+      const sDate = new Date(y, m - 1, d, sh, sm, 0, 0);
+      const eDate = new Date(y, m - 1, d, eh, em, 0, 0);
+      if (eDate.getTime() <= sDate.getTime()) {
+        setReschedError(t('calendar.resched_invalid_range', '结束时间必须晚于开始时间'));
+        setReschedSubmitting(false);
+        return;
+      }
+      payload.target_start = sDate.toISOString();
+      payload.target_end = eDate.toISOString();
+    }
+
+    try {
+      const response = await api.post(`/tasks/${task.id}/reschedule`, payload);
+      if (response.data.proposal) {
+        setRescheduleTarget(null);
+        setSelectedItem(null);
+        setSelectedDueTask(null);
+        setPendingProposal({
+          proposalId: response.data.proposal.proposalId,
+          taskTitle: task.title,
+          conflictTask: response.data.proposal.conflictTask,
+          newTaskSchedule: response.data.proposal.newTaskSchedule,
+          conflictTaskSchedule: response.data.proposal.conflictTaskSchedule,
+          reasonText: response.data.proposal.reasonText,
+        });
+        return;
+      }
+      setRescheduleTarget(null);
+      setSelectedItem(null);
+      setSelectedDueTask(null);
+      setPlanning({
+        title: t('calendar.replan_task_success', '单次再排期完成'),
+        status: 'success',
+        detail: response.data.message,
+      });
+      await fetchData();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      setReschedError(err.response?.data?.error || t('calendar.replan_task_fail', '单次再排期失败'));
+    } finally {
+      setReschedSubmitting(false);
+    }
+  };
+
+  const handleProposalDecision = async (decision: 'accept' | 'reject') => {
+    if (!pendingProposal) return;
+    setPlanning({ title: t('calendar.updating_schedule', '正在更新日程'), status: 'working' });
+    try {
+      const res = await api.post('/tasks/apply-proposal', {
+        proposalId: pendingProposal.proposalId,
+        decision,
+      });
+      setPendingProposal(null);
+      setPlanning({
+        title: decision === 'accept' ? t('calendar.replan_task_success', '单次再排期完成') : t('calendar.schedule_updated', '日程已更新'),
+        status: 'success',
+        detail: res.data.message,
+      });
+      await fetchData();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string; message?: string } } };
+      setPendingProposal(null);
+      setPlanning({
+        title: t('calendar.replan_task_fail', '单次再排期失败'),
+        status: 'error',
+        detail: err.response?.data?.error || err.response?.data?.message || t('calendar.retry_text', '请重试'),
+      });
     }
   };
 
@@ -1143,6 +1353,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               }`}
             >
               {language.startsWith('zh') ? '月' : 'Month'}
+            </button>
+          </div>
+          {/* 排期状态概览徽章（点击快速查看未排期/已排期） */}
+          <div className="hidden lg:flex items-center gap-1 rounded-full border border-gray-200 dark:border-[#444746] bg-gray-50/70 dark:bg-[#282a2c] px-2 py-1 text-[11px]">
+            <button
+              type="button"
+              onClick={() => { setSidebarOpen(true); setSidebarTaskTab('scheduled'); }}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full hover:bg-white dark:hover:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] font-medium cursor-pointer transition"
+              title={t('calendar.scheduled_tab', '已排期')}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+              <span>{t('calendar.scheduled_label', '已排期')} {scheduledTasksList.length}</span>
+            </button>
+            <span className="text-gray-300 dark:text-neutral-600">·</span>
+            <button
+              type="button"
+              onClick={() => { setSidebarOpen(true); setSidebarTaskTab('unscheduled'); }}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full hover:bg-white dark:hover:bg-[#1e1f20] font-medium cursor-pointer transition ${
+                unscheduledTasks.length > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-neutral-400'
+              }`}
+              title={t('calendar.unscheduled_tab', '未排期')}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${unscheduledTasks.length > 0 ? 'bg-amber-500' : 'bg-gray-400'}`} />
+              <span>{t('calendar.unscheduled_label', '未排期')} {unscheduledTasks.length}</span>
             </button>
           </div>
           <button
@@ -1371,55 +1605,225 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
             </div>
 
-            {/* {t('calendar.due_task_modal_title', '截止待办')}提醒 (Due Tasks) */}
-            <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
-                <span>{t('calendar.due_title', '截止待办')}</span>
-                {overdueTasks.length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
-                    {t('calendar.overdue_count', '逾期 {count}').replace('{count}', String(overdueTasks.length))}
+            {/* 排期状态面板：未排期 / 已排期 / 截止待办 */}
+            <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
+              <div className="grid grid-cols-3 gap-1 p-0.5 rounded-xl bg-gray-100/80 dark:bg-[#282a2c] text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => setSidebarTaskTab('unscheduled')}
+                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                    sidebarTaskTab === 'unscheduled'
+                      ? 'bg-white dark:bg-[#1e1f20] text-amber-700 dark:text-amber-300 shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>{t('calendar.unscheduled_label', '未排期')}</span>
+                  <span className={`px-1 rounded-full text-[10px] font-mono ${
+                    unscheduledTasks.length > 0
+                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                      : 'bg-gray-200/70 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400'
+                  }`}>
+                    {unscheduledTasks.length}
                   </span>
-                )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSidebarTaskTab('scheduled')}
+                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                    sidebarTaskTab === 'scheduled'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>{t('calendar.scheduled_label', '已排期')}</span>
+                  <span className="px-1 rounded-full text-[10px] font-mono bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-[#a8c7fa]">
+                    {scheduledTasksList.length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSidebarTaskTab('due')}
+                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                    sidebarTaskTab === 'due'
+                      ? 'bg-white dark:bg-[#1e1f20] text-rose-700 dark:text-rose-300 shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>{t('calendar.due_short_tab', '截止')}</span>
+                  {overdueTasks.length > 0 && (
+                    <span className="px-1 rounded-full text-[10px] font-mono bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
+                      {overdueTasks.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
-              <div className="space-y-1.5">
-                {overdueTasks.slice(0, 4).map((item) => (
-                  <button
-                    key={`overdue-${item.id}`}
-                    type="button"
-                    onClick={() => setSelectedDueTask(item)}
-                    className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
-                  >
-                    <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
-                      {item.title}
+              {sidebarTaskTab === 'unscheduled' && (
+                <div className="space-y-1.5">
+                  {unscheduledTasks.length === 0 ? (
+                    <div className="text-[11px] text-gray-400 dark:text-[#8e918f] py-4 text-center">
+                      {t('calendar.no_unscheduled', '当前所有待办均已排期')}
                     </div>
-                    <div className="text-[10px] text-rose-500 font-mono mt-0.5">
-                      {item.deadline ? new Date(item.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.overdue_label', '已逾期')} · {item.duration_minutes}m
-                    </div>
-                  </button>
-                ))}
+                  ) : (
+                    unscheduledTasks.map((item) => {
+                      const isPartial = item.plan_status === 'partial';
+                      const isOverdue = item.deadline && dateKeyFromIso(item.deadline) < todayKey;
+                      return (
+                        <div
+                          key={`unsched-${item.id}`}
+                          className="p-2 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/70 dark:border-amber-900/50 space-y-1.5"
+                        >
+                          <div className="flex items-start justify-between gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDueTask(item)}
+                              className="text-left text-xs font-medium text-gray-800 dark:text-gray-100 hover:text-blue-600 dark:hover:text-[#a8c7fa] truncate flex-1 cursor-pointer"
+                              title={item.title}
+                            >
+                              {item.title}
+                            </button>
+                            <span className="text-[10px] font-mono text-gray-500 dark:text-neutral-400 shrink-0">
+                              {item.duration_minutes}m
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-1 text-[10px]">
+                            <span className={`truncate ${isOverdue ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-amber-700/90 dark:text-amber-300/90'}`}>
+                              {isPartial
+                                ? t('calendar.partial_scheduled_label', '部分排期')
+                                : isOverdue
+                                ? t('calendar.overdue_label', '已逾期')
+                                : item.plan_reason || t('calendar.waiting_slot_short', '待排入时段')}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => void handleQuickSingleReschedule(item)}
+                                className="px-1.5 py-0.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer transition"
+                              >
+                                {t('calendar.schedule_now_btn', '排期')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openRescheduleModal(item)}
+                                className="px-1.5 py-0.5 rounded-md border border-gray-300 dark:border-[#444746] hover:bg-white dark:hover:bg-[#1e1f20] text-gray-700 dark:text-[#e3e3e3] cursor-pointer transition"
+                              >
+                                {t('calendar.specify_time_short', '指定')}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
 
-                {dueGroups.slice(0, 3).map((group) => (
-                  <div key={`due-grp-${group.key}`} className="space-y-1">
-                    <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
-                      {language.startsWith('en') ? group.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : `${group.date.getMonth() + 1}月${group.date.getDate()}日 (${weekDayLabels[(group.date.getDay() + 6) % 7]})`}
+              {sidebarTaskTab === 'scheduled' && (
+                <div className="space-y-1.5">
+                  {scheduledTasksList.length === 0 ? (
+                    <div className="text-[11px] text-gray-400 dark:text-[#8e918f] py-4 text-center">
+                      {t('calendar.no_scheduled', '暂无已排期任务')}
                     </div>
-                    {group.due.slice(0, 3).map((item) => (
-                      <button
-                        key={`due-${item.id}`}
-                        type="button"
-                        onClick={() => setSelectedDueTask(item)}
-                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
-                      >
-                        <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{item.title}</span>
-                        <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
-                          {item.duration_minutes}m
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
+                  ) : (
+                    scheduledTasksList.map((item) => {
+                      const sDate = item.scheduled_start ? new Date(item.scheduled_start) : null;
+                      const eDate = item.scheduled_end ? new Date(item.scheduled_end) : null;
+                      const dateBadge = sDate
+                        ? `${sDate.getMonth() + 1}/${sDate.getDate()} ${formatTime(item.scheduled_start!)}–${eDate ? formatTime(item.scheduled_end!) : ''}`
+                        : '';
+                      return (
+                        <div
+                          key={`sched-${item.id}`}
+                          className="p-2 rounded-xl bg-gray-50/80 dark:bg-[#282a2c]/70 border border-gray-200/70 dark:border-[#444746]/70 space-y-1"
+                        >
+                          <div className="flex items-start justify-between gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sDate) selectDate(sDate);
+                                setSelectedDueTask(item);
+                              }}
+                              className="text-left text-xs font-medium text-gray-800 dark:text-gray-100 hover:text-blue-600 dark:hover:text-[#a8c7fa] truncate flex-1 cursor-pointer"
+                              title={item.title}
+                            >
+                              {item.is_fixed ? '📌 ' : ''}
+                              {item.title}
+                            </button>
+                            <span className="text-[10px] font-mono text-gray-400 shrink-0">
+                              {item.duration_minutes}m
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-1 text-[10px]">
+                            <span className="font-mono text-blue-600 dark:text-[#a8c7fa] truncate">
+                              {dateBadge}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openRescheduleModal(
+                                  item,
+                                  undefined,
+                                  sDate ? localDateKey(sDate) : undefined
+                                )
+                              }
+                              className="px-1.5 py-0.5 rounded-md text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 font-medium shrink-0 cursor-pointer transition"
+                            >
+                              {t('calendar.single_reschedule_short', '再排期')}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {sidebarTaskTab === 'due' && (
+                <div className="space-y-1.5">
+                  {overdueTasks.length === 0 && dueGroups.length === 0 && (
+                    <div className="text-[11px] text-gray-400 dark:text-[#8e918f] py-4 text-center">
+                      {t('calendar.no_due', '本周暂无截止待办')}
+                    </div>
+                  )}
+                  {overdueTasks.slice(0, 4).map((item) => (
+                    <button
+                      key={`overdue-${item.id}`}
+                      type="button"
+                      onClick={() => setSelectedDueTask(item)}
+                      className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
+                    >
+                      <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
+                        {item.title}
+                      </div>
+                      <div className="text-[10px] text-rose-500 font-mono mt-0.5 flex items-center justify-between">
+                        <span>{item.deadline ? new Date(item.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.overdue_label', '已逾期')} · {item.duration_minutes}m</span>
+                        <span>{item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')}</span>
+                      </div>
+                    </button>
+                  ))}
+
+                  {dueGroups.slice(0, 3).map((group) => (
+                    <div key={`due-grp-${group.key}`} className="space-y-1">
+                      <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
+                        {language.startsWith('en') ? group.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : `${group.date.getMonth() + 1}月${group.date.getDate()}日 (${weekDayLabels[(group.date.getDay() + 6) % 7]})`}
+                      </div>
+                      {group.due.slice(0, 3).map((item) => (
+                        <button
+                          key={`due-${item.id}`}
+                          type="button"
+                          onClick={() => setSelectedDueTask(item)}
+                          className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
+                        >
+                          <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{item.title}</span>
+                          <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
+                            {item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')} · {item.duration_minutes}m
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </aside>
         </div>
@@ -2051,60 +2455,75 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             </div>
 
             {selectedItem.kind === 'task' && (
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
-                  className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
-                >
-                  {t('calendar.delete_item', '删除事项')}
-                </button>
-                <div className="flex flex-wrap justify-end gap-2">
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between text-[11px] px-1">
+                  <span className="text-gray-500 dark:text-[#c4c7c5]">{t('calendar.schedule_status_label', '排期状态:')}</span>
+                  <span className={`px-2 py-0.5 rounded-full font-semibold ${
+                    selectedItem.blockStatus === 'conflict'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                      : selectedItem.planStatus === 'partial'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-[#a8c7fa]'
+                  }`}>
+                    {selectedItem.blockStatus === 'conflict'
+                      ? t('calendar.status_conflict', '时段冲突')
+                      : selectedItem.planStatus === 'partial'
+                      ? t('calendar.partial_scheduled_label', '部分排期')
+                      : t('calendar.scheduled_label', '已排期')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-1">
                   <button
                     type="button"
-                    onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
-                    className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                    onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
+                    className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
                   >
-                    {t('calendar.edit_item', '编辑任务')}
+                    {t('calendar.delete_item', '删除事项')}
                   </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setPlanning({ title: t('calendar.replan_task_loading', '正在重新安排任务'), status: 'working' });
-                      try {
-                        const response = await api.post(`/tasks/${selectedItem.task.id}/reschedule`);
-                        setSelectedItem(null);
-                        setPlanning({ title: t('calendar.replan_task_success', '任务已重新安排'), status: 'success', detail: response.data.message });
-                        await fetchData();
-                      } catch (error) {
-                        const err = error as { response?: { data?: { error?: string } } };
-                        setPlanning({ title: t('calendar.replan_task_fail', '重新排程失败'), status: 'error', detail: err.response?.data?.error || t('calendar.retry_text', '请重试') });
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
+                      className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                    >
+                      {t('calendar.edit_item', '编辑任务')}
+                    </button>
+                    {!selectedItem.id.endsWith('-done') && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openRescheduleModal(
+                            selectedItem.task,
+                            selectedItem.blockId,
+                            selectedItem.businessDate || dateKeyFromIso(selectedItem.start)
+                          )
+                        }
+                        className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                      >
+                        {t('calendar.single_reschedule_btn', '单次再排期')}
+                      </button>
+                    )}
+                    {!selectedItem.id.endsWith('-done') && <button
+                      type="button"
+                      onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
+                      className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                    >
+                      {t('calendar.complete_part', '完成本节')}
+                    </button>}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCompleteTask(
+                          selectedItem.task.id,
+                          selectedItem.id.endsWith('-done'),
+                          dateKeyFromIso(selectedItem.start)
+                        )
                       }
-                    }}
-                    className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
-                  >
-                    {t('calendar.replan_task_btn', '重新排程')}
-                  </button>
-                  {!selectedItem.id.endsWith('-done') && <button
-                    type="button"
-                    onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
-                    className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
-                  >
-                    {t('calendar.complete_part', '完成本节')}
-                  </button>}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCompleteTask(
-                        selectedItem.task.id,
-                        selectedItem.id.endsWith('-done'),
-                        dateKeyFromIso(selectedItem.start)
-                      )
-                    }
-                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
-                  >
-                    {selectedItem.id.endsWith('-done') ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
-                  </button>
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+                    >
+                      {selectedItem.id.endsWith('-done') ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2135,6 +2554,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
             <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl space-y-1.5 text-xs">
               <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
+                <span>{t('calendar.schedule_status_label', '排期状态:')}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                  selectedDueTask.scheduled_start && selectedDueTask.status !== 'pending_slot'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-[#a8c7fa]'
+                    : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                }`}>
+                  {selectedDueTask.plan_status === 'partial'
+                    ? t('calendar.partial_scheduled_label', '部分排期')
+                    : selectedDueTask.scheduled_start && selectedDueTask.status !== 'pending_slot'
+                    ? t('calendar.scheduled_label', '已排期')
+                    : t('calendar.unscheduled_label', '未排期')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-gray-600 dark:text-[#c4c7c5]">
                 <span>{t('calendar.deadline_label', '截止时间:')}</span>
                 <span className="font-mono font-semibold">
                   {selectedDueTask.deadline ? new Date(selectedDueTask.deadline).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.not_set', '未设置')}
@@ -2151,7 +2584,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between pt-2 gap-2">
               <button
                 type="button"
                 onClick={() => handleDeleteCalendarTask(selectedDueTask.id)}
@@ -2159,20 +2592,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               >
                 {t('calendar.delete_item', '删除事项')}
               </button>
-              <button
-                type="button"
-                onClick={() => { setEditingTask(selectedDueTask); setSelectedDueTask(null); }}
-                className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
-              >
-                {t('calendar.edit_item', '编辑任务')}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleCompleteTask(selectedDueTask.id)}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
-              >
-                {t('calendar.complete_item', '完成事项')}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { setEditingTask(selectedDueTask); setSelectedDueTask(null); }}
+                  className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                >
+                  {t('calendar.edit_item', '编辑任务')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openRescheduleModal(selectedDueTask)}
+                  className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                >
+                  {t('calendar.single_reschedule_btn', '单次再排期')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCompleteTask(selectedDueTask.id)}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+                >
+                  {t('calendar.complete_item', '完成事项')}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2243,6 +2685,271 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
               >
                 {t('calendar.switch_to_week_timeline', '切换至周视图查看时间轴')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. 单次任务再排期模态框 */}
+      {rescheduleTarget && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSubmitSingleReschedule}
+            className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors"
+          >
+            <div className="flex items-start justify-between pb-2 border-b border-gray-100 dark:border-[#444746]">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-[#a8c7fa]">
+                  {t('calendar.single_reschedule_title', '单次任务再排期')}
+                </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mt-0.5">
+                  {rescheduleTarget.task.title}
+                </h3>
+                {rescheduleTarget.businessDate && rescheduleTarget.task.time_mode === 'daily_fixed' && (
+                  <p className="text-[11px] text-gray-500 dark:text-[#c4c7c5] mt-0.5">
+                    {t('calendar.single_occ_hint', '仅调整 {date} 当次安排，不影响其他周期日期').replace('{date}', rescheduleTarget.businessDate)}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setRescheduleTarget(null)}
+                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-gray-100 dark:bg-[#282a2c]">
+                <button
+                  type="button"
+                  onClick={() => setReschedMode(rescheduleTarget.task.scheduled_start && rescheduleTarget.task.status !== 'pending_slot' ? 'next_slot' : 'auto')}
+                  className={`py-1.5 px-2 rounded-lg font-medium transition cursor-pointer ${
+                    reschedMode === 'next_slot' || reschedMode === 'auto'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-600 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5]'
+                  }`}
+                >
+                  {t('calendar.resched_mode_next', '下一空闲')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReschedMode('specific_date')}
+                  className={`py-1.5 px-2 rounded-lg font-medium transition cursor-pointer ${
+                    reschedMode === 'specific_date'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-600 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5]'
+                  }`}
+                >
+                  {t('calendar.resched_mode_date', '指定日期')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReschedMode('specific_time')}
+                  className={`py-1.5 px-2 rounded-lg font-medium transition cursor-pointer ${
+                    reschedMode === 'specific_time'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-600 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5]'
+                  }`}
+                >
+                  {t('calendar.resched_mode_time', '指定时刻')}
+                </button>
+              </div>
+
+              {(reschedMode === 'next_slot' || reschedMode === 'auto') && (
+                <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 text-blue-800 dark:text-[#a8c7fa] text-[11px] leading-relaxed">
+                  {reschedMode === 'next_slot'
+                    ? t('calendar.resched_next_desc', '跳过当前已排时段，在不打乱其他任务的前提下，为本任务独立寻找下一个可用空闲时段。')
+                    : t('calendar.resched_auto_desc', '在不打乱其他任务的前提下，为本任务自动寻找最近可用的空闲时段。')}
+                </div>
+              )}
+
+              {(reschedMode === 'specific_date' || reschedMode === 'specific_time') && (
+                <div className="space-y-3 p-3 rounded-xl bg-gray-50 dark:bg-[#282a2c]">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-gray-600 dark:text-[#c4c7c5] font-medium shrink-0">
+                      {t('calendar.resched_target_date', '目标日期')}
+                    </label>
+                    <input
+                      type="date"
+                      value={reschedDate}
+                      onChange={(e) => setReschedDate(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-[#444746] bg-white dark:bg-[#1e1f20] text-xs font-mono"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { label: t('common.today', '今天'), offset: 0 },
+                      { label: t('task.tomorrow', '明天'), offset: 1 },
+                      { label: language === 'en' ? '+2d' : '后天', offset: 2 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.offset}
+                        type="button"
+                        onClick={() => setReschedDate(localDateKey(addDays(new Date(), opt.offset)))}
+                        className="px-2.5 py-1 rounded-lg border border-gray-200 dark:border-[#444746] bg-white dark:bg-[#1e1f20] hover:border-blue-500 text-[11px] cursor-pointer transition"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {reschedMode === 'specific_date' && (
+                    <div className="space-y-1.5 pt-1 border-t border-gray-200/70 dark:border-[#444746]">
+                      <span className="text-gray-600 dark:text-[#c4c7c5] font-medium block">
+                        {t('calendar.resched_period_pref', '时段偏好（可选）')}
+                      </span>
+                      <div className="grid grid-cols-4 gap-1">
+                        {([
+                          { key: '', label: t('common.all', '任意') },
+                          { key: 'morning', label: t('calendar.period_morning', '上午') },
+                          { key: 'afternoon', label: t('calendar.period_afternoon', '下午') },
+                          { key: 'evening', label: t('calendar.period_evening', '晚上') },
+                        ] as const).map((p) => (
+                          <button
+                            key={p.key || 'any'}
+                            type="button"
+                            onClick={() => setReschedPeriod(p.key)}
+                            className={`py-1 rounded-lg text-[11px] border transition cursor-pointer ${
+                              reschedPeriod === p.key
+                                ? 'bg-blue-600 border-blue-600 text-white font-semibold'
+                                : 'bg-white dark:bg-[#1e1f20] border-gray-200 dark:border-[#444746] text-gray-600 dark:text-[#c4c7c5]'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {reschedMode === 'specific_time' && (
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-200/70 dark:border-[#444746]">
+                      <div>
+                        <label className="text-[11px] text-gray-500 dark:text-[#c4c7c5] block mb-1">
+                          {t('task.start_time', '开始时间')}
+                        </label>
+                        <input
+                          type="time"
+                          value={reschedStartTime}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setReschedStartTime(val);
+                            if (val) {
+                              const [hh, mm] = val.split(':').map(Number);
+                              const dur = Math.max(15, rescheduleTarget.task.duration_minutes || 60);
+                              const endTotal = (hh * 60 + mm + dur) % (24 * 60);
+                              setReschedEndTime(`${String(Math.floor(endTotal / 60)).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`);
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-[#444746] bg-white dark:bg-[#1e1f20] font-mono text-xs"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 dark:text-[#c4c7c5] block mb-1">
+                          {t('task.end_time', '结束时间')}
+                        </label>
+                        <input
+                          type="time"
+                          value={reschedEndTime}
+                          onChange={(e) => setReschedEndTime(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-[#444746] bg-white dark:bg-[#1e1f20] font-mono text-xs"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {Boolean(rescheduleTarget.task.is_fixed) && reschedMode !== 'specific_time' && rescheduleTarget.task.time_mode !== 'daily_fixed' && (
+                <label className="flex items-center gap-2 text-[11px] text-gray-600 dark:text-[#c4c7c5] cursor-pointer select-none px-1">
+                  <input
+                    type="checkbox"
+                    checked={reschedUnpinFixed}
+                    onChange={(e) => setReschedUnpinFixed(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>{t('calendar.resched_unpin_fixed', '解除固定时间锁定以参与智能再排期')}</span>
+                </label>
+              )}
+
+              {reschedError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-[11px]">
+                  {reschedError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
+              <button
+                type="button"
+                onClick={() => setRescheduleTarget(null)}
+                className="px-4 py-1.5 rounded-xl text-xs font-medium text-gray-600 dark:text-[#c4c7c5] hover:bg-gray-100 dark:hover:bg-[#282a2c] cursor-pointer transition"
+              >
+                {t('common.cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                disabled={reschedSubmitting}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer transition"
+              >
+                {reschedSubmitting ? t('calendar.replan_loading', '正在重排') : t('calendar.confirm_reschedule', '确认再排期')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 7. 单次再排期冲突调整提案确认框 */}
+      {pendingProposal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                {t('calendar.proposal_title', '日程冲突协调建议')}
+              </span>
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                {pendingProposal.taskTitle}
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-[#c4c7c5]">
+                {t('calendar.proposal_desc', '目标时段当前已安排「{title}」，系统已为您找到可同步顺延方案：').replace('{title}', pendingProposal.conflictTask.title)}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#282a2c] space-y-2 text-xs">
+              <div>
+                <div className="font-semibold text-blue-700 dark:text-[#a8c7fa]">{pendingProposal.taskTitle}</div>
+                <div className="font-mono text-[11px] text-gray-600 dark:text-[#c4c7c5]">
+                  → {new Date(pendingProposal.newTaskSchedule.start).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} – {formatTime(pendingProposal.newTaskSchedule.end)}
+                </div>
+              </div>
+              <div className="pt-2 border-t border-gray-200/70 dark:border-[#444746]">
+                <div className="font-semibold text-gray-800 dark:text-gray-200">{pendingProposal.conflictTask.title}</div>
+                <div className="font-mono text-[11px] text-gray-500 dark:text-[#c4c7c5]">
+                  {formatTime(pendingProposal.conflictTask.scheduled_start)}–{formatTime(pendingProposal.conflictTask.scheduled_end)} → {new Date(pendingProposal.conflictTaskSchedule.start).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} – {formatTime(pendingProposal.conflictTaskSchedule.end)}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => void handleProposalDecision('reject')}
+                className="px-4 py-1.5 rounded-xl text-xs font-medium border border-gray-300 dark:border-[#444746] text-gray-700 dark:text-[#e3e3e3] hover:bg-gray-100 dark:hover:bg-[#282a2c] cursor-pointer transition"
+              >
+                {t('calendar.proposal_keep', '保持原日程')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleProposalDecision('accept')}
+                className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer transition"
+              >
+                {t('calendar.proposal_accept', '确认同步调整')}
               </button>
             </div>
           </div>

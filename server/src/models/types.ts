@@ -334,6 +334,11 @@ export interface LLMExtractionResult {
   fixed_end?: string | null;
   allow_split?: boolean | null;
   status_action?: 'start' | 'complete' | 'complete_part' | 'extend' | 'reschedule' | 'cancel' | 'reopen' | 'stop_daily' | null;
+  reschedule_mode?: 'auto' | 'next_slot' | 'specific_date' | 'specific_time' | null;
+  target_time_period?: 'morning' | 'afternoon' | 'evening' | null;
+  target_start?: string | null;
+  target_end?: string | null;
+  source_date?: string | null;
   extend_minutes?: number | null;
   target_task_name?: string | null;
   target_date?: string | null;

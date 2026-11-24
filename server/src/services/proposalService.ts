@@ -38,6 +38,9 @@ export interface ProposalPayload {
     notes?: string | null;
     session_plan?: number[] | null;
   };
+  targetTaskId?: number;
+  targetInstanceId?: number;
+  targetInstanceVersion?: number;
   proposal: ScheduleProposal;
   conflictInstanceId: number;
   conflictInstanceVersion: number;
@@ -267,6 +270,24 @@ export function resolveScheduleProposal(params: {
 
   // Reject path or expired fallback path: adopt non-displacing alternative under current constraints
   if (params.decision === 'reject' || isExpired) {
+    if (payload.targetTaskId) {
+      db.prepare(`
+        UPDATE schedule_proposals
+        SET status = ?, resolved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(isExpired ? 'expired' : 'rejected', record.id);
+
+      return {
+        success: true,
+        status: isExpired ? 'expired' : 'rejected',
+        message: isExpired
+          ? `⌛ 原改期提案已过期，已保持「${payload.newTaskSpec.title}」与「${payload.proposal.conflictTask.title}」原日程不变。`
+          : `👌 已保持原日程不变，「${payload.newTaskSpec.title}」与「${payload.proposal.conflictTask.title}」均未调整。`,
+        taskId: payload.targetTaskId,
+        planVersion: currentPlanVersion,
+      };
+    }
+
     let createdTaskId = 0;
     db.transaction(() => {
       db.prepare(`
@@ -300,12 +321,26 @@ export function resolveScheduleProposal(params: {
   }
 
   // Accept path: strictly verify version, instance state, and live occupancy
+  const existingTargetInst = payload.targetInstanceId
+    ? (db
+        .prepare('SELECT * FROM task_instances WHERE id = ? AND user_id = ?')
+        .get(payload.targetInstanceId, params.userId) as TaskInstance | undefined)
+    : undefined;
+
+  const targetStale = payload.targetTaskId
+    ? !existingTargetInst ||
+      existingTargetInst.status === 'completed' ||
+      existingTargetInst.status === 'cancelled' ||
+      (payload.targetInstanceVersion !== undefined && existingTargetInst.version !== payload.targetInstanceVersion)
+    : false;
+
   const versionStale =
     record.base_plan_version !== currentPlanVersion ||
     !conflictInst ||
     conflictInst.status === 'completed' ||
     conflictInst.status === 'cancelled' ||
-    conflictInst.version !== payload.conflictInstanceVersion;
+    conflictInst.version !== payload.conflictInstanceVersion ||
+    targetStale;
 
   const newBlocks =
     payload.proposal.newTaskSchedule.blocks && payload.proposal.newTaskSchedule.blocks.length > 0
@@ -317,8 +352,12 @@ export function resolveScheduleProposal(params: {
       ? payload.proposal.conflictTaskSchedule.blocks
       : [{ start: payload.proposal.conflictTaskSchedule.start, end: payload.proposal.conflictTaskSchedule.end }];
 
+  const excludeInstIds = payload.targetInstanceId
+    ? [payload.conflictInstanceId, payload.targetInstanceId]
+    : [payload.conflictInstanceId];
+
   const occupancyError = !versionStale
-    ? validateProposedSlotsAgainstCurrentBusy(params.userId, [payload.conflictInstanceId], [...newBlocks, ...conflictBlocks])
+    ? validateProposedSlotsAgainstCurrentBusy(params.userId, excludeInstIds, [...newBlocks, ...conflictBlocks])
     : '日程计划或冲突任务已发生变化';
 
   if (versionStale || occupancyError) {
@@ -327,6 +366,14 @@ export function resolveScheduleProposal(params: {
       SET status = 'superseded', resolved_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(record.id);
+
+    if (payload.targetTaskId) {
+      return {
+        success: false,
+        status: 'recomputed',
+        message: `原改期提案已失效（${occupancyError}），请重新发起单次再排期。`,
+      };
+    }
 
     // Recompute under current constraints
     const freshPlan = scheduleTask(params.userId, {
@@ -385,7 +432,8 @@ export function resolveScheduleProposal(params: {
   }
 
   // Valid -> commit both tasks with committed blocks inside transaction, then replan remaining movables
-  let createdTaskId = 0;
+  let affectedTaskId = payload.targetTaskId || 0;
+  let affectedInstanceId = payload.targetInstanceId || 0;
   db.transaction(() => {
     db.prepare(`
       UPDATE schedule_proposals
@@ -393,14 +441,17 @@ export function resolveScheduleProposal(params: {
       WHERE id = ?
     `).run(record.id);
 
-    const created = insertTaskFromSpec(params.userId, payload.newTaskSpec, tz, now);
-    createdTaskId = created.taskId;
+    if (!affectedTaskId || !affectedInstanceId) {
+      const created = insertTaskFromSpec(params.userId, payload.newTaskSpec, tz, now);
+      affectedTaskId = created.taskId;
+      affectedInstanceId = created.instanceId;
+    }
 
     writeCommittedBlocksForInstance({
       userId: params.userId,
       planVersion: currentPlanVersion,
-      instanceId: created.instanceId,
-      taskId: created.taskId,
+      instanceId: affectedInstanceId,
+      taskId: affectedTaskId,
       isConcurrent: Boolean(payload.newTaskSpec.is_concurrent),
       blocks: newBlocks,
     });
@@ -415,16 +466,16 @@ export function resolveScheduleProposal(params: {
     });
 
     db.prepare('UPDATE task_instances SET version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id IN (?, ?)').run(
-      created.instanceId,
+      affectedInstanceId,
       conflictInst!.id
     );
 
-    syncLegacyTaskProjection(params.userId, created.taskId, now);
+    syncLegacyTaskProjection(params.userId, affectedTaskId, now);
     syncLegacyTaskProjection(params.userId, conflictInst!.task_id, now);
   })();
 
   const replan = replanUserTasks(params.userId, {
-    preserveTaskIds: new Set([createdTaskId, conflictInst!.task_id]),
+    preserveTaskIds: new Set([affectedTaskId, conflictInst!.task_id]),
     triggerSource: 'proposal_accepted',
   });
 
@@ -432,7 +483,7 @@ export function resolveScheduleProposal(params: {
     success: true,
     status: 'accepted',
     message: `已同步调整「${payload.proposal.conflictTask.title}」并安排「${payload.newTaskSpec.title}」`,
-    taskId: createdTaskId,
+    taskId: affectedTaskId,
     planVersion: replan.planVersion,
   };
 }

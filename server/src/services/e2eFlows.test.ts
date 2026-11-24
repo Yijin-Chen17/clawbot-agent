@@ -308,4 +308,110 @@ describe('End-to-End Integration: Recurrence Rollover, Controllers, Auth Revocat
       .all(q4TaskId) as any[];
     assert.equal(q4Blocks.length, 1);
   });
+
+  it('schedules future daily/weekly fallback & split chunks without afternoon hijack and blocks overlapping fixed recurrences', async () => {
+    // 1. Long movable Q1 daily task (120m > 90m) replanned at 13:05 afternoon + external block on 2026-12-09 morning
+    const resDaily = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes,
+        urgency, importance, importance_tier, time_mode, recurrence_rule,
+        is_fixed, is_concurrent, status, score_scale, active_template
+      ) VALUES (?, '每日深度阅读', 120, 120, 80, 85, 'vital', 'daily_fixed', '{"type":"daily"}', 0, 0, 'pending_slot', 100, 1)
+    `).run(userId);
+    const dailyTaskId = Number(resDaily.lastInsertRowid);
+
+    // Weekly task (Mon/Wed/Fri) where 2026-12-09 (Wed) blocks 09:00-18:00 so it MUST fall back to evening on 12-09
+    const resWeekly = db.prepare(`
+      INSERT INTO tasks (
+        user_id, title, duration_minutes, original_duration_minutes,
+        urgency, importance, importance_tier, time_mode, recurrence_rule,
+        is_fixed, is_concurrent, status, score_scale, active_template
+      ) VALUES (?, '每周一三五练琴', 45, 45, 65, 70, 'support', 'daily_fixed', '{"type":"weekly","daysOfWeek":[1,3,5]}', 0, 0, 'pending_slot', 100, 1)
+    `).run(userId);
+    const weeklyTaskId = Number(resWeekly.lastInsertRowid);
+
+    // Block 2026-12-09 09:00-12:00 and 13:00-18:00
+    db.prepare(`
+      INSERT INTO external_events (user_id, title, start_time, end_time, status, transparency)
+      VALUES (?, '周三全天外出', ?, ?, 'CONFIRMED', 'OPAQUE')
+    `).run(userId, wallClockIso('2026-12-09', 9, 0), wallClockIso('2026-12-09', 18, 0));
+
+    // Replan in the afternoon (13:05)
+    const tuesdayAfternoon = new Date('2026-12-08T13:05:00+08:00');
+    const replan = replanUserTasks(userId, { triggerSource: 'test_afternoon_fallback', now: tuesdayAfternoon });
+    assert.equal(replan.success, true);
+
+    // All 14 instances of the 120m daily task must be fully scheduled (no dropped 30m tail on future days!)
+    const dailyInstances = db
+      .prepare("SELECT business_date, plan_status, allocated_minutes, unallocated_minutes FROM task_instances WHERE task_id = ? ORDER BY business_date ASC")
+      .all(dailyTaskId) as Array<{ business_date: string; plan_status: string; allocated_minutes: number; unallocated_minutes: number }>;
+    assert.equal(dailyInstances.length, 14);
+    for (const inst of dailyInstances) {
+      assert.equal(inst.plan_status, 'scheduled', `Expected full schedule on ${inst.business_date}, got ${inst.plan_status}`);
+      assert.equal(inst.allocated_minutes, 120);
+      assert.equal(inst.unallocated_minutes, 0);
+    }
+
+    // Future normal days for the Q1 daily task must pick a peak slot (not 13:05 afternoon low-energy!)
+    const firstFutureDailyBlock = db
+      .prepare(`
+        SELECT sb.start_time FROM schedule_blocks sb
+        JOIN task_instances ti ON ti.id = sb.instance_id
+        WHERE sb.task_id = ? AND ti.business_date = '2026-12-10' AND sb.status = 'planned'
+        ORDER BY sb.start_time ASC LIMIT 1
+      `)
+      .get(dailyTaskId) as { start_time: string };
+    const hmFuture = getAccountLocalTimeHm(new Date(firstFutureDailyBlock.start_time), 'Asia/Shanghai');
+    assert.notEqual(hmFuture, '13:05');
+
+    // Weekly task on 2026-12-09 (future conflict day) MUST fall back to evening >= 19:00 instead of being dropped
+    const wedWeeklyBlocks = db
+      .prepare(`
+        SELECT sb.start_time, sb.end_time FROM schedule_blocks sb
+        JOIN task_instances ti ON ti.id = sb.instance_id
+        WHERE sb.task_id = ? AND ti.business_date = '2026-12-09' AND sb.status = 'planned'
+      `)
+      .all(weeklyTaskId) as Array<{ start_time: string; end_time: string }>;
+    assert.equal(wedWeeklyBlocks.length, 1);
+    assert.ok(new Date(wedWeeklyBlocks[0].start_time).getTime() >= new Date(wallClockIso('2026-12-09', 19, 0)).getTime());
+
+    // 2. Fixed recurring overlap guard: Mon/Wed fixed task at 20:00-21:00 vs Daily fixed task at 20:00-21:00 created on Tuesday
+    const monWedCreate = createMockResponse();
+    await createTask(
+      {
+        user: { id: userId },
+        headers: {},
+        body: {
+          title: '周一三固定课程',
+          time_mode: 'daily_fixed',
+          recurrence_rule: JSON.stringify({ type: 'weekly', daysOfWeek: [1, 3] }),
+          is_fixed: 1,
+          scheduled_start: wallClockIso('2026-12-07', 20, 0),
+          scheduled_end: wallClockIso('2026-12-07', 21, 0),
+          duration_minutes: 60,
+        },
+      } as any,
+      monWedCreate.res
+    );
+    assert.equal(monWedCreate.getStatus(), 201);
+
+    const dailyFixedConflict = createMockResponse();
+    await createTask(
+      {
+        user: { id: userId },
+        headers: {},
+        body: {
+          title: '每日固定冲突任务',
+          time_mode: 'daily_fixed',
+          recurrence_rule: JSON.stringify({ type: 'daily' }),
+          is_fixed: 1,
+          scheduled_start: wallClockIso('2026-12-08', 20, 0), // Tuesday: clear today, collides Wednesday!
+          scheduled_end: wallClockIso('2026-12-08', 21, 0),
+          duration_minutes: 60,
+        },
+      } as any,
+      dailyFixedConflict.res
+    );
+    assert.equal(dailyFixedConflict.getStatus(), 409);
+  });
 });

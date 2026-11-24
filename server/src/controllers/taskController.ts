@@ -4,16 +4,16 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { Task, TaskInstance } from '../models/types.js';
 import { recurringDebt } from '../services/calendarOptimizer.js';
-import { completeTaskPart, replanUserTasks } from '../services/scheduler.js';
+import { completeTaskPart, replanUserTasks, rescheduleSingleTask } from '../services/scheduler.js';
 import {
   createTaskCommand,
   deleteTaskCommand,
   executeQuickActionCommand,
   updateTaskCommand,
 } from '../services/taskService.js';
-import { resolveScheduleProposal } from '../services/proposalService.js';
+import { createScheduleProposal, resolveScheduleProposal } from '../services/proposalService.js';
 import { claimCommandInbox, completeCommandInbox, failCommandInbox } from '../services/inboxService.js';
-import { getLatestPlanVersion } from '../services/instanceService.js';
+import { ensureTaskInstance, getLatestPlanVersion } from '../services/instanceService.js';
 import { commitBackupImport, exportUserBackup, previewBackupImport } from '../services/backupService.js';
 import { parseTagsArray } from '../services/taskCommandSchema.js';
 import { getUserTimezone } from '../services/accountService.js';
@@ -267,29 +267,100 @@ export function deleteAllTasks(req: AuthenticatedRequest, res: Response): void {
 
 export async function rescheduleTask(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user!.id;
-  const { id } = req.params;
-
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task | undefined;
-  if (!task) {
-    res.status(404).json({ error: '任务不存在' });
-    return;
-  }
-
-  if (task.is_fixed) {
-    res.status(400).json({ error: '固定时间任务请先编辑并解除固定，再重新排程' });
-    return;
-  }
+  const taskId = Number(req.params.id);
+  const {
+    mode,
+    target_date,
+    target_time_period,
+    target_start,
+    target_end,
+    business_date,
+    instance_id,
+    block_id,
+    unpin_fixed,
+    allow_proposal,
+  } = req.body || {};
 
   try {
-    const replan = replanUserTasks(userId, { triggerSource: 'reschedule_task' });
-    const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, userId) as Task;
-    if (!updated.scheduled_start) {
-      res.status(400).json({ error: '暂无合适空闲时段，原日程已保留' });
+    const result = rescheduleSingleTask({
+      userId,
+      taskId,
+      instanceId: instance_id !== undefined ? Number(instance_id) : undefined,
+      blockId: typeof block_id === 'string' ? block_id : undefined,
+      businessDate: typeof business_date === 'string' ? business_date : undefined,
+      mode: mode || undefined,
+      targetDate: typeof target_date === 'string' ? target_date : undefined,
+      targetTimePeriod: target_time_period || undefined,
+      targetStart: typeof target_start === 'string' ? target_start : undefined,
+      targetEnd: typeof target_end === 'string' ? target_end : undefined,
+      unpinFixed: Boolean(unpin_fixed),
+      allowProposal: allow_proposal !== undefined ? Boolean(allow_proposal) : true,
+      triggerSource: 'web_single_reschedule',
+    });
+
+    if (result.proposal && result.task && result.targetInstanceId) {
+      const tz = getUserTimezone(userId);
+      const conflictInst = ensureTaskInstance(
+        userId,
+        result.proposal.conflictTask.id,
+        getAccountLocalDateKey(new Date(), tz),
+        new Date()
+      );
+      if (conflictInst) {
+        const propRec = createScheduleProposal({
+          userId,
+          basePlanVersion: getLatestPlanVersion(userId),
+          reasonType: result.proposal.type,
+          reasonText: result.proposal.reasonText,
+          payload: {
+            newTaskSpec: {
+              title: result.task.title,
+              duration_minutes: result.task.duration_minutes,
+              urgency: result.task.urgency,
+              importance: result.task.importance,
+              time_mode: result.task.time_mode ?? undefined,
+              deadline: result.task.deadline,
+              deadline_kind: result.task.deadline_kind ?? undefined,
+              is_concurrent: Boolean(result.task.is_concurrent),
+            },
+            targetTaskId: result.task.id,
+            targetInstanceId: result.targetInstanceId,
+            targetInstanceVersion: result.targetInstanceVersion,
+            proposal: result.proposal,
+            conflictInstanceId: conflictInst.id,
+            conflictInstanceVersion: conflictInst.version,
+          },
+        });
+        res.json({
+          success: true,
+          message: result.message,
+          task: { ...result.task, tags: parseTagsArray(result.task.tags) },
+          previousSchedule: result.previousSchedule,
+          proposal: { ...result.proposal, proposalId: propRec.id },
+        });
+        return;
+      }
+    }
+
+    if (!result.success) {
+      res.status(result.statusCode || 400).json({
+        error: result.message,
+        previousSchedule: result.previousSchedule,
+      });
       return;
     }
-    res.json({ message: '已重新规划全部可移动任务', task: updated, replan });
+
+    res.json({
+      success: true,
+      message: result.message,
+      task: result.task ? { ...result.task, tags: parseTagsArray(result.task.tags) } : result.task,
+      instance: result.instance,
+      planVersion: result.planVersion,
+      previousSchedule: result.previousSchedule,
+      newSchedule: result.newSchedule,
+    });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || '重新排程失败' });
+    res.status(400).json({ error: error.message || '单次再排期失败' });
   }
 }
 

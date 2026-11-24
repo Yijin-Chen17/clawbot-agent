@@ -16,10 +16,11 @@ import {
   resolveCommandTarget,
   updateTaskCommand,
 } from './taskService.js';
-import { resolveScheduleProposal } from './proposalService.js';
+import { createScheduleProposal, resolveScheduleProposal } from './proposalService.js';
 import { resolveFixedTaskTime } from './fixedTaskTime.js';
-import { completeTaskPart, replanUserTasks } from './scheduler.js';
-import { queryScheduleForLocalDate, queryTodoSummary } from './scheduleQueryService.js';
+import { completeTaskPart, replanUserTasks, rescheduleSingleTask } from './scheduler.js';
+import { ensureTaskInstance, getLatestPlanVersion } from './instanceService.js';
+import { queryScheduleForLocalDate, queryTodoSummary, queryUnscheduledTasks } from './scheduleQueryService.js';
 import { syncAllUserSubscriptions } from './calendarSync.js';
 import { formatInAccountTz, formatTimeInAccountTz, getAccountLocalDateKey } from '../utils/timezone.js';
 import { renderTodoListImage, renderWeekCalendarImage } from './cardRenderer.js';
@@ -50,9 +51,10 @@ function getHelpMessage(isActivation = false): string {
   return (
     prefix +
     `📅【查询日程与日历】\n` +
-    `• 发送“查看日历”/“日历”/“周日历”：获取完整周 24小时亮色日程网格图\n` +
+    `• 发送“查看日历”/“日历”/“周日历”：获取完整周 24小时亮色日程网格图（含已排期/未排期汇总）\n` +
     `• 发送“查看任务”/“待办清单”/“todo”：查看待办事项清单图\n` +
-    `• 发送“重新排程”/“智能排程”：按最新紧急度与时间自动重排\n\n` +
+    `• 发送“重新排程”/“全部重排”：按最新紧急度与时间自动重排全部可移动日程\n` +
+    `• 单次再排期：发送“把 [名称] 改期到明天下午”、“[名称] 换个时间”或“把 [名称] 排到明天10点”\n\n` +
     `✏️【智能添加任务】\n` +
     `• 常规任务：如“明天下午写代码2小时，重要且紧急，周三前交”\n` +
     `• 灵活任务：如“整理桌面1小时”（无需指定截止日期）\n` +
@@ -174,10 +176,20 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
     trimmed.includes('周日历')
   ) {
     let syncInfo = '';
+    let unscheduledHint = '';
     if (!dryRun) {
       const syncRes = await syncAllUserSubscriptions(userId);
-      const replanRes = replanUserTasks(userId, { triggerSource: 'weixin_view_calendar' });
-      syncInfo = ` (外部日程 ${syncRes.totalEvents} 项 / 待办 ${replanRes.scheduledCount} 项)`;
+      replanUserTasks(userId, { triggerSource: 'weixin_view_calendar' });
+      const todoSummary = queryTodoSummary(userId, 20);
+      const scheduledTotal = todoSummary.counts.scheduled + todoSummary.counts.inProgress;
+      const unscheduledTotal = todoSummary.counts.pendingSlot;
+      syncInfo = `（外部日程 ${syncRes.totalEvents} 项 · 已排期 ${scheduledTotal} 项 · 未排期 ${unscheduledTotal} 项）`;
+      if (unscheduledTotal > 0) {
+        const unscheduledList = queryUnscheduledTasks(userId, 5);
+        if (unscheduledList.length > 0) {
+          unscheduledHint = `\n⏳ 未排期任务：${unscheduledList.map(t => `${t.title}(${t.duration_minutes}m)`).join('、')}${unscheduledTotal > unscheduledList.length ? ' 等' : ''}`;
+        }
+      }
     }
     let imageBuffer: Buffer | undefined;
     if (!skipImages && channel === 'weixin_ilink') {
@@ -186,7 +198,7 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       } catch {}
     }
     return withBanner({
-      replyText: `📅 日历已更新${syncInfo}` + (imageBuffer ? ' 👇' : ''),
+      replyText: `📅 日历已更新${syncInfo}` + (imageBuffer ? ' 👇' : '') + unscheduledHint,
       imageBuffer,
       diagnostics: { intent: 'view_calendar', dryRun },
     });
@@ -212,29 +224,35 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       } catch {}
     }
     return withBanner({
-      replyText: `📝 待办任务清单 (共 ${summary.counts.total} 项，进行中 ${summary.counts.inProgress} / 已排 ${summary.counts.scheduled} / 待排 ${summary.counts.pendingSlot})` + (imageBuffer ? ' 👇' : ''),
+      replyText: `📝 待办任务清单 (共 ${summary.counts.total} 项：已排期 ${summary.counts.scheduled + summary.counts.inProgress} / 未排期 ${summary.counts.pendingSlot} / 已完成 ${summary.counts.completed})` + (imageBuffer ? ' 👇' : ''),
       imageBuffer,
       diagnostics: { intent: 'view_todos', counts: summary.counts },
     });
   }
 
-  if (
-    trimmed === '重新规划' ||
-    trimmed === '重新排程' ||
-    trimmed === '刷新排程' ||
-    trimmed === '更新日历' ||
-    trimmed === '智能排程' ||
-    trimmed.includes('重新排程') ||
-    trimmed.includes('重新规划')
-  ) {
+  const GLOBAL_REPLAN_EXACT = new Set([
+    '重新规划',
+    '重新排程',
+    '重新排期',
+    '全部重排',
+    '重排全部',
+    '全部重新排程',
+    '全部重新排期',
+    '刷新排程',
+    '更新日历',
+    '智能排程',
+  ]);
+
+  if (GLOBAL_REPLAN_EXACT.has(trimmed)) {
     if (dryRun) {
       return withBanner({
-        replyText: '🔄 [演练模式] 已模拟触发重新排程（未修改生产数据）。',
+        replyText: '🔄 [演练模式] 已模拟触发全局重新排程（未修改生产数据）。',
         diagnostics: { intent: 'replan', dryRun: true },
       });
     }
     await syncAllUserSubscriptions(userId);
     const replanRes = replanUserTasks(userId, { triggerSource: 'nl_replan' });
+    const todoSummary = queryTodoSummary(userId, 20);
     let imageBuffer: Buffer | undefined;
     if (!skipImages && channel === 'weixin_ilink') {
       try {
@@ -242,7 +260,7 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       } catch {}
     }
     return withBanner({
-      replyText: `🔄 ${replanRes.summary}` + (imageBuffer ? ' 👇' : ''),
+      replyText: `🔄 ${replanRes.summary}（当前已排期 ${todoSummary.counts.scheduled + todoSummary.counts.inProgress} 项 · 未排期 ${todoSummary.counts.pendingSlot} 项）` + (imageBuffer ? ' 👇' : ''),
       imageBuffer,
       diagnostics: { intent: 'replan', replanRes },
     });
@@ -348,10 +366,18 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       lines.push(`• ${icon} [${s}-${e}] ${b.title}${partSuffix} (${b.durationMinutes}m)`);
     }
 
+    const unscheduledList = queryUnscheduledTasks(userId, 5);
+    const unscheduledText =
+      unscheduledList.length > 0
+        ? `\n\n⏳ 未排期任务 (${unscheduledList.length} 项)：\n` +
+          unscheduledList.map(t => `• ${t.title} (${t.duration_minutes}m)`).join('\n') +
+          `\n💡 回复“把 [任务名称] 排期”可单独安排时段`
+        : '';
+
     const replyText =
-      lines.length > 0
-        ? `📅 ${queryDate} 日程安排：\n` + lines.join('\n')
-        : `📅 ${queryDate} 暂无外部日程或已排程任务`;
+      (lines.length > 0
+        ? `📅 ${queryDate} 已排期日程：\n` + lines.join('\n')
+        : `📅 ${queryDate} 暂无外部日程或已排期任务`) + unscheduledText;
 
     let imageBuffer: Buffer | undefined;
     if (!skipImages && channel === 'weixin_ilink') {
@@ -370,16 +396,43 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
     if (draft) consumeConversationDraft(userId, channel, threadKey, draft.version);
     const action = parsed.status_action || 'complete';
 
+    // Global replan via natural language when no target task/time/date is specified and no recent reminder context
+    if (
+      action === 'reschedule' &&
+      !parsed.target_task_name &&
+      !parsed.target_date &&
+      !parsed.target_start &&
+      !parsed.fixed_start &&
+      !parsed.reschedule_mode &&
+      !findRecentReminderTarget(userId)
+    ) {
+      await syncAllUserSubscriptions(userId);
+      const replanRes = replanUserTasks(userId, { triggerSource: 'nl_global_reschedule' });
+      const todoSummary = queryTodoSummary(userId, 20);
+      let imageBuffer: Buffer | undefined;
+      if (!skipImages && channel === 'weixin_ilink') {
+        try {
+          imageBuffer = await renderWeekCalendarImage(userId);
+        } catch {}
+      }
+      return withBanner({
+        replyText: `🔄 ${replanRes.summary}（当前已排期 ${todoSummary.counts.scheduled + todoSummary.counts.inProgress} 项 · 未排期 ${todoSummary.counts.pendingSlot} 项）` + (imageBuffer ? ' 👇' : ''),
+        imageBuffer,
+        diagnostics: { intent: 'status_update', action: 'global_reschedule', replanRes },
+      });
+    }
+
     let targetTask: Task | undefined;
     let targetInstanceId: number | undefined;
     let targetBlockId: string | undefined;
 
     if (parsed.target_task_name) {
+      const lookupDate = parsed.source_date || (action === 'reschedule' ? undefined : parsed.target_date || undefined);
       const resolved = resolveCommandTarget({
         userId,
         name: parsed.target_task_name,
         type: 'task',
-        date: parsed.target_date || undefined,
+        date: lookupDate,
         includeCompleted: action === 'reopen',
       });
       if (resolved.status === 'ambiguous') {
@@ -447,13 +500,139 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
     }
 
     if (action === 'reschedule') {
-      const replan = replanUserTasks(userId, { triggerSource: 'nl_reschedule' });
-      const latest = db.prepare('SELECT * FROM tasks WHERE id = ?').get(targetTask.id) as Task;
+      const targetStart = parsed.target_start || parsed.fixed_start || undefined;
+      const targetEnd = parsed.target_end || parsed.fixed_end || undefined;
+      const reschedMode = targetStart
+        ? 'specific_time'
+        : parsed.target_date
+        ? 'specific_date'
+        : parsed.reschedule_mode || undefined;
+      const bizDate =
+        parsed.source_date ||
+        (reschedMode !== 'specific_date' && reschedMode !== 'specific_time' ? parsed.target_date || undefined : undefined);
+
+      const res = rescheduleSingleTask({
+        userId,
+        taskId: targetTask.id,
+        instanceId: targetInstanceId,
+        blockId: targetBlockId,
+        businessDate: bizDate,
+        mode: reschedMode,
+        targetDate: parsed.target_date || undefined,
+        targetTimePeriod: parsed.target_time_period || undefined,
+        targetStart,
+        targetEnd,
+        allowProposal: true,
+        unpinFixed: Boolean(targetTask.is_fixed && !targetStart),
+        triggerSource: 'nl_single_reschedule',
+      });
+
+      if (res.proposal && res.targetInstanceId) {
+        const conflictInst = ensureTaskInstance(
+          userId,
+          res.proposal.conflictTask.id,
+          getAccountLocalDateKey(new Date(), tz),
+          new Date()
+        );
+        if (conflictInst) {
+          const propRec = createScheduleProposal({
+            userId,
+            basePlanVersion: getLatestPlanVersion(userId),
+            reasonType: res.proposal.type,
+            reasonText: res.proposal.reasonText,
+            payload: {
+              newTaskSpec: {
+                title: targetTask.title,
+                duration_minutes: targetTask.duration_minutes,
+                urgency: targetTask.urgency,
+                importance: targetTask.importance,
+                time_mode: targetTask.time_mode ?? undefined,
+                deadline: targetTask.deadline,
+                deadline_kind: targetTask.deadline_kind ?? undefined,
+                is_concurrent: Boolean(targetTask.is_concurrent),
+              },
+              targetTaskId: targetTask.id,
+              targetInstanceId: res.targetInstanceId,
+              targetInstanceVersion: res.targetInstanceVersion,
+              proposal: res.proposal,
+              conflictInstanceId: conflictInst.id,
+              conflictInstanceVersion: conflictInst.version,
+            },
+          });
+
+          const propWithId = { ...res.proposal, proposalId: propRec.id };
+          upsertConversationDraft({
+            userId,
+            channel,
+            threadKey,
+            intent: 'confirm_schedule_swap',
+            draftData: {
+              proposalId: propRec.id,
+              newTaskTitle: targetTask.title,
+              proposal: propWithId,
+            },
+            ttlMinutes: 15,
+          });
+
+          const oldS = formatInAccountTz(propWithId.conflictTask.scheduled_start, tz);
+          const oldE = formatTimeInAccountTz(propWithId.conflictTask.scheduled_end, tz);
+          const confNewS = formatInAccountTz(propWithId.conflictTaskSchedule.start, tz);
+          const confNewE = formatTimeInAccountTz(propWithId.conflictTaskSchedule.end, tz);
+          const newS = formatInAccountTz(propWithId.newTaskSchedule.start, tz);
+          const newE = formatTimeInAccountTz(propWithId.newTaskSchedule.end, tz);
+
+          const replyText =
+            `📅【单次再排期 · 冲突调整建议】\n` +
+            `将「${targetTask.title}」再排期至 ${newS} ~ ${newE} 时，该时段当前已安排「${propWithId.conflictTask.title}」（原定：${oldS} ~ ${oldE}）。\n\n` +
+            `💡 建议同步调整：\n` +
+            `• 「${targetTask.title}」改期至：${newS} ~ ${newE}\n` +
+            `• 「${propWithId.conflictTask.title}」顺延至：${confNewS} ~ ${confNewE}\n\n` +
+            `是否确认同步修改？\n` +
+            `👉 回复【确认】或【好】即可同步修改\n` +
+            `👉 回复【保持】或【不改】则保持原日程不变`;
+
+          return withBanner({
+            replyText,
+            diagnostics: { intent: 'status_update', action: 'single_reschedule_proposal', proposal: propWithId },
+          });
+        }
+      }
+
+      if (!res.success) {
+        return withBanner({
+          replyText: `⚠️ ${res.message}`,
+          diagnostics: { intent: 'status_update', action: 'single_reschedule', error: res.message },
+        });
+      }
+
+      const prevText =
+        res.previousSchedule?.start && res.previousSchedule?.end
+          ? `\n• 原安排：${formatInAccountTz(res.previousSchedule.start, tz)} ~ ${formatTimeInAccountTz(res.previousSchedule.end, tz)}`
+          : '';
+      const newBlocks = res.newSchedule?.blocks || [];
+      const newText =
+        newBlocks.length > 1
+          ? `\n• 新安排（共 ${newBlocks.length} 节）：\n` +
+            newBlocks
+              .map((b, idx) => `  ${idx + 1}. ${formatInAccountTz(b.start, tz)} ~ ${formatTimeInAccountTz(b.end, tz)} (${b.duration}分钟)`)
+              .join('\n')
+          : res.newSchedule?.start && res.newSchedule?.end
+          ? `\n• 新安排：${formatInAccountTz(res.newSchedule.start, tz)} ~ ${formatTimeInAccountTz(res.newSchedule.end, tz)}`
+          : '';
+
+      let imageBuffer: Buffer | undefined;
+      if (!skipImages && channel === 'weixin_ilink') {
+        try {
+          imageBuffer = await renderWeekCalendarImage(userId);
+        } catch {}
+      }
+
       return withBanner({
-        replyText: latest?.scheduled_start
-          ? `🔄 ${formatTaskScheduleReply(latest, tz)}`
-          : `⚠️ 「${targetTask.title}」暂未排入空闲时段：${replan.summary}`,
-        diagnostics: { intent: 'status_update', action, replan },
+        replyText:
+          `🔄 已为「${targetTask.title}」完成单次再排期${prevText}${newText}\n• 其余已排定日程保持不变。` +
+          (imageBuffer ? ' 👇' : ''),
+        imageBuffer,
+        diagnostics: { intent: 'status_update', action: 'single_reschedule', res },
       });
     }
 
@@ -774,6 +953,7 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
       `💡 未识别到具体日程或任务操作。您可以这样说：\n` +
       `• "明天写代码2小时" / "整理桌面1小时"\n` +
       `• "看看今天的日程" / "查看任务"\n` +
+      `• "把写代码改期到明天下午" / "写代码换个时间"\n` +
       `• "完成 写代码" / "延长半小时"\n` +
       `回复“帮助”查看全部指令。`,
     diagnostics: { intent: 'other', parsed },

@@ -87,6 +87,7 @@ export interface WorkWindow {
 
 export interface ScheduleOptions {
   targetDate: Date;
+  now?: Date;
   timezone?: string;
   workStartHour?: number;
   workEndHour?: number;
@@ -733,7 +734,7 @@ export function runSingleDaySchedule(
   } = options;
 
   const targetDateStr = formatLocalDate(targetDate, timezone);
-  const todayStr = formatLocalDate(new Date(), timezone);
+  const todayStr = formatLocalDate(options.now || new Date(), timezone);
 
   const dayStart = buildDayTime(targetDate, targetDateStr, workStartHour, timezone);
   const dayEnd = buildDayTime(targetDate, targetDateStr, workEndHour, timezone);
@@ -1112,6 +1113,7 @@ export function scheduleTaskGroupInHorizon(
 
     const dayResult = runSingleDaySchedule(candidates, fixedEvents, {
       targetDate,
+      now,
       timezone: config.timezone,
       workStartHour: config.workStartHour,
       workEndHour: config.workEndHour,
@@ -1250,7 +1252,9 @@ function scheduleRecurringMovableGroups<
       addCandidate(Math.round(hm * 60));
     }
 
-    // 2. Gather candidate slots across free windows (prioritizing earliest matching day, plus step 30m)
+    const quadrant = calculateQuadrant(template.importance, template.urgency, template.score_scale);
+
+    // 2. Gather candidate slots across free windows (including clean 30m clock grid marks across all matching days)
     const typicalDuration = Math.min(
       maxContinuous,
       Math.max(15, params.remainingNeededByInstance.get(sortedRows[0].id) || template.duration_minutes || 45)
@@ -1263,12 +1267,18 @@ function scheduleRecurringMovableGroups<
         const startHm = getHourDecimalInTz(new Date(w.start), params.timezone);
         const startMin = Math.round(startHm * 60);
         const spanMin = Math.floor((w.end - w.start) / 60000);
-        for (let off = 0; off + typicalDuration <= spanMin; off += 30) {
-          addCandidate(startMin + off);
+        if (spanMin < typicalDuration) continue;
+        addCandidate(startMin);
+        const firstGridMin = Math.ceil(startMin / 30) * 30;
+        const maxStartMin = startMin + spanMin - typicalDuration;
+        for (let m = firstGridMin; m <= maxStartMin; m += 30) {
+          addCandidate(m);
         }
       }
-      if (candidateAnchors.length >= 48) break;
     }
+
+    const hasFutureRows = sortedRows.some(r => (dayKeyToOffset.get(r.business_date) ?? 0) > 0);
+    const refBizDate = sortedRows.find(r => (dayKeyToOffset.get(r.business_date) ?? 0) > 0)?.business_date || sortedRows[0].business_date;
 
     let bestAnchor: number | null = null;
     let bestHits = -1;
@@ -1277,7 +1287,8 @@ function scheduleRecurringMovableGroups<
     for (const anchorMin of candidateAnchors) {
       const hh = Math.floor(anchorMin / 60);
       const mm = anchorMin % 60;
-      let hits = 0;
+      let futureHits = 0;
+      let todayHits = 0;
 
       for (const r of sortedRows) {
         const needed = params.remainingNeededByInstance.get(r.id) || 0;
@@ -1292,20 +1303,32 @@ function scheduleRecurringMovableGroups<
         const slotStart = zonedWallClockToUtc(r.business_date, hh, mm, 0, 0, params.timezone);
         const slotEnd = new Date(slotStart.getTime() + blockDur * 60000);
         if (intervalFitsWindows(wins, slotStart.getTime(), slotEnd.getTime())) {
-          hits++;
+          if (dOffset > 0) futureHits++;
+          else todayHits++;
         }
       }
 
+      // Do not let today's elapsed hours (releaseTimeMsToday) penalize morning peak slots for all future days
+      const effectiveHits = hasFutureRows && futureHits > 0 ? futureHits : futureHits + todayHits;
+      const refStart = zonedWallClockToUtc(refBizDate, hh, mm, 0, 0, params.timezone);
+      const energyZone = classifySlotEnergy(refStart, typicalDuration, params.timezone);
+      let energyScore = 0;
+      if (quadrant === 'q1' || quadrant === 'q2') {
+        energyScore = energyZone === 'peak' ? 300 : energyZone === 'moderate' ? 150 : energyZone === 'low' ? 50 : 0;
+      } else {
+        energyScore = energyZone === 'low' || energyZone === 'moderate' ? 200 : energyZone === 'fragment' ? 150 : 100;
+      }
+
       const daytimeBonus = anchorMin >= 8 * 60 && anchorMin <= 22 * 60 ? 1000 : 0;
-      const tieScore = daytimeBonus - anchorMin;
-      if (hits > bestHits || (hits === bestHits && tieScore > bestTie)) {
-        bestHits = hits;
+      const cleanGridBonus = anchorMin % 30 === 0 ? 5 : anchorMin % 15 === 0 ? 2 : 0;
+      const todayTieBonus = todayHits * 20;
+      const tieScore = daytimeBonus + energyScore + todayTieBonus + cleanGridBonus - anchorMin * 0.01;
+      if (effectiveHits > bestHits || (effectiveHits === bestHits && tieScore > bestTie)) {
+        bestHits = effectiveHits;
         bestTie = tieScore;
         bestAnchor = anchorMin;
       }
     }
-
-    const quadrant = calculateQuadrant(template.importance, template.urgency, template.score_scale);
 
     for (const r of sortedRows) {
       const needed = params.remainingNeededByInstance.get(r.id) || 0;
@@ -1355,7 +1378,7 @@ function scheduleRecurringMovableGroups<
           });
 
           const leftover = needed - firstDur;
-          if (leftover > 0 && remainingCap - firstDur >= 15) {
+          if (leftover > 0 && remainingCap - firstDur > 0) {
             const tempBusy: FixedCalendarBlock[] = [
               ...params.fixedBusy,
               {
@@ -1372,6 +1395,7 @@ function scheduleRecurringMovableGroups<
                 {
                   ...template,
                   id: r.task_id,
+                  time_mode: 'flexible',
                   duration_minutes: leftover,
                   session_plan: null,
                   is_fixed: 0,
@@ -1381,6 +1405,7 @@ function scheduleRecurringMovableGroups<
               tempBusy,
               {
                 targetDate,
+                now: params.now,
                 timezone: params.timezone,
                 workStartHour: params.workStartHour,
                 workEndHour: params.workEndHour,
@@ -1408,6 +1433,7 @@ function scheduleRecurringMovableGroups<
             {
               ...template,
               id: r.task_id,
+              time_mode: 'flexible',
               duration_minutes: needed,
               is_fixed: 0,
               completed_dates: '[]',
@@ -1416,6 +1442,7 @@ function scheduleRecurringMovableGroups<
           params.fixedBusy,
           {
             targetDate,
+            now: params.now,
             timezone: params.timezone,
             workStartHour: params.workStartHour,
             workEndHour: params.workEndHour,
@@ -1688,13 +1715,15 @@ export function replanUserTasks(
         const mm = Math.round((hm - hh) * 60);
         const dayStart = zonedWallClockToUtc(row.business_date, hh, mm, 0, 0, tz);
         const dayEnd = new Date(dayStart.getTime() + durMs);
-        const hitsExt = row.is_concurrent !== 1 && externalBusy.some(ext => intervalsOverlap(dayStart, dayEnd, ext.start, ext.end));
+        const hitsBusy =
+          row.is_concurrent !== 1 &&
+          exclusiveFixedBusy.some(busy => intervalsOverlap(dayStart, dayEnd, busy.start, busy.end));
         materializedFixedByInstance.set(row.id, [
           {
             start: dayStart,
             end: dayEnd,
             durationMinutes: Math.max(1, Math.round(durMs / 60000)),
-            conflict: hitsExt,
+            conflict: hitsBusy,
           },
         ]);
         const busyEntry: FixedCalendarBlock = {
@@ -2751,5 +2780,800 @@ export function extendTaskDuration(
     newEnd,
     newEndStr,
     task: updated,
+  };
+}
+
+export type SingleRescheduleMode = 'auto' | 'next_slot' | 'specific_date' | 'specific_time';
+export type TimePeriodPreference = 'morning' | 'afternoon' | 'evening';
+
+export interface SingleRescheduleOptions {
+  userId: number;
+  taskId: number;
+  instanceId?: number;
+  blockId?: string;
+  businessDate?: string;
+  mode?: SingleRescheduleMode;
+  targetDate?: string | null;
+  targetTimePeriod?: TimePeriodPreference | null;
+  targetStart?: string | null;
+  targetEnd?: string | null;
+  allowProposal?: boolean;
+  unpinFixed?: boolean;
+  triggerSource?: string;
+  now?: Date;
+}
+
+export interface SingleRescheduleResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  task?: Task;
+  instance?: TaskInstance;
+  planVersion?: number;
+  previousSchedule?: {
+    start: string | null;
+    end: string | null;
+    blocks: Array<{ start: string; end: string; duration: number }>;
+  };
+  newSchedule?: {
+    start: string | null;
+    end: string | null;
+    blocks: Array<{ start: string; end: string; duration: number }>;
+  };
+  proposal?: ScheduleProposal;
+  targetInstanceId?: number;
+  targetInstanceVersion?: number;
+}
+
+function getPeriodBoundsMs(
+  dateKey: string,
+  period: TimePeriodPreference | null | undefined,
+  timezone: string
+): { startMs: number; endMs: number } | null {
+  if (!period) return null;
+  const dayStart = zonedWallClockToUtc(dateKey, 0, 0, 0, 0, timezone).getTime();
+  if (period === 'morning') {
+    return {
+      startMs: dayStart + 6 * 3600_000,
+      endMs: dayStart + 12 * 3600_000,
+    };
+  }
+  if (period === 'afternoon') {
+    return {
+      startMs: dayStart + 12 * 3600_000,
+      endMs: dayStart + 18 * 3600_000,
+    };
+  }
+  return {
+    startMs: dayStart + 18 * 3600_000,
+    endMs: dayStart + 24 * 3600_000,
+  };
+}
+
+function formatSlotBrief(startIso: string, endIso: string, tz: string): string {
+  const s = new Date(startIso);
+  const e = new Date(endIso);
+  const sStr = s.toLocaleString('zh-CN', {
+    timeZone: tz,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const eStr = e.toLocaleTimeString('zh-CN', {
+    timeZone: tz,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return `${sStr}–${eStr}`;
+}
+
+/**
+ * 针对单个任务（或周期任务的单天实例）执行再排期，保留其余已排定任务不变。
+ * 支持四种模式：
+ * - auto：为当前未排期或需自动安排的任务寻找最合适空闲时段
+ * - next_slot：跳过当前已排时段，向后（或避开原时段）寻找下一个可用时段
+ * - specific_date：从指定日期（及可选上午/下午/晚上偏好）开始寻找空闲时段
+ * - specific_time：直接校验并落位到指定起止时间，冲突时支持返回移动提案
+ */
+export function rescheduleSingleTask(options: SingleRescheduleOptions): SingleRescheduleResult {
+  const { userId, taskId } = options;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const now = options.now ? new Date(options.now.getTime()) : new Date();
+    const tz = getUserTimezone(userId);
+    const todayKey = getAccountLocalDateKey(now, tz);
+    const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
+    const { workStartHour, workEndHour, workWindows } = parseWorkSlotWindows(settings);
+    const bufferMinutes = settings?.task_buffer_minutes ?? 10;
+    const advanceDeadlineDays = settings?.advance_deadline_days ?? 1;
+    const horizonDays = 14;
+
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) as Task | undefined;
+    if (!task) {
+      return { success: false, statusCode: 404, message: '任务不存在' };
+    }
+    if (task.status === 'cancelled') {
+      return { success: false, statusCode: 400, message: '已取消的任务无法再排期' };
+    }
+    if (task.time_mode !== 'daily_fixed' && task.status === 'completed') {
+      return { success: false, statusCode: 400, message: '已完成的任务无法再排期，请先恢复待办' };
+    }
+
+    let instance: TaskInstance | undefined;
+    if (options.instanceId) {
+      instance = db
+        .prepare('SELECT * FROM task_instances WHERE id = ? AND task_id = ? AND user_id = ?')
+        .get(options.instanceId, taskId, userId) as TaskInstance | undefined;
+    } else if (options.blockId) {
+      const blk = db
+        .prepare('SELECT instance_id FROM schedule_blocks WHERE id = ? AND task_id = ? AND user_id = ?')
+        .get(options.blockId, taskId, userId) as { instance_id: number } | undefined;
+      if (blk) {
+        instance = db
+          .prepare('SELECT * FROM task_instances WHERE id = ? AND user_id = ?')
+          .get(blk.instance_id, userId) as TaskInstance | undefined;
+      }
+    }
+
+    if (!instance) {
+      const resolvedBizDate =
+        options.businessDate && /^\d{4}-\d{2}-\d{2}$/.test(options.businessDate)
+          ? options.businessDate
+          : task.time_mode === 'daily_fixed'
+          ? todayKey
+          : todayKey;
+      instance = ensureTaskInstance(userId, taskId, resolvedBizDate, now) || undefined;
+    }
+
+    if (!instance) {
+      return { success: false, statusCode: 404, message: '未找到可排期的任务实例' };
+    }
+    if (instance.status === 'completed' || instance.status === 'cancelled') {
+      return { success: false, statusCode: 400, message: '该次任务已完成或已取消，无法再排期' };
+    }
+
+    const basePlanVersion = getLatestPlanVersion(userId);
+    const calendarGens = getCurrentCalendarGenerations(userId);
+
+    // Load all active instances & blocks so other tasks remain intact
+    const activeInstances = db.prepare(`
+      SELECT ti.*, t.title, t.importance, t.urgency, t.score_scale, t.importance_tier,
+             t.impact_signals, t.time_mode, t.recurrence_rule, t.urgency_pace, t.deadline, t.deadline_kind,
+             t.is_fixed, t.is_concurrent, t.session_plan, t.original_duration_minutes,
+             t.completed_dates, t.created_at as task_created_at
+      FROM task_instances ti
+      JOIN tasks t ON t.id = ti.task_id
+      WHERE ti.user_id = ?
+        AND ti.status IN ('pending', 'in_progress')
+        AND t.status != 'cancelled'
+    `).all(userId) as Array<TaskInstance & Task & { task_created_at: string }>;
+
+    const activeBlocksRows = db.prepare(`
+      SELECT * FROM schedule_blocks
+      WHERE user_id = ? AND status IN ('planned', 'in_progress', 'completed', 'conflict')
+      ORDER BY start_time ASC
+    `).all(userId) as ScheduleBlockRecord[];
+
+    const blocksByInstance = new Map<number, ScheduleBlockRecord[]>();
+    for (const b of activeBlocksRows) {
+      const list = blocksByInstance.get(b.instance_id) || [];
+      list.push(b);
+      blocksByInstance.set(b.instance_id, list);
+    }
+
+    const targetBlocks = blocksByInstance.get(instance.id) || [];
+    const completedBlocks = targetBlocks.filter(b => b.status === 'completed');
+    const inProgressBlocks = targetBlocks.filter(b => b.status === 'in_progress');
+    const movableOldBlocks = targetBlocks.filter(b => b.status === 'planned' || b.status === 'conflict');
+
+    const previousSchedule = {
+      start: movableOldBlocks[0]?.start_time || null,
+      end: movableOldBlocks[movableOldBlocks.length - 1]?.end_time || null,
+      blocks: movableOldBlocks.map(b => ({
+        start: b.start_time,
+        end: b.end_time,
+        duration: b.duration_minutes,
+      })),
+    };
+
+    const resolvedMode: SingleRescheduleMode = options.targetStart
+      ? 'specific_time'
+      : options.targetDate
+      ? 'specific_date'
+      : options.mode || (movableOldBlocks.length > 0 ? 'next_slot' : 'auto');
+
+    if (
+      task.is_fixed === 1 &&
+      resolvedMode !== 'specific_time' &&
+      !options.unpinFixed &&
+      instance.instance_type !== 'daily'
+    ) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: '该任务为固定时间任务，请指定具体新时段，或选择解除固定后再智能排期',
+        previousSchedule,
+      };
+    }
+
+    const inProgressMins = inProgressBlocks.reduce((s, b) => s + b.duration_minutes, 0);
+    const remainingToSchedule = Math.max(
+      0,
+      instance.estimated_minutes - instance.completed_minutes - inProgressMins
+    );
+
+    if (remainingToSchedule <= 0) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: '该任务已无剩余待排期工时',
+        previousSchedule,
+      };
+    }
+
+    const isConcurrent = task.is_concurrent === 1;
+    const targetTrackVal = isConcurrent ? 1 : 0;
+    const taskTitlesById = new Map<number, string>();
+    const otherSameTrackBlocks: Array<ScheduleBlockRecord & { title: string; taskObj?: Task }> = [];
+    const occupiedDailyMinutes = new Map<string, number>();
+
+    for (const row of activeInstances) {
+      taskTitlesById.set(row.task_id, row.title);
+      if (row.id === instance.id) continue;
+      const instBlocks = blocksByInstance.get(row.id) || [];
+      for (const b of instBlocks) {
+        if (b.status === 'completed') continue;
+        if (b.is_concurrent === targetTrackVal) {
+          otherSameTrackBlocks.push({ ...b, title: row.title, taskObj: row });
+          if (b.is_fixed !== 1) {
+            const dk = getAccountLocalDateKey(new Date(b.start_time), tz);
+            occupiedDailyMinutes.set(dk, (occupiedDailyMinutes.get(dk) || 0) + b.duration_minutes);
+          }
+        }
+      }
+    }
+
+    // Also include own in-progress blocks on busy track & daily cap
+    for (const b of inProgressBlocks) {
+      const dk = getAccountLocalDateKey(new Date(b.start_time), tz);
+      occupiedDailyMinutes.set(dk, (occupiedDailyMinutes.get(dk) || 0) + b.duration_minutes);
+    }
+
+    const searchAnchorDate =
+      options.targetDate && /^\d{4}-\d{2}-\d{2}$/.test(options.targetDate)
+        ? zonedWallClockToUtc(options.targetDate, 0, 0, 0, 0, tz)
+        : now;
+    const effectiveAnchor = searchAnchorDate.getTime() > now.getTime() ? searchAnchorDate : now;
+    const horizonEnd = new Date(Math.max(now.getTime(), effectiveAnchor.getTime()) + (horizonDays + 2) * 86400_000);
+    const externalBusy = isConcurrent
+      ? []
+      : getActiveExternalBusyEvents(userId, now.toISOString(), horizonEnd.toISOString());
+
+    const buildTrackBusy = (extraBusy: FixedCalendarBlock[] = []): FixedCalendarBlock[] => [
+      ...externalBusy,
+      ...otherSameTrackBlocks.map(b => ({
+        id: `other-${b.id}`,
+        title: b.title,
+        start: new Date(b.start_time),
+        end: new Date(b.end_time),
+        isAllDay: false,
+      })),
+      ...inProgressBlocks.map(b => ({
+        id: `inprog-${b.id}`,
+        title: task.title,
+        start: new Date(b.start_time),
+        end: new Date(b.end_time),
+        isAllDay: false,
+      })),
+      ...extraBusy,
+    ];
+
+    const ceil5Now = Math.ceil(now.getTime() / (5 * 60_000)) * (5 * 60_000);
+    const dueDateObj = parseDeadlineDate(task.deadline, tz);
+    const quad = calculateQuadrant100(task.importance, task.urgency, task.score_scale ?? undefined);
+
+    let computedNewBlocks: ProposedInstancePlan['newBlocks'] = [];
+    let unallocatedAfter = 0;
+    let planReasonAfter: string | null = null;
+
+    if (resolvedMode === 'specific_time') {
+      const startDate = parseAccountDateOrIso(options.targetStart, tz);
+      if (!startDate) {
+        return { success: false, statusCode: 400, message: '无效的目标开始时间格式', previousSchedule };
+      }
+      let endDate = options.targetEnd ? parseAccountDateOrIso(options.targetEnd, tz) : null;
+      if (options.targetEnd && !endDate) {
+        return { success: false, statusCode: 400, message: '无效的目标结束时间格式', previousSchedule };
+      }
+      if (!endDate) {
+        endDate = new Date(startDate.getTime() + remainingToSchedule * 60_000);
+      }
+      if (endDate.getTime() <= startDate.getTime()) {
+        return { success: false, statusCode: 400, message: '结束时间必须晚于开始时间', previousSchedule };
+      }
+      if (task.deadline_kind === 'hard' && dueDateObj && endDate.getTime() > dueDateObj.getTime()) {
+        return {
+          success: false,
+          statusCode: 400,
+          message: `目标时段超出硬截止时间，已保留「${task.title}」原排程`,
+          previousSchedule,
+        };
+      }
+
+      if (!isConcurrent) {
+        const specificExternal = getActiveExternalBusyEvents(userId, startDate.toISOString(), endDate.toISOString());
+        const hitExt = specificExternal.find(e => !e.isAllDay && intervalsOverlap(startDate, endDate!, e.start, e.end));
+        if (hitExt) {
+          return {
+            success: false,
+            statusCode: 409,
+            message: `目标时段与外部日程「${hitExt.title}」冲突，原日程已保留`,
+            previousSchedule,
+          };
+        }
+      }
+
+      const hitInProg = inProgressBlocks.find(b =>
+        intervalsOverlap(startDate, endDate!, new Date(b.start_time), new Date(b.end_time))
+      );
+      if (hitInProg) {
+        return {
+          success: false,
+          statusCode: 409,
+          message: '目标时段与该任务正在进行的时段冲突',
+          previousSchedule,
+        };
+      }
+
+      const overlappingOther = otherSameTrackBlocks.filter(b =>
+        intervalsOverlap(startDate, endDate!, new Date(b.start_time), new Date(b.end_time))
+      );
+      if (overlappingOther.length > 0) {
+        const lockedHit = overlappingOther.find(
+          b => b.is_fixed === 1 || b.is_committed === 1 || b.status === 'in_progress'
+        );
+        if (lockedHit) {
+          return {
+            success: false,
+            statusCode: 409,
+            message: `目标时段与已锁定任务「${lockedHit.title}」冲突，原日程已保留`,
+            previousSchedule,
+          };
+        }
+
+        const uniqueConflictTaskIds = Array.from(new Set(overlappingOther.map(b => b.task_id)));
+        if (options.allowProposal && uniqueConflictTaskIds.length === 1 && overlappingOther[0].taskObj) {
+          const conflictTask = overlappingOther[0].taskObj;
+          const durMins = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60_000));
+          const otherMinusConflict = otherSameTrackBlocks.filter(b => b.task_id !== conflictTask.id);
+          const conflictSimBusy: FixedCalendarBlock[] = [
+            ...externalBusy,
+            ...otherMinusConflict.map(b => ({
+              id: `other-${b.id}`,
+              title: b.title,
+              start: new Date(b.start_time),
+              end: new Date(b.end_time),
+              isAllDay: false,
+            })),
+            {
+              id: `resched-target-${task.id}`,
+              title: task.title,
+              start: startDate,
+              end: endDate,
+              isAllDay: false,
+            },
+          ];
+          const conflictDaily = new Map<string, number>();
+          for (const b of otherMinusConflict) {
+            if (b.is_fixed !== 1) {
+              const dk = getAccountLocalDateKey(new Date(b.start_time), tz);
+              conflictDaily.set(dk, (conflictDaily.get(dk) || 0) + b.duration_minutes);
+            }
+          }
+          const targetDk = getAccountLocalDateKey(startDate, tz);
+          conflictDaily.set(targetDk, (conflictDaily.get(targetDk) || 0) + durMins);
+
+          const conflictRemaining = conflictTask.duration_minutes || overlappingOther.reduce((s, b) => s + b.duration_minutes, 0);
+          const simAlt = simulateTaskInHorizon(
+            userId,
+            {
+              id: conflictTask.id,
+              title: conflictTask.title,
+              duration_minutes: conflictRemaining,
+              session_plan: conflictTask.session_plan,
+              deadline_kind: conflictTask.deadline_kind,
+              urgency_pace: conflictTask.urgency_pace,
+              time_mode: conflictTask.time_mode,
+              is_concurrent: conflictTask.is_concurrent,
+              completed_dates: conflictTask.completed_dates,
+              score_scale: conflictTask.score_scale,
+              urgency: conflictTask.urgency,
+              importance: conflictTask.importance,
+              deadline: conflictTask.deadline,
+            },
+            conflictSimBusy,
+            settings,
+            conflictDaily
+          );
+
+          if (simAlt.success && simAlt.scheduled_start && simAlt.scheduled_end) {
+            const zone = classifySlotEnergy(startDate, durMins, tz);
+            const targetBlocksPayload = [
+              {
+                start: startDate.toISOString(),
+                end: endDate.toISOString(),
+                duration: durMins,
+                partIndex: 1,
+                totalParts: 1,
+                energyZone: zone,
+                strategyLabel: '指定改期',
+              },
+            ];
+            return {
+              success: true,
+              statusCode: 200,
+              message: `目标时段与「${conflictTask.title}」重叠，已生成同步调整建议`,
+              task,
+              instance,
+              previousSchedule,
+              targetInstanceId: instance.id,
+              targetInstanceVersion: instance.version,
+              proposal: {
+                type: 'priority_gain',
+                conflictTask: {
+                  id: conflictTask.id,
+                  title: conflictTask.title,
+                  scheduled_start: conflictTask.scheduled_start || overlappingOther[0].start_time,
+                  scheduled_end: conflictTask.scheduled_end || overlappingOther[0].end_time,
+                  duration_minutes: conflictTask.duration_minutes,
+                  urgency: conflictTask.urgency,
+                  importance: conflictTask.importance,
+                  deadline: conflictTask.deadline,
+                },
+                reasonText: '您指定了该时段执行当前任务',
+                newTaskSchedule: {
+                  start: startDate.toISOString(),
+                  end: endDate.toISOString(),
+                  blocks: targetBlocksPayload,
+                },
+                conflictTaskSchedule: {
+                  start: simAlt.scheduled_start,
+                  end: simAlt.scheduled_end,
+                  blocks: simAlt.schedule_blocks ? JSON.parse(simAlt.schedule_blocks) : [],
+                },
+              },
+            };
+          }
+        }
+
+        return {
+          success: false,
+          statusCode: 409,
+          message: `目标时段已被「${overlappingOther[0].title}」占用，原日程已保留`,
+          previousSchedule,
+        };
+      }
+
+      const durMins = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60_000));
+      const zone = classifySlotEnergy(startDate, durMins, tz);
+      computedNewBlocks = [
+        {
+          startTime: startDate.toISOString(),
+          endTime: endDate.toISOString(),
+          durationMinutes: durMins,
+          partIndex: 1,
+          totalParts: 1,
+          isFixed: Boolean(task.is_fixed && !options.unpinFixed && instance.instance_type === 'once'),
+          isCommitted: true,
+          isConcurrent,
+          energyZone: zone,
+          strategyLabel: '单次指定再排期',
+          breakAfterMinutes: null,
+        },
+      ];
+    } else {
+      // Algorithmic single-task slot search: auto / next_slot / specific_date
+      const runSearchFrom = (
+        startDateKey: string,
+        minStartMs: number,
+        maxDaysToSearch: number,
+        extraBusy: FixedCalendarBlock[] = [],
+        periodFilter?: TimePeriodPreference | null
+      ): ScheduledTaskBlock[] => {
+        const busyAll = buildTrackBusy(extraBusy);
+        const simTask: Task = {
+          ...task,
+          duration_minutes: remainingToSchedule,
+          original_duration_minutes: instance!.estimated_minutes,
+          is_fixed: 0,
+          status: 'pending_slot',
+          score_scale: 100,
+          time_mode: task.time_mode === 'daily_fixed' ? 'flexible' : task.time_mode,
+        };
+        const results: ScheduledTaskBlock[] = [];
+        let rem = remainingToSchedule;
+        const baseSearchDate = zonedWallClockToUtc(startDateKey, 0, 0, 0, 0, tz);
+        const horizonWins = getHorizonWindows(baseSearchDate, maxDaysToSearch, busyAll, {
+          timezone: tz,
+          workStartHour,
+          workEndHour,
+          workWindows,
+          bufferMinutes: isConcurrent ? 0 : bufferMinutes,
+          releaseTimeMs: minStartMs,
+        });
+
+        for (let offset = 0; offset < maxDaysToSearch; offset++) {
+          if (rem <= 0) break;
+          const dk = addDaysToDateKey(startDateKey, offset);
+          const targetDay = zonedWallClockToUtc(dk, 0, 0, 0, 0, tz);
+          const usedDay = occupiedDailyMinutes.get(dk) || 0;
+          const dayCap = Math.max(0, EFFECTIVE_DAILY_CAP_MINUTES - usedDay);
+          if (dayCap <= 0) continue;
+
+          // If periodFilter is requested on the first day, mask out intervals outside that period
+          const dayExtraBusy: FixedCalendarBlock[] = [...busyAll];
+          let dayMinMs = Math.max(ceil5Now, minStartMs);
+          if (offset === 0 && periodFilter) {
+            const pBounds = getPeriodBoundsMs(dk, periodFilter, tz);
+            if (pBounds) {
+              dayMinMs = Math.max(dayMinMs, pBounds.startMs);
+              const dayEndMs = zonedWallClockToUtc(dk, 0, 0, 0, 0, tz).getTime() + 24 * 3600_000;
+              if (pBounds.endMs < dayEndMs) {
+                dayExtraBusy.push({
+                  id: `period-after-${dk}`,
+                  title: '时段边界限制',
+                  start: new Date(pBounds.endMs),
+                  end: new Date(dayEndMs),
+                  isAllDay: false,
+                });
+              }
+            }
+          }
+
+          simTask.duration_minutes = rem;
+          const dayRes = runSingleDaySchedule([simTask], dayExtraBusy, {
+            targetDate: targetDay,
+            now,
+            timezone: tz,
+            workStartHour,
+            workEndHour,
+            workWindows,
+            bufferMinutes: isConcurrent ? 0 : bufferMinutes,
+            taskRestMinutes: 10,
+            maxContinuousMinutes: 90,
+            maxDailyTaskMinutes: 330,
+            exactDailyCapMinutes: dayCap,
+            autoFilterQ4: false,
+            advanceDeadlineDays,
+            releaseTimeMs: dayMinMs,
+            futureWindows: horizonWins.slice(offset + 1).flat(),
+          });
+
+          const placed = dayRes.scheduledBlocks.filter(b => b.taskId === simTask.id);
+          if (placed.length > 0) {
+            results.push(...placed);
+            rem = Math.max(0, rem - placed.reduce((s, b) => s + b.durationMinutes, 0));
+          }
+        }
+        return results;
+      };
+
+      let foundBlocks: ScheduledTaskBlock[] = [];
+
+      if (resolvedMode === 'specific_date' && options.targetDate) {
+        const targetDk = options.targetDate;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDk)) {
+          return { success: false, statusCode: 400, message: '无效的目标日期格式，应为 YYYY-MM-DD', previousSchedule };
+        }
+        if (targetDk < todayKey) {
+          return { success: false, statusCode: 400, message: '目标日期不能早于今天，原日程已保留', previousSchedule };
+        }
+        const dayStartMs = zonedWallClockToUtc(targetDk, 0, 0, 0, 0, tz).getTime();
+        const searchStartMs = Math.max(ceil5Now, dayStartMs);
+        // 1. Try targetDate with optional period preference first
+        foundBlocks = runSearchFrom(targetDk, searchStartMs, 1, [], options.targetTimePeriod);
+        // 2. If period was requested and targetDate period is full, try full targetDate
+        if (
+          (foundBlocks.length === 0 || foundBlocks.reduce((s, b) => s + b.durationMinutes, 0) < remainingToSchedule) &&
+          options.targetTimePeriod
+        ) {
+          const wholeDayBlocks = runSearchFrom(targetDk, searchStartMs, 1, [], null);
+          if (wholeDayBlocks.reduce((s, b) => s + b.durationMinutes, 0) > foundBlocks.reduce((s, b) => s + b.durationMinutes, 0)) {
+            foundBlocks = wholeDayBlocks;
+          }
+        }
+        // 3. If still incomplete or empty, roll forward from targetDate across 14 days
+        if (foundBlocks.length === 0 || (task.deadline_kind === 'hard' && foundBlocks.reduce((s, b) => s + b.durationMinutes, 0) < remainingToSchedule)) {
+          const multiDayBlocks = runSearchFrom(targetDk, searchStartMs, horizonDays, [], null);
+          if (multiDayBlocks.length > 0) {
+            foundBlocks = multiDayBlocks;
+          }
+        }
+      } else if (resolvedMode === 'next_slot' && movableOldBlocks.length > 0) {
+        const currentEndMs = new Date(movableOldBlocks[movableOldBlocks.length - 1].end_time).getTime();
+        const forwardStartMs = Math.max(ceil5Now, currentEndMs);
+        const forwardDk = getAccountLocalDateKey(new Date(forwardStartMs), tz);
+
+        // 1. Search strictly after current scheduled end
+        foundBlocks = runSearchFrom(forwardDk, forwardStartMs, horizonDays);
+
+        // 2. If nothing fits after current end (or violates hard deadline), search from now while blocking original slots
+        const forwardValid =
+          foundBlocks.length > 0 &&
+          !(task.deadline_kind === 'hard' && dueDateObj && foundBlocks.some(b => b.end.getTime() > dueDateObj.getTime()));
+        if (!forwardValid) {
+          const avoidCurrentBusy: FixedCalendarBlock[] = movableOldBlocks.map((b, idx) => ({
+            id: `avoid-old-${idx}`,
+            title: '原排程时段',
+            start: new Date(b.start_time),
+            end: new Date(b.end_time),
+            isAllDay: false,
+          }));
+          foundBlocks = runSearchFrom(todayKey, ceil5Now, horizonDays, avoidCurrentBusy);
+        }
+      } else {
+        // 'auto' mode
+        foundBlocks = runSearchFrom(todayKey, ceil5Now, horizonDays);
+      }
+
+      // Check hard deadline compliance
+      const allocatedSum = foundBlocks.reduce((s, b) => s + b.durationMinutes, 0);
+      const violatesHard =
+        task.deadline_kind === 'hard' &&
+        dueDateObj &&
+        (allocatedSum < remainingToSchedule || foundBlocks.some(b => b.end.getTime() > dueDateObj.getTime()));
+
+      if (foundBlocks.length === 0 || violatesHard) {
+        return {
+          success: false,
+          statusCode: 400,
+          message:
+            resolvedMode === 'next_slot'
+              ? `未找到其他可替代的空闲时段，已保留「${task.title}」原排程`
+              : task.deadline_kind === 'hard'
+              ? `「${task.title}」为不可逾期任务，目标范围内剩余容量不足`
+              : `「${task.title}」暂无合适空闲时段`,
+          previousSchedule,
+        };
+      }
+
+      const sortedFound = [...foundBlocks].sort((a, b) => a.start.getTime() - b.start.getTime());
+      const offsetParts = inProgressBlocks.length;
+      const totalParts = offsetParts + sortedFound.length;
+
+      computedNewBlocks = sortedFound.map((b, idx) => ({
+        startTime: b.start.toISOString(),
+        endTime: b.end.toISOString(),
+        durationMinutes: b.durationMinutes,
+        partIndex: offsetParts + idx + 1,
+        totalParts,
+        isFixed: false,
+        isCommitted: resolvedMode !== 'auto',
+        isConcurrent,
+        energyZone: b.energyZone || classifySlotEnergy(b.start, b.durationMinutes, tz),
+        strategyLabel:
+          resolvedMode === 'next_slot'
+            ? '顺延再排期'
+            : resolvedMode === 'specific_date'
+            ? '改期重排'
+            : b.strategyLabel || getStrategyLabel(b.energyZone || 'moderate', quad, totalParts > 1),
+        breakAfterMinutes: b.breakAfterMinutes || null,
+      }));
+      unallocatedAfter = Math.max(0, remainingToSchedule - allocatedSum);
+      if (unallocatedAfter > 0) {
+        planReasonAfter = '窗口内可用时段有限，已部分排入';
+      }
+    }
+
+    // Build commit payload preserving all other active instances
+    const instancePlans: ProposedInstancePlan[] = [];
+    for (const row of activeInstances) {
+      const existingBlocks = blocksByInstance.get(row.id) || [];
+      if (row.id === instance.id) {
+        const preservedTarget = [...completedBlocks, ...inProgressBlocks];
+        const newMins = computedNewBlocks.reduce((s, b) => s + b.durationMinutes, 0);
+        const totalAllocated = inProgressMins + newMins;
+        const planStatus: ProposedInstancePlan['planStatus'] =
+          unallocatedAfter === 0 ? 'scheduled' : 'partial';
+
+        instancePlans.push({
+          instanceId: instance.id,
+          taskId: task.id,
+          planStatus,
+          allocatedMinutes: totalAllocated,
+          unallocatedMinutes: unallocatedAfter,
+          planReason: planReasonAfter,
+          preservedBlocks: preservedTarget,
+          newBlocks: computedNewBlocks,
+        });
+      } else {
+        instancePlans.push({
+          instanceId: row.id,
+          taskId: row.task_id,
+          planStatus: row.plan_status,
+          allocatedMinutes: row.allocated_minutes,
+          unallocatedMinutes: row.unallocated_minutes,
+          planReason: row.plan_reason ?? null,
+          preservedBlocks: existingBlocks,
+          newBlocks: [],
+        });
+      }
+    }
+
+    const newStart = computedNewBlocks[0]?.startTime || null;
+    const newEnd = computedNewBlocks[computedNewBlocks.length - 1]?.endTime || null;
+    const summarySlot = newStart && newEnd ? formatSlotBrief(newStart, newEnd, tz) : '待定';
+    const summary = `单次再排期：已将「${task.title}」安排至 ${summarySlot}`;
+
+    if (options.unpinFixed && task.is_fixed === 1 && instance.instance_type === 'once') {
+      db.prepare('UPDATE tasks SET is_fixed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(
+        task.id,
+        userId
+      );
+    }
+    if (resolvedMode === 'specific_time' && task.is_fixed === 1 && instance.instance_type === 'once' && newStart && newEnd) {
+      db.prepare(
+        'UPDATE tasks SET scheduled_start = ?, scheduled_end = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
+      ).run(newStart, newEnd, task.id, userId);
+    }
+
+    const commitRes = commitSchedulePlan({
+      userId,
+      expectedPlanVersion: basePlanVersion,
+      expectedCalendarGenerations: calendarGens,
+      triggerSource: options.triggerSource || `single_reschedule_${resolvedMode}`,
+      summary,
+      instancePlans,
+      taskTitlesById,
+      settings,
+      now,
+    });
+
+    if (commitRes.stale) {
+      continue;
+    }
+
+    const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Task;
+    const updatedInst = db.prepare('SELECT * FROM task_instances WHERE id = ?').get(instance.id) as TaskInstance;
+
+    const newSchedule = {
+      start: newStart,
+      end: newEnd,
+      blocks: computedNewBlocks.map(b => ({
+        start: b.startTime,
+        end: b.endTime,
+        duration: b.durationMinutes,
+      })),
+    };
+
+    const prevText =
+      previousSchedule.start && previousSchedule.end
+        ? `（原时段 ${formatSlotBrief(previousSchedule.start, previousSchedule.end, tz)}）`
+        : '';
+
+    const message =
+      unallocatedAfter > 0
+        ? `已为「${task.title}」安排部分时段至 ${summarySlot}，剩余 ${unallocatedAfter} 分钟未排入${prevText}`
+        : `已将「${task.title}」单次再排期至 ${summarySlot}${prevText}`;
+
+    return {
+      success: true,
+      statusCode: 200,
+      message,
+      task: updatedTask,
+      instance: updatedInst,
+      planVersion: commitRes.planVersion,
+      previousSchedule,
+      newSchedule,
+    };
+  }
+
+  return {
+    success: false,
+    statusCode: 409,
+    message: '排程版本并发冲突，请重试',
   };
 }

@@ -192,6 +192,9 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
   // Unified read model: matches Web CalendarView & ICS export (C05)
   const unified = queryScheduleInRange(userId, searchStartIso, searchEndIso);
+  const todoSummary = queryTodoSummary(userId, 50);
+  const scheduledActiveCount = todoSummary.counts.scheduled + todoSummary.counts.inProgress;
+  const unscheduledActiveCount = todoSummary.counts.pendingSlot;
   const externalEvents = unified.externalEvents.map(ev => ({
     title: ev.title,
     start_time: ev.start,
@@ -219,8 +222,6 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
   const days: DayScheduleData[] = [];
   let totalExternal = 0;
-  let totalTasks = 0;
-  let totalCompleted = 0;
   let hasAnyAllDay = false;
 
   for (let i = 0; i < 7; i++) {
@@ -288,11 +289,6 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
       const range = segmentRange(b.start, b.end, wStartIso, wEndIso);
       if (!range) continue;
 
-      if (isCompleted) {
-        totalCompleted++;
-      } else {
-        totalTasks++;
-      }
       const dur = Math.max(15, (new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000);
       const partSuffix = b.totalParts > 1 ? ` (${b.partIndex}/${b.totalParts})` : '';
 
@@ -631,15 +627,15 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
           <circle cx="16" cy="16" r="4" fill="#0284c7"/>
           <text x="26" y="20" font-size="11" font-weight="bold" fill="#0369a1">外部日程 ${totalExternal}</text>
 
-          <!-- Tasks chip -->
+          <!-- Scheduled chip -->
           <rect x="136" y="0" width="126" height="32" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
           <circle cx="152" cy="16" r="4" fill="#3b82f6"/>
-          <text x="162" y="20" font-size="11" font-weight="bold" fill="#1d4ed8">智能排程 ${totalTasks}</text>
+          <text x="162" y="20" font-size="11" font-weight="bold" fill="#1d4ed8">已排期 ${scheduledActiveCount}</text>
 
-          <!-- Completed chip -->
-          <rect x="272" y="0" width="126" height="32" rx="8" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1"/>
-          <circle cx="288" cy="16" r="4" fill="#10b981"/>
-          <text x="298" y="20" font-size="11" font-weight="bold" fill="#047857">已完成 ${totalCompleted}</text>
+          <!-- Unscheduled chip -->
+          <rect x="272" y="0" width="126" height="32" rx="8" fill="${unscheduledActiveCount > 0 ? '#fffbeb' : '#f8fafc'}" stroke="${unscheduledActiveCount > 0 ? '#fde68a' : '#e2e8f0'}" stroke-width="1"/>
+          <circle cx="288" cy="16" r="4" fill="${unscheduledActiveCount > 0 ? '#f59e0b' : '#94a3b8'}"/>
+          <text x="298" y="20" font-size="11" font-weight="bold" fill="${unscheduledActiveCount > 0 ? '#b45309' : '#475569'}">未排期 ${unscheduledActiveCount}</text>
         </g>
       </g>
 
@@ -686,6 +682,7 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
   const tasks = summary.items;
   const inProgressCount = summary.counts.inProgress;
   const scheduledCount = summary.counts.scheduled;
+  const pendingSlotCount = summary.counts.pendingSlot;
   const completedCount = summary.counts.completed;
   const totalCount = summary.counts.total;
 
@@ -762,8 +759,8 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
           <text x="130" y="50" fill="#94a3b8" font-size="11">${escapeXml(timeText)}</text>
           
           <!-- Right status tag -->
-          <text x="700" y="36" fill="${isInProgress ? '#60a5fa' : isCompleted ? '#10b981' : '#94a3b8'}" font-size="12" font-weight="500" text-anchor="end">
-            ${isInProgress ? '⚡ 进行中' : isCompleted ? '✅ 已打勾' : '🕒 已规划'}
+          <text x="700" y="36" fill="${isInProgress ? '#60a5fa' : isCompleted ? '#10b981' : t.status === 'pending_slot' ? '#fbbf24' : '#94a3b8'}" font-size="12" font-weight="500" text-anchor="end">
+            ${isInProgress ? '⚡ 进行中' : isCompleted ? '✅ 已打勾' : t.status === 'pending_slot' ? '⏳ 未排期' : '🕒 已排期'}
           </text>
         </g>
       `;
@@ -791,7 +788,7 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
       <g transform="translate(40, 30)">
         <rect width="720" height="110" rx="20" fill="url(#todoHeaderGrad)"/>
         <text x="30" y="45" fill="#ffffff" font-size="22" font-weight="bold">📝 待办任务清单 (Todo List)</text>
-        <text x="30" y="80" fill="#f0f9ff" font-size="15" font-weight="500">进行中 ${inProgressCount} · 已规划 ${scheduledCount} · 已完成 ${completedCount}</text>
+        <text x="30" y="80" fill="#f0f9ff" font-size="15" font-weight="500">已排期 ${inProgressCount + scheduledCount} · 未排期 ${pendingSlotCount} · 已完成 ${completedCount}</text>
         
         <rect x="520" y="35" width="170" height="40" rx="12" fill="#ffffff" opacity="0.2"/>
         <text x="605" y="60" fill="#ffffff" font-size="14" font-weight="bold" text-anchor="middle">共 ${totalCount} 项任务</text>

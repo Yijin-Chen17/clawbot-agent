@@ -273,6 +273,11 @@ const llmExtractionSchema = z.object({
     .enum(['start', 'complete', 'complete_part', 'extend', 'reschedule', 'cancel', 'reopen', 'stop_daily'])
     .nullable()
     .optional(),
+  reschedule_mode: z.enum(['auto', 'next_slot', 'specific_date', 'specific_time']).nullable().optional(),
+  target_time_period: z.enum(['morning', 'afternoon', 'evening']).nullable().optional(),
+  target_start: z.string().nullable().optional(),
+  target_end: z.string().nullable().optional(),
+  source_date: z.string().nullable().optional(),
   extend_minutes: z.number().finite().nullable().optional(),
   target_task_name: z.string().nullable().optional(),
   target_date: z.string().nullable().optional(),
@@ -335,6 +340,11 @@ JSON 格式规范：
   "fixed_start": string | null,
   "fixed_end": string | null,
   "status_action": "start" | "complete" | "complete_part" | "extend" | "reschedule" | "cancel" | "reopen" | "stop_daily" | null,
+  "reschedule_mode": "auto" | "next_slot" | "specific_date" | "specific_time" | null,
+  "target_time_period": "morning" | "afternoon" | "evening" | null,
+  "target_start": string | null,
+  "target_end": string | null,
+  "source_date": string | null,
   "extend_minutes": number | null,
   "target_task_name": string | null,
   "target_date": string | null,
@@ -376,7 +386,12 @@ JSON 格式规范：
    - "我弄完了/搞定" -> status_action: "complete"（若提及日期如昨天/今天填入 target_date YYYY-MM-DD）
    - "完成第1段/完成了2小时" -> status_action: "complete_part", completed_part_index / completed_minutes
    - "时间不够，延半小时" -> status_action: "extend", extend_minutes: 30
-   - "重新规划/重排" -> status_action: "reschedule"
+   - "重新规划/重排"（未指定具体任务时） -> status_action: "reschedule", target_task_name: null
+   - 单次任务再排期（如“把写周报重新排期”、“写周报换个时间”、“把今天的健身改期到明天下午”、“把写周报排到明天10点”） -> status_action: "reschedule", target_task_name: "写周报", 并按需填入：
+     * 若明确指定新起止时刻（如“明天10点”/“明天14点到16点”）-> reschedule_mode: "specific_time", target_start / target_end 为完整 ISO 8601
+     * 若指定目标日期或时段偏好（如“改期到明天下午”）-> reschedule_mode: "specific_date", target_date: "YYYY-MM-DD", target_time_period: "morning" | "afternoon" | "evening"
+     * 若仅说“换个时间/往后排/顺延/再排期” -> reschedule_mode: "next_slot"
+     * 若提及原本哪天（如“把今天的健身改期到明天”）-> source_date: "YYYY-MM-DD"
    - "取消这个任务" -> status_action: "cancel"
    - "重开/恢复待办" -> status_action: "reopen"
    - "停止每日重复/以后不再每天提醒" -> status_action: "stop_daily"

@@ -1,7 +1,14 @@
 import { db } from '../config/database.js';
 import type { ExternalEvent, Task, TaskInstance, UserSettings } from '../models/types.js';
 import { getUserTimezone } from './accountService.js';
-import { addDaysToDateKey, getAccountDayBoundsUtc, getAccountLocalDateKey, parseAccountDateOrIso } from '../utils/timezone.js';
+import {
+  addDaysToDateKey,
+  getAccountDayBoundsUtc,
+  getAccountLocalDateKey,
+  getAccountLocalTimeHm,
+  parseAccountDateOrIso,
+  zonedWallClockToUtc,
+} from '../utils/timezone.js';
 import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   ensureTaskInstance,
@@ -174,12 +181,40 @@ export function resolveCommandTarget(params: {
   return { status: 'found_external', event: eventCandidates[0] };
 }
 
+function alignFixedIntervalToRecurrence(
+  startIso: string,
+  endIso: string,
+  timeMode: string | null | undefined,
+  recurrenceRule: string | null,
+  tz: string
+): { startIso: string; endIso: string } {
+  if (timeMode !== 'daily_fixed') return { startIso, endIso };
+  const s = new Date(startIso);
+  const e = new Date(endIso);
+  const baseDateKey = getAccountLocalDateKey(s, tz);
+  if (isDateMatchingRecurrence(baseDateKey, recurrenceRule)) {
+    return { startIso, endIso };
+  }
+  const [hh, mm] = getAccountLocalTimeHm(s, tz).split(':').map(Number);
+  const durMs = Math.max(60000, e.getTime() - s.getTime());
+  for (let offset = 1; offset <= 7; offset++) {
+    const dk = addDaysToDateKey(baseDateKey, offset);
+    if (isDateMatchingRecurrence(dk, recurrenceRule)) {
+      const nextStart = zonedWallClockToUtc(dk, hh, mm, 0, 0, tz);
+      const nextEnd = new Date(nextStart.getTime() + durMs);
+      return { startIso: nextStart.toISOString(), endIso: nextEnd.toISOString() };
+    }
+  }
+  return { startIso, endIso };
+}
+
 function checkFixedOverlapWithExisting(
   userId: number,
   startIso: string,
   endIso: string,
   isConcurrent: boolean,
-  excludeTaskId?: number
+  excludeTaskId?: number,
+  options?: { timeMode?: string | null; recurrenceRule?: string | null; timezone?: string }
 ): string | null {
   if (isConcurrent) return null;
   const startMs = new Date(startIso).getTime();
@@ -191,7 +226,7 @@ function checkFixedOverlapWithExisting(
     return `固定时段与外部日程「${hitExt.title}」冲突`;
   }
 
-  const overlappingFixed = db.prepare(`
+  const overlapStmt = db.prepare(`
     SELECT sb.*, t.title
     FROM schedule_blocks sb
     JOIN tasks t ON t.id = sb.task_id
@@ -203,10 +238,92 @@ function checkFixedOverlapWithExisting(
       AND sb.end_time > ?
       AND sb.start_time < ?
     LIMIT 1
-  `).get(userId, excludeTaskId ?? null, excludeTaskId ?? null, startIso, endIso) as { title: string } | undefined;
+  `);
+
+  const overlappingFixed = overlapStmt.get(userId, excludeTaskId ?? null, excludeTaskId ?? null, startIso, endIso) as
+    | { title: string }
+    | undefined;
 
   if (overlappingFixed) {
     return `固定时段与已有固定任务「${overlappingFixed.title}」重叠冲突`;
+  }
+
+  const fixedTemplates = options?.timezone
+    ? (db.prepare(`
+        SELECT id, title, scheduled_start, scheduled_end, recurrence_rule, completed_dates
+        FROM tasks
+        WHERE user_id = ?
+          AND time_mode = 'daily_fixed'
+          AND is_fixed = 1
+          AND is_concurrent = 0
+          AND COALESCE(active_template, 1) = 1
+          AND status != 'cancelled'
+          AND scheduled_start IS NOT NULL
+          AND scheduled_end IS NOT NULL
+          AND (? IS NULL OR id != ?)
+      `).all(userId, excludeTaskId ?? null, excludeTaskId ?? null) as Array<{
+        id: number;
+        title: string;
+        scheduled_start: string;
+        scheduled_end: string;
+        recurrence_rule: string | null;
+        completed_dates: string | null;
+      }>)
+    : [];
+
+  const checkTemplateOverlapOnDate = (dk: string, occStartMs: number, occEndMs: number): string | null => {
+    if (!options?.timezone) return null;
+    const tz = options.timezone;
+    for (const tmpl of fixedTemplates) {
+      const tmplStart = new Date(tmpl.scheduled_start);
+      const tmplEnd = new Date(tmpl.scheduled_end);
+      const tmplStartKey = getAccountLocalDateKey(tmplStart, tz);
+      if (dk < tmplStartKey) continue;
+      if (!isDateMatchingRecurrence(dk, tmpl.recurrence_rule)) continue;
+      try {
+        const done = JSON.parse(tmpl.completed_dates || '[]');
+        if (Array.isArray(done) && done.includes(dk)) continue;
+      } catch {}
+      const [thh, tmm] = getAccountLocalTimeHm(tmplStart, tz).split(':').map(Number);
+      const tDurMs = Math.max(60000, tmplEnd.getTime() - tmplStart.getTime());
+      const tOccStart = zonedWallClockToUtc(dk, thh, tmm, 0, 0, tz).getTime();
+      const tOccEnd = tOccStart + tDurMs;
+      if (tOccStart < occEndMs && tOccEnd > occStartMs) {
+        return `固定时段在 ${dk} 与已有固定周期任务「${tmpl.title}」重叠冲突`;
+      }
+    }
+    return null;
+  };
+
+  if (options?.timezone) {
+    const initDk = getAccountLocalDateKey(new Date(startIso), options.timezone);
+    const initTmplErr = checkTemplateOverlapOnDate(initDk, startMs, endMs);
+    if (initTmplErr) return initTmplErr;
+  }
+
+  if (options?.timeMode === 'daily_fixed' && options.timezone) {
+    const tz = options.timezone;
+    const baseDate = getAccountLocalDateKey(new Date(startIso), tz);
+    const [hh, mm] = getAccountLocalTimeHm(new Date(startIso), tz).split(':').map(Number);
+    const durMs = Math.max(60000, endMs - startMs);
+    for (let offset = 1; offset < 14; offset++) {
+      const dk = addDaysToDateKey(baseDate, offset);
+      if (!isDateMatchingRecurrence(dk, options.recurrenceRule)) continue;
+      const occStart = zonedWallClockToUtc(dk, hh, mm, 0, 0, tz);
+      const occEnd = new Date(occStart.getTime() + durMs);
+      const hitFutureFixed = overlapStmt.get(
+        userId,
+        excludeTaskId ?? null,
+        excludeTaskId ?? null,
+        occStart.toISOString(),
+        occEnd.toISOString()
+      ) as { title: string } | undefined;
+      if (hitFutureFixed) {
+        return `固定时段在 ${dk} 与已有固定任务「${hitFutureFixed.title}」重叠冲突`;
+      }
+      const hitTemplateErr = checkTemplateOverlapOnDate(dk, occStart.getTime(), occEnd.getTime());
+      if (hitTemplateErr) return hitTemplateErr;
+    }
   }
   return null;
 }
@@ -313,11 +430,24 @@ export async function createTaskCommand(params: {
   }
 
   if (cmd.is_fixed && fixedCheck.startIso && fixedCheck.endIso) {
+    const earlyTimeMode = cmd.time_mode || (normalizedDeadline ? 'deadline' : 'flexible');
+    const earlyRecurrenceRule = normalizeRecurrenceRuleForMode(cmd.recurrence_rule, earlyTimeMode);
+    const aligned = alignFixedIntervalToRecurrence(
+      fixedCheck.startIso,
+      fixedCheck.endIso,
+      earlyTimeMode,
+      earlyRecurrenceRule,
+      tz
+    );
+    fixedCheck.startIso = aligned.startIso;
+    fixedCheck.endIso = aligned.endIso;
     const overlapErr = checkFixedOverlapWithExisting(
       params.userId,
       fixedCheck.startIso,
       fixedCheck.endIso,
-      Boolean(cmd.is_concurrent)
+      Boolean(cmd.is_concurrent),
+      undefined,
+      { timeMode: earlyTimeMode, recurrenceRule: earlyRecurrenceRule, timezone: tz }
     );
     if (overlapErr) {
       return { success: false, statusCode: 409, message: overlapErr };
@@ -642,12 +772,27 @@ export async function updateTaskCommand(params: {
   }
 
   if (nextIsFixed && fixedCheck.startIso && fixedCheck.endIso) {
+    const earlyTimeMode = cmd.time_mode ?? existing.time_mode;
+    const earlyRecurrenceRule =
+      cmd.recurrence_rule !== undefined
+        ? normalizeRecurrenceRuleForMode(cmd.recurrence_rule, earlyTimeMode)
+        : normalizeRecurrenceRuleForMode(existing.recurrence_rule, earlyTimeMode);
+    const aligned = alignFixedIntervalToRecurrence(
+      fixedCheck.startIso,
+      fixedCheck.endIso,
+      earlyTimeMode,
+      earlyRecurrenceRule,
+      tz
+    );
+    fixedCheck.startIso = aligned.startIso;
+    fixedCheck.endIso = aligned.endIso;
     const overlapErr = checkFixedOverlapWithExisting(
       params.userId,
       fixedCheck.startIso,
       fixedCheck.endIso,
       nextIsConcurrent,
-      existing.id
+      existing.id,
+      { timeMode: earlyTimeMode, recurrenceRule: earlyRecurrenceRule, timezone: tz }
     );
     if (overlapErr) {
       return { success: false, statusCode: 409, message: overlapErr };
