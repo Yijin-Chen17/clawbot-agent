@@ -1074,7 +1074,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     try {
       const res = await api.put(`/calendar/external-events/${eventId}/policy`, payload);
       const updatedPolicy = res.data?.policy;
-      if (updatedPolicy && selectedItem?.kind === 'external' && selectedItem.id === eventId) {
+      if (updatedPolicy && selectedItem?.kind === 'event' && selectedItem.id === eventId) {
         setSelectedItem({
           ...selectedItem,
           event: {
@@ -1115,7 +1115,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         setExternalGroups(res.data.groups);
       }
       if (
-        selectedItem?.kind === 'external' &&
+        selectedItem?.kind === 'event' &&
         (selectedItem.event.extendedProps?.courseGroupKey || '') === group.groupKey &&
         Number(selectedItem.event.extendedProps?.subscriptionId ?? 0) === group.subscriptionId
       ) {
