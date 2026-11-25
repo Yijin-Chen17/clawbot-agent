@@ -15,6 +15,10 @@ import {
   markNotificationSent,
   markNotificationUnknown,
 } from './outboxService.js';
+import {
+  processExternalOutboxNotifications,
+  syncAllApprovedUsersExternalOutbox,
+} from './externalOutboxService.js';
 
 const lastDailyRolloverByUser = new Map<number, string>();
 const PROCESS_LEASE_OWNER = `worker-${process.pid}-${crypto.randomUUID().slice(0, 6)}`;
@@ -91,7 +95,9 @@ export function startReminderScheduler() {
     if (notificationsRunning) return;
     notificationsRunning = true;
     try {
-      await processOutboxNotifications(new Date());
+      const now = new Date();
+      await processOutboxNotifications(now);
+      await processExternalOutboxNotifications(now, `${PROCESS_LEASE_OWNER}-ext`);
     } catch (err: any) {
       console.error('[Outbox Error]:', err.message);
     } finally {
@@ -292,5 +298,12 @@ export async function checkCalendarSync(now: Date = new Date()): Promise<void> {
     } catch (err: any) {
       console.error(`[CalendarSync] Replan after auto-sync failed for user #${uid}:`, err.message);
     }
+  }
+
+  // Keep rolling external event AI reminder outbox topped up for approved users
+  try {
+    syncAllApprovedUsersExternalOutbox(now);
+  } catch (err: any) {
+    console.error('[CalendarSync] External outbox sync failed:', err.message);
   }
 }

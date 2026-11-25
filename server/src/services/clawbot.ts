@@ -151,6 +151,29 @@ export const templates = {
     return `⏰「${title}」预计还有约 ${minutes} 分钟结束。已完成请回复「已完成」，需延时回复「延长XX分钟」。`;
   },
 
+  externalEventReminder: (params: {
+    title: string;
+    subscriptionName: string;
+    startStr: string;
+    endStr: string;
+    isAllDay: boolean;
+    allowScheduling: boolean;
+    leadMinutes: number;
+    overlappingTasks?: string[];
+  }) => {
+    const timePart = params.isAllDay
+      ? '今日全天'
+      : `${params.leadMinutes} 分钟后开始 (${params.startStr} ~ ${params.endStr})`;
+    const modeNote = params.allowScheduling
+      ? '（该时段已设为可占用排程，但日程上仍有此安排）'
+      : '（已为你保留该时段，未排入其他待办）';
+    const overlapNote =
+      params.overlappingTasks && params.overlappingTasks.length > 0
+        ? `\n⚡ 同时段已排待办：${params.overlappingTasks.join('、')}，请注意时间取舍。`
+        : '';
+    return `📆【${params.subscriptionName}】「${params.title}」${timePart} ${modeNote}${overlapNote}`;
+  },
+
   scheduleQueryList: (tasks: Task[], dateStr: string, timezone: string = 'Asia/Shanghai') => {
     if (tasks.length === 0) {
       return `📅 ${dateStr} 暂无排程中的待办任务`;

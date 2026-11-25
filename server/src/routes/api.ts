@@ -71,6 +71,9 @@ import {
   replanAll,
   previewTodoCard,
   ignoreExternalEvent,
+  updateExternalEventPolicy,
+  listExternalGroups,
+  updateExternalGroupPolicy,
 } from '../controllers/calendarController.js';
 import { handleClawbotWebhook } from '../controllers/webhookController.js';
 import { getQRCode, getStatus, unbindWeixin, sendTestMessage } from '../controllers/weixinController.js';
@@ -135,6 +138,9 @@ router.post('/calendar/subscriptions', requireAuth, createSubscription);
 router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);
 router.post('/calendar/external-events/:id/ignore', requireAuth, ignoreExternalEvent);
+router.put('/calendar/external-events/:id/policy', requireAuth, updateExternalEventPolicy);
+router.get('/calendar/external-groups', requireAuth, listExternalGroups);
+router.put('/calendar/external-groups/policy', requireAuth, updateExternalGroupPolicy);
 router.get('/calendar/events', requireAuth, getCalendarEvents);
 router.post('/calendar/sync-and-replan', requireAuth, syncAndReplanAll);
 router.post('/calendar/replan', requireAuth, replanAll);

@@ -5,6 +5,8 @@ import { db } from '../config/database.js';
 import { CalendarSubscription } from '../models/types.js';
 import { checkAccountEligibility, getUserTimezone } from './accountService.js';
 import { queryScheduleInRange } from './scheduleQueryService.js';
+import { extractCourseGroup } from './externalEventPolicyService.js';
+import { syncExternalNotificationOutboxForUser } from './externalOutboxService.js';
 
 export type CalendarDataFetcher = (url: string) => Promise<Record<string, any>>;
 let customCalendarFetcher: CalendarDataFetcher | null = null;
@@ -264,11 +266,13 @@ export async function syncSubscription(
       const insertStmt = db.prepare(`
         INSERT INTO external_events (
           user_id, subscription_id, uid, generation, recurrence_id,
-          status, transparency, occurrence_start, title, start_time, end_time, is_all_day
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          status, transparency, occurrence_start, course_group_key, course_group_label,
+          title, start_time, end_time, is_all_day
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const item of parsedEvents) {
+        const group = extractCourseGroup(item.title);
         insertStmt.run(
           sub.user_id,
           sub.id,
@@ -278,6 +282,8 @@ export async function syncSubscription(
           item.status,
           item.transparency,
           item.occurrenceStart,
+          group.groupKey,
+          group.groupLabel,
           item.title,
           item.startTime,
           item.endTime,
@@ -297,6 +303,14 @@ export async function syncSubscription(
 
       return { count: parsedEvents.length, changed, generation: nextGen, stale: false };
     })();
+
+    if (!txOutcome.stale) {
+      try {
+        syncExternalNotificationOutboxForUser(sub.user_id);
+      } catch (err: any) {
+        console.warn(`[Calendar] Sync external reminder outbox failed for user #${sub.user_id}:`, err.message);
+      }
+    }
 
     return { count: txOutcome.count, changed: txOutcome.changed, generation: txOutcome.generation };
   } catch (err: any) {

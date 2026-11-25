@@ -356,7 +356,8 @@ export async function processNaturalLanguageCommand(params: ProcessNLCommandPara
     for (const ev of data.externalEvents) {
       const s = formatTimeInAccountTz(ev.start, tz);
       const e = formatTimeInAccountTz(ev.end, tz);
-      lines.push(`• [外部] [${s}-${e}] ${ev.title}`);
+      const schedTag = ev.allowScheduling ? '·可排程' : '';
+      lines.push(`• [外部${schedTag}] [${s}-${e}] ${ev.title}`);
     }
     for (const b of data.blocks) {
       const s = formatTimeInAccountTz(b.start, tz);

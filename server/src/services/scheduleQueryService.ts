@@ -4,6 +4,7 @@ import { getUserTimezone } from './accountService.js';
 import { getAccountDayBoundsUtc, getAccountLocalDateKey } from '../utils/timezone.js';
 import { getActiveExternalBusyEvents } from './scheduler.js';
 import { getLatestPlanVersion } from './instanceService.js';
+import { getExternalPolicyLookup, resolveExternalEventPolicy } from './externalEventPolicyService.js';
 
 export interface UnifiedBlockItem {
   blockId: string;
@@ -44,6 +45,7 @@ export interface UnifiedRangeQueryResult {
   rangeEnd: string;
   externalEvents: Array<{
     id: string;
+    rawId: number;
     uid?: string | null;
     subscriptionId?: number | null;
     subscriptionName: string;
@@ -51,6 +53,14 @@ export interface UnifiedRangeQueryResult {
     start: string;
     end: string;
     isAllDay: boolean;
+    occurrenceStart: string;
+    courseGroupKey: string;
+    courseGroupLabel: string;
+    allowScheduling: boolean;
+    aiReminderEnabled: boolean;
+    hasInstanceOverride: boolean;
+    groupAllowScheduling: boolean;
+    groupAiReminderEnabled: boolean;
   }>;
   blocks: UnifiedBlockItem[];
 }
@@ -85,6 +95,7 @@ export function queryScheduleInRange(
   const extRows = db.prepare(`
     SELECT ee.id, ee.uid, ee.title, ee.start_time, ee.end_time, ee.is_all_day,
            ee.subscription_id, ee.occurrence_start, ee.status, ee.transparency,
+           ee.course_group_key, ee.course_group_label,
            ee.generation, cs.name as subscription_name, cs.current_generation
     FROM external_events ee
     LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
@@ -103,21 +114,35 @@ export function queryScheduleInRange(
     ignoredRows.map(r => `${r.subscription_id}::${r.event_uid}::${r.occurrence_start}`)
   );
 
+  const policyLookup = getExternalPolicyLookup(userId);
+
   const externalEvents = extRows
     .filter(e => {
       const occ = e.occurrence_start || e.start_time;
       return !(e.subscription_id && e.uid && ignoredSet.has(`${e.subscription_id}::${e.uid}::${occ}`));
     })
-    .map(e => ({
-      id: `ext-${e.id}`,
-      uid: e.uid,
-      subscriptionId: e.subscription_id ?? null,
-      subscriptionName: e.subscription_name || '外部日程',
-      title: e.title,
-      start: e.start_time,
-      end: e.end_time,
-      isAllDay: Boolean(e.is_all_day),
-    }));
+    .map(e => {
+      const policy = resolveExternalEventPolicy(e, policyLookup);
+      return {
+        id: `ext-${e.id}`,
+        rawId: e.id,
+        uid: e.uid,
+        subscriptionId: e.subscription_id ?? null,
+        subscriptionName: e.subscription_name || '外部日程',
+        title: e.title,
+        start: e.start_time,
+        end: e.end_time,
+        isAllDay: Boolean(e.is_all_day),
+        occurrenceStart: policy.occurrenceStart,
+        courseGroupKey: policy.groupKey,
+        courseGroupLabel: policy.groupLabel,
+        allowScheduling: policy.allowScheduling,
+        aiReminderEnabled: policy.aiReminderEnabled,
+        hasInstanceOverride: policy.hasInstanceOverride,
+        groupAllowScheduling: policy.groupAllowScheduling,
+        groupAiReminderEnabled: policy.groupAiReminderEnabled,
+      };
+    });
 
   const blockRows = db.prepare(`
     SELECT sb.*,
