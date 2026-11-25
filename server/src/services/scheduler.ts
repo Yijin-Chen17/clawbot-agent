@@ -27,6 +27,7 @@ import {
   zonedWallClockToUtc,
 } from '../utils/timezone.js';
 import { getUserTimezone } from './accountService.js';
+import { getExternalPolicyLookup, resolveExternalEventPolicy } from './externalEventPolicyService.js';
 import { isDateMatchingRecurrence } from '../utils/recurrence.js';
 import {
   cancelStalePastDailyInstances,
@@ -336,6 +337,7 @@ export function getActiveExternalBusyEvents(
   const rows = db.prepare(`
     SELECT ee.id, ee.uid, ee.subscription_id, ee.title, ee.start_time, ee.end_time, ee.is_all_day,
            ee.generation, ee.status, ee.transparency, ee.occurrence_start,
+           ee.course_group_key, ee.course_group_label,
            cs.current_generation
     FROM external_events ee
     LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
@@ -358,10 +360,16 @@ export function getActiveExternalBusyEvents(
     ignoredRows.map(r => `${r.subscription_id}::${r.event_uid}::${r.occurrence_start}`)
   );
 
+  const policyLookup = getExternalPolicyLookup(userId);
+
   const result: FixedCalendarBlock[] = [];
   for (const e of rows) {
     const occStart = e.occurrence_start || e.start_time;
     if (e.subscription_id && e.uid && ignoredSet.has(`${e.subscription_id}::${e.uid}::${occStart}`)) {
+      continue;
+    }
+    const policy = resolveExternalEventPolicy(e, policyLookup);
+    if (policy.allowScheduling) {
       continue;
     }
     const start = new Date(e.start_time);

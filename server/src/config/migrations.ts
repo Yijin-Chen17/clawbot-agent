@@ -343,6 +343,77 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    name: 'external_event_policies_and_ai_reminders',
+    up: (db) => {
+      ensureColumn(db, 'external_events', 'course_group_key', 'TEXT DEFAULT NULL');
+      ensureColumn(db, 'external_events', 'course_group_label', 'TEXT DEFAULT NULL');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS external_event_group_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          subscription_id INTEGER NOT NULL DEFAULT 0,
+          group_key TEXT NOT NULL,
+          group_label TEXT NOT NULL,
+          allow_scheduling INTEGER NOT NULL DEFAULT 0,
+          ai_reminder_enabled INTEGER NOT NULL DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, subscription_id, group_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ext_group_rules_user
+          ON external_event_group_rules(user_id, subscription_id);
+
+        CREATE TABLE IF NOT EXISTS external_event_overrides (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          subscription_id INTEGER NOT NULL DEFAULT 0,
+          event_uid TEXT NOT NULL,
+          occurrence_start DATETIME NOT NULL,
+          group_key TEXT DEFAULT NULL,
+          title TEXT DEFAULT NULL,
+          allow_scheduling INTEGER DEFAULT NULL,
+          ai_reminder_enabled INTEGER DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, subscription_id, event_uid, occurrence_start)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ext_overrides_user
+          ON external_event_overrides(user_id, subscription_id);
+
+        CREATE TABLE IF NOT EXISTS external_notification_outbox (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          subscription_id INTEGER NOT NULL DEFAULT 0,
+          event_uid TEXT NOT NULL,
+          occurrence_start DATETIME NOT NULL,
+          title TEXT NOT NULL,
+          start_time DATETIME NOT NULL,
+          end_time DATETIME NOT NULL,
+          is_all_day INTEGER NOT NULL DEFAULT 0,
+          allow_scheduling INTEGER NOT NULL DEFAULT 0,
+          scheduled_fire_at DATETIME NOT NULL,
+          expires_at DATETIME NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          idempotency_key TEXT NOT NULL,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          next_retry_at DATETIME DEFAULT NULL,
+          provider_msg_id TEXT DEFAULT NULL,
+          last_error TEXT DEFAULT NULL,
+          lease_owner TEXT DEFAULT NULL,
+          lease_until DATETIME DEFAULT NULL,
+          payload_json TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, subscription_id, event_uid, occurrence_start, scheduled_fire_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ext_notif_outbox_due
+          ON external_notification_outbox(status, scheduled_fire_at, next_retry_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

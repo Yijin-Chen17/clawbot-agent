@@ -201,6 +201,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     end_time: ev.end,
     is_all_day: ev.isAllDay ? 1 : 0,
     subscription_id: ev.subscriptionId,
+    allow_scheduling: ev.allowScheduling,
   }));
 
   const weekdaysZh = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -272,11 +273,11 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
             end: range.end,
             durationMinutes: dur,
             color: '#0284c7',
-            bg: '#f0f9ff',
+            bg: ev.allow_scheduling ? '#f8fafc' : '#f0f9ff',
             border: '#bae6fd',
             timeColor: '#0369a1',
             titleColor: '#0c4a6e',
-            badge: '外部日程',
+            badge: ev.allow_scheduling ? '外部·可排程' : '外部日程',
             badgeColor: '#0284c7',
           });
         }

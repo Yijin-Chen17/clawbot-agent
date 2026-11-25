@@ -96,11 +96,65 @@ export interface ExternalEvent {
   status?: string;
   transparency?: string;
   occurrence_start?: string | null;
+  course_group_key?: string | null;
+  course_group_label?: string | null;
   title: string;
   start_time: string; // ISO
   end_time: string;   // ISO
   is_all_day: number;
   created_at: string;
+}
+
+export interface ExternalEventGroupRule {
+  id: number;
+  user_id: number;
+  subscription_id: number;
+  group_key: string;
+  group_label: string;
+  allow_scheduling: number;
+  ai_reminder_enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExternalEventOverride {
+  id: number;
+  user_id: number;
+  subscription_id: number;
+  event_uid: string;
+  occurrence_start: string;
+  group_key?: string | null;
+  title?: string | null;
+  allow_scheduling: number | null;
+  ai_reminder_enabled: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExternalNotificationOutboxRecord {
+  id: number;
+  user_id: number;
+  subscription_id: number;
+  event_uid: string;
+  occurrence_start: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_all_day: number;
+  allow_scheduling: number;
+  scheduled_fire_at: string;
+  expires_at: string;
+  status: NotificationStatus;
+  idempotency_key: string;
+  attempt_count: number;
+  next_retry_at?: string | null;
+  provider_msg_id?: string | null;
+  last_error?: string | null;
+  lease_owner?: string | null;
+  lease_until?: string | null;
+  payload_json: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Task {

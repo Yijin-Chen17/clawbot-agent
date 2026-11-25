@@ -8,6 +8,19 @@ import { renderCalendarImage, renderTodoListImage } from '../services/cardRender
 import { checkAccountEligibility } from '../services/accountService.js';
 import { queryScheduleInRange } from '../services/scheduleQueryService.js';
 import { ignoreExternalCalendarInstance } from '../services/taskService.js';
+import {
+  listExternalEventGroups,
+  upsertExternalGroupRule,
+  upsertSingleExternalEventOverride,
+} from '../services/externalEventPolicyService.js';
+import { syncExternalNotificationOutboxForUser } from '../services/externalOutboxService.js';
+
+function parseExternalEventId(raw: string | string[] | undefined): number {
+  const s = Array.isArray(raw) ? raw[0] : raw || '';
+  const cleaned = s.trim().replace(/^ext-/i, '');
+  const n = Number(cleaned);
+  return Number.isInteger(n) && n > 0 ? n : NaN;
+}
 
 export function listSubscriptions(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
@@ -87,6 +100,13 @@ export function deleteSubscription(req: AuthenticatedRequest, res: Response): vo
   db.transaction(() => {
     db.prepare('DELETE FROM external_events WHERE subscription_id = ? AND user_id = ?').run(id, userId);
     db.prepare('DELETE FROM calendar_ignored_instances WHERE subscription_id = ? AND user_id = ?').run(id, userId);
+    db.prepare('DELETE FROM external_event_group_rules WHERE subscription_id = ? AND user_id = ?').run(id, userId);
+    db.prepare('DELETE FROM external_event_overrides WHERE subscription_id = ? AND user_id = ?').run(id, userId);
+    db.prepare(
+      `UPDATE external_notification_outbox
+       SET status = 'cancelled', last_error = 'subscription_deleted', lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE subscription_id = ? AND user_id = ? AND status IN ('pending', 'failed')`
+    ).run(id, userId);
     db.prepare('DELETE FROM calendar_subscriptions WHERE id = ? AND user_id = ?').run(id, userId);
   })();
 
@@ -97,9 +117,115 @@ export function deleteSubscription(req: AuthenticatedRequest, res: Response): vo
 
 export function ignoreExternalEvent(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const eventId = Number(req.params.id);
+  const eventId = parseExternalEventId(req.params.id);
+  if (!Number.isFinite(eventId)) {
+    res.status(400).json({ error: '无效的外部日程 ID' });
+    return;
+  }
   const resIgn = ignoreExternalCalendarInstance(userId, eventId);
+  try {
+    syncExternalNotificationOutboxForUser(userId);
+  } catch {}
   res.json(resIgn);
+}
+
+export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const eventId = parseExternalEventId(req.params.id);
+  if (!Number.isFinite(eventId)) {
+    res.status(400).json({ error: '无效的外部日程 ID' });
+    return;
+  }
+
+  const body = req.body || {};
+  const allowScheduling =
+    body.allowScheduling === undefined ? undefined : body.allowScheduling === null ? null : Boolean(body.allowScheduling);
+  const aiReminderEnabled =
+    body.aiReminderEnabled === undefined ? undefined : body.aiReminderEnabled === null ? null : Boolean(body.aiReminderEnabled);
+
+  if (allowScheduling === undefined && aiReminderEnabled === undefined) {
+    res.status(400).json({ error: '请提供要更新的策略字段' });
+    return;
+  }
+
+  try {
+    const { policy } = upsertSingleExternalEventOverride({
+      userId,
+      eventId,
+      allowScheduling,
+      aiReminderEnabled,
+    });
+    syncExternalNotificationOutboxForUser(userId);
+    let planVersion: number | undefined;
+    if (allowScheduling !== undefined) {
+      const replan = replanUserTasks(userId, { triggerSource: 'external_event_policy' });
+      planVersion = replan.planVersion;
+    }
+    res.json({
+      success: true,
+      policy,
+      planVersion,
+      message: '已更新该外部日程设置',
+    });
+  } catch (err: any) {
+    res.status(404).json({ error: err.message || '更新失败' });
+  }
+}
+
+export function listExternalGroups(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const rawSubId = req.query.subscriptionId;
+  const subId = rawSubId !== undefined && rawSubId !== '' ? Number(rawSubId) : undefined;
+  const groups = listExternalEventGroups(userId, Number.isFinite(subId) ? subId : undefined);
+  res.json({ groups });
+}
+
+export function updateExternalGroupPolicy(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const body = req.body || {};
+  const subscriptionId = Number(body.subscriptionId ?? 0);
+  const groupKey = typeof body.groupKey === 'string' ? body.groupKey.trim() : '';
+  const groupLabel = typeof body.groupLabel === 'string' ? body.groupLabel.trim() : undefined;
+
+  if (!groupKey) {
+    res.status(400).json({ error: '请提供课程/日程分组标识' });
+    return;
+  }
+
+  const allowScheduling = body.allowScheduling === undefined ? undefined : Boolean(body.allowScheduling);
+  const aiReminderEnabled = body.aiReminderEnabled === undefined ? undefined : Boolean(body.aiReminderEnabled);
+  const resetInstanceOverrides = body.resetInstanceOverrides === undefined ? true : Boolean(body.resetInstanceOverrides);
+
+  if (allowScheduling === undefined && aiReminderEnabled === undefined && !body.resetInstanceOverrides) {
+    res.status(400).json({ error: '请提供要更新的批量策略字段' });
+    return;
+  }
+
+  const rule = upsertExternalGroupRule({
+    userId,
+    subscriptionId,
+    groupKey,
+    groupLabel,
+    allowScheduling,
+    aiReminderEnabled,
+    resetInstanceOverrides,
+  });
+
+  syncExternalNotificationOutboxForUser(userId);
+  let planVersion: number | undefined;
+  if (allowScheduling !== undefined || resetInstanceOverrides) {
+    const replan = replanUserTasks(userId, { triggerSource: 'external_group_policy' });
+    planVersion = replan.planVersion;
+  }
+
+  const groups = listExternalEventGroups(userId);
+  res.json({
+    success: true,
+    rule,
+    groups,
+    planVersion,
+    message: `已更新「${rule.group_label}」的批量排程与提醒设置`,
+  });
 }
 
 export function updateCalendarColor(req: AuthenticatedRequest, res: Response): void {
@@ -169,6 +295,7 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
   const formattedEvents = [
     ...unified.externalEvents.map(ev => ({
       id: ev.id,
+      rawId: ev.rawId,
       title: ev.title,
       start: ev.start,
       end: ev.end,
@@ -179,9 +306,18 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
       borderColor: '#0284c7',
       extendedProps: {
         type: 'external',
+        rawId: ev.rawId,
         subscriptionId: ev.subscriptionId,
         subscriptionName: ev.subscriptionName,
         uid: ev.uid,
+        occurrenceStart: ev.occurrenceStart,
+        courseGroupKey: ev.courseGroupKey,
+        courseGroupLabel: ev.courseGroupLabel,
+        allowScheduling: ev.allowScheduling,
+        aiReminderEnabled: ev.aiReminderEnabled,
+        hasInstanceOverride: ev.hasInstanceOverride,
+        groupAllowScheduling: ev.groupAllowScheduling,
+        groupAiReminderEnabled: ev.groupAiReminderEnabled,
       },
     })),
     ...unified.blocks.map(b => {
@@ -261,6 +397,7 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
     timezone: unified.timezone,
     events: formattedEvents,
     subscriptions,
+    externalEventGroups: listExternalEventGroups(userId),
     taskColor: (db.prepare('SELECT calendar_color FROM user_settings WHERE user_id = ?').get(userId) as { calendar_color?: string } | undefined)?.calendar_color || null,
     exportUrls: {
       http: `${protocol}://${host}/api/calendar/subscribe/${token}.ics`,
