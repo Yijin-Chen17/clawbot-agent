@@ -33,7 +33,6 @@ import {
   Pin,
   Zap,
   CalendarCheck2,
-  EyeOff,
 } from 'lucide-react';
 
 // Google Calendar standard 24-hour grid constants
@@ -374,7 +373,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
   const [schedulableDraft, setSchedulableDraft] = useState(false);
   const [aiReminderDraft, setAiReminderDraft] = useState(true);
-  const [matchSameNameDraft, setMatchSameNameDraft] = useState(false);
+  const [confirmApplyAllSameName, setConfirmApplyAllSameName] = useState(false);
   const [selectedDueTask, setSelectedDueTask] = useState<TaskItem | null>(null);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [editError, setEditError] = useState('');
@@ -405,7 +404,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     if (item.kind === 'event') {
       setSchedulableDraft(Boolean(item.event.extendedProps?.allowScheduling));
       setAiReminderDraft(item.event.extendedProps?.aiReminderEnabled !== false);
-      setMatchSameNameDraft(false);
+      setConfirmApplyAllSameName(false);
     }
   };
 
@@ -1048,7 +1047,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const handleUpdateSingleExternalPolicy = async (
     eventId: string,
-    payload: { allowScheduling?: boolean | null; aiReminderEnabled?: boolean | null; matchSameName?: boolean }
+    payload: {
+      allowScheduling?: boolean | null;
+      aiReminderEnabled?: boolean | null;
+      matchSameName?: boolean;
+      uid?: string;
+      start?: string;
+      title?: string;
+    }
   ) => {
     setSavingPolicyKey(`single:${eventId}`);
     try {
@@ -1073,20 +1079,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       await fetchData(true);
     } catch (e: any) {
       alert(e.response?.data?.error || '更新外部日程设置失败');
-    } finally {
-      setSavingPolicyKey(null);
-    }
-  };
-
-  const handleIgnoreExternalEvent = async (eventId: string, title: string) => {
-    if (!confirm(`确定在日历中隐藏外部日程「${title}」吗？后续同步也不会再显示。`)) return;
-    setSavingPolicyKey(`ignore:${eventId}`);
-    try {
-      await api.post(`/calendar/external-events/${eventId}/ignore`);
-      setSelectedItem(null);
-      await fetchData(true);
-    } catch (e: any) {
-      alert(e.response?.data?.error || '隐藏外部日程失败');
     } finally {
       setSavingPolicyKey(null);
     }
@@ -2399,7 +2391,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             ev.title.trim() === selectedItem.title.trim()
         ).length;
         const isBusySingle = savingPolicyKey === `single:${selectedItem.id}`;
-        const isBusyIgnore = savingPolicyKey === `ignore:${selectedItem.id}`;
+        const otherSameNameCount = Math.max(0, sameNameCount - 1);
 
         return (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -2520,7 +2512,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                         ) : (
                           <BellOff className="w-4 h-4 text-gray-400 dark:text-neutral-500 transition-colors" />
                         )}
-                        <span>{t('calendar.ai_reminder_label', 'AI 提醒')}</span>
+                        <span>{t('calendar.event_reminder_label', '事件提醒')}</span>
                       </span>
                       <span
                         className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
@@ -2537,45 +2529,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       </span>
                     </button>
                   </div>
-
-                  <div className="border-t border-gray-200/60 dark:border-neutral-700/60 pt-3">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={matchSameNameDraft}
-                      onClick={() => setMatchSameNameDraft((v) => !v)}
-                      className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
-                    >
-                      <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
-                        <Layers
-                          className={`w-4 h-4 transition-colors ${
-                            matchSameNameDraft
-                              ? 'text-indigo-600 dark:text-indigo-400'
-                              : 'text-gray-400 dark:text-neutral-500'
-                          }`}
-                        />
-                        <span>{t('calendar.match_same_name', '匹配相同名称事件')}</span>
-                        {sameNameCount > 1 && (
-                          <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-                            {sameNameCount}
-                          </span>
-                        )}
-                      </span>
-                      <span
-                        className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
-                          matchSameNameDraft
-                            ? 'bg-indigo-600 dark:bg-indigo-500'
-                            : 'bg-gray-300 dark:bg-neutral-600'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
-                            matchSameNameDraft ? 'translate-x-5' : 'translate-x-1'
-                          }`}
-                        />
-                      </span>
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -2583,12 +2536,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               <div className="px-6 py-4 border-t border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  disabled={isBusyIgnore || isBusySingle}
-                  onClick={() => void handleIgnoreExternalEvent(selectedItem.id, selectedItem.title)}
-                  className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                  disabled={isBusySingle}
+                  onClick={() => setConfirmApplyAllSameName(true)}
+                  className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  <EyeOff className="w-3.5 h-3.5" />
-                  <span>{t('calendar.ignore_event', '忽略')}</span>
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>{t('calendar.apply_all_same_name', '应用到所有同名日程')}</span>
                 </button>
                 <div className="flex items-center gap-2">
                   <button
@@ -2606,17 +2559,74 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       await handleUpdateSingleExternalPolicy(selectedItem.id, {
                         allowScheduling: schedulableDraft,
                         aiReminderEnabled: aiReminderDraft,
-                        matchSameName: matchSameNameDraft,
+                        matchSameName: false,
+                        uid: selectedItem.event.extendedProps?.uid ?? undefined,
+                        start: selectedItem.start,
+                        title: selectedItem.title,
                       });
                       setSelectedItem(null);
                     }}
                     className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
                   >
-                    {isBusySingle ? t('common.saving', '保存中...') : t('common.save', '保存')}
+                    {isBusySingle ? t('common.saving', '保存中...') : t('calendar.apply_this_change', '应用此次更改')}
                   </button>
                 </div>
               </div>
             </div>
+
+            {confirmApplyAllSameName && (
+              <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-gray-200 dark:border-[#444746] space-y-4 animate-fadeIn">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      <span>{t('calendar.apply_all_same_name', '应用到所有同名日程')}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmApplyAllSameName(false)}
+                      className="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-600 dark:text-neutral-300 leading-relaxed">
+                    {otherSameNameCount > 0
+                      ? `后续还有 ${otherSameNameCount} 个同名日程「${selectedItem.title}」，确认将此次更改应用到全部同名日程吗？`
+                      : `确认将此次更改应用到所有名为「${selectedItem.title}」的日程吗？`}
+                  </p>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isBusySingle}
+                      onClick={() => setConfirmApplyAllSameName(false)}
+                      className="px-3.5 py-1.5 text-xs font-medium text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+                    >
+                      {t('common.cancel', '取消')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusySingle}
+                      onClick={async () => {
+                        await handleUpdateSingleExternalPolicy(selectedItem.id, {
+                          allowScheduling: schedulableDraft,
+                          aiReminderEnabled: aiReminderDraft,
+                          matchSameName: true,
+                          uid: selectedItem.event.extendedProps?.uid ?? undefined,
+                          start: selectedItem.start,
+                          title: selectedItem.title,
+                        });
+                        setConfirmApplyAllSameName(false);
+                        setSelectedItem(null);
+                      }}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isBusySingle ? t('common.saving', '保存中...') : t('common.confirm', '确认应用')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
