@@ -369,7 +369,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
   // Dialogs & Modals
-  const [sidebarTaskTab, setSidebarTaskTab] = useState<'unscheduled' | 'scheduled' | 'due'>('unscheduled');
+  const [sidebarTaskTab, setSidebarTaskTab] = useState<'scheduled' | 'unscheduled'>('scheduled');
   const [showCalendarsModal, setShowCalendarsModal] = useState(false);
   const [savingPolicyKey, setSavingPolicyKey] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
@@ -675,7 +675,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   }, [subscriptions]);
 
   const todayKey = localDateKey(new Date());
-  const weekStartKey = localDateKey(weekStart);
 
   const buildDayEntry = useCallback((date: Date) => {
     const key = localDateKey(date);
@@ -769,12 +768,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           taskItem.status === 'completed' ||
           (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));
         const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
-        const totalParts = ev.extendedProps?.totalParts || 1;
         const partIdx = ev.extendedProps?.partIndex || 1;
-        const partSuffix =
-          totalParts > 1
-            ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(partIdx)).replace('{total}', String(totalParts))})`
-            : '';
         const titlePrefix = blockDone ? '✓ ' : '';
 
         let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
@@ -794,7 +788,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           blockStatus: ev.extendedProps?.blockStatus,
           planStatus: (ev.extendedProps as any)?.planStatus || taskItem.plan_status,
           businessDate: (ev.extendedProps as any)?.businessDate || key,
-          title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+          title: `${titlePrefix}${taskItem.title}`,
           start: range.start,
           end: range.end,
           allDay: false,
@@ -846,7 +840,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         if (range) {
           const blockDone = isCompletedForDay || Boolean(block.completed);
           const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
-          const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(block.partIndex || bIdx + 1)).replace('{total}', String(block.totalParts))})` : '';
           const titlePrefix = blockDone ? '✓ ' : '';
 
           let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
@@ -863,7 +856,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             partIndex: block.partIndex || bIdx + 1,
             planStatus: taskItem.plan_status,
             businessDate: key,
-            title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+            title: `${titlePrefix}${taskItem.title}`,
             start: range.start,
             end: range.end,
             allDay: false,
@@ -917,22 +910,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     return monthDayData.find((d) => d.key === overflowDayKey) || null;
   }, [overflowDayKey, monthDayData]);
 
-  // Overdue tasks
-  const overdueTasks = useMemo(() => {
-    return tasks
-      .filter((t) => {
-        if (!t.deadline || t.status === 'completed') return false;
-        if (t.time_mode === 'daily_fixed' && t.completed_dates) {
-          try {
-            const doneDates = JSON.parse(t.completed_dates);
-            if (Array.isArray(doneDates) && doneDates.includes(todayKey)) return false;
-          } catch {}
-        }
-        return dateKeyFromIso(t.deadline) < weekStartKey;
-      })
-      .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
-  }, [tasks, weekStartKey, todayKey]);
-
   // Unscheduled & Scheduled task lists for Calendar view
   const unscheduledTasks = useMemo(() => {
     return tasks
@@ -960,11 +937,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         return aMs - bMs;
       });
   }, [tasks]);
-
-  // Due groups this week
-  const dueGroups = useMemo(() => {
-    return dayData.filter((d) => d.due.length > 0);
-  }, [dayData]);
 
   // Mini calendar matrix calculation (Monday to Sunday)
   const miniCalendarGrid = useMemo(() => {
@@ -1623,9 +1595,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
             </div>
 
-            {/* 排期状态面板：未排期 / 已排期 / 截止待办 */}
+            {/* 排期状态面板：已排期 / 未排期 */}
             <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
-              <div className="grid grid-cols-3 gap-1 p-0.5 rounded-xl bg-gray-100/80 dark:bg-[#282a2c] text-[11px] font-medium">
+              <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-gray-100/80 dark:bg-[#282a2c] text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => setSidebarTaskTab('scheduled')}
+                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                    sidebarTaskTab === 'scheduled'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>{t('calendar.scheduled_label', '已排期')}</span>
+                  <span className="px-1 rounded-full text-[10px] font-mono bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-[#a8c7fa]">
+                    {scheduledTasksList.length}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSidebarTaskTab('unscheduled')}
@@ -1643,36 +1629,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   }`}>
                     {unscheduledTasks.length}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSidebarTaskTab('scheduled')}
-                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
-                    sidebarTaskTab === 'scheduled'
-                      ? 'bg-white dark:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] shadow-2xs font-semibold'
-                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
-                  }`}
-                >
-                  <span>{t('calendar.scheduled_label', '已排期')}</span>
-                  <span className="px-1 rounded-full text-[10px] font-mono bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-[#a8c7fa]">
-                    {scheduledTasksList.length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSidebarTaskTab('due')}
-                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
-                    sidebarTaskTab === 'due'
-                      ? 'bg-white dark:bg-[#1e1f20] text-rose-700 dark:text-rose-300 shadow-2xs font-semibold'
-                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
-                  }`}
-                >
-                  <span>{t('calendar.due_short_tab', '截止')}</span>
-                  {overdueTasks.length > 0 && (
-                    <span className="px-1 rounded-full text-[10px] font-mono bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
-                      {overdueTasks.length}
-                    </span>
-                  )}
                 </button>
               </div>
 
@@ -1796,52 +1752,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 </div>
               )}
 
-              {sidebarTaskTab === 'due' && (
-                <div className="space-y-1.5">
-                  {overdueTasks.length === 0 && dueGroups.length === 0 && (
-                    <div className="text-[11px] text-gray-400 dark:text-[#8e918f] py-4 text-center">
-                      {t('calendar.no_due', '本周暂无截止待办')}
-                    </div>
-                  )}
-                  {overdueTasks.slice(0, 4).map((item) => (
-                    <button
-                      key={`overdue-${item.id}`}
-                      type="button"
-                      onClick={() => setSelectedDueTask(item)}
-                      className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
-                    >
-                      <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
-                        {item.title}
-                      </div>
-                      <div className="text-[10px] text-rose-500 font-mono mt-0.5 flex items-center justify-between">
-                        <span>{item.deadline ? new Date(item.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.overdue_label', '已逾期')} · {item.duration_minutes}m</span>
-                        <span>{item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')}</span>
-                      </div>
-                    </button>
-                  ))}
-
-                  {dueGroups.slice(0, 3).map((group) => (
-                    <div key={`due-grp-${group.key}`} className="space-y-1">
-                      <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
-                        {language.startsWith('en') ? group.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : `${group.date.getMonth() + 1}月${group.date.getDate()}日 (${weekDayLabels[(group.date.getDay() + 6) % 7]})`}
-                      </div>
-                      {group.due.slice(0, 3).map((item) => (
-                        <button
-                          key={`due-${item.id}`}
-                          type="button"
-                          onClick={() => setSelectedDueTask(item)}
-                          className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
-                        >
-                          <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{item.title}</span>
-                          <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
-                            {item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')} · {item.duration_minutes}m
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </aside>
         </div>
@@ -2713,44 +2623,50 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       : t('calendar.scheduled_label', '已排期')}
                   </span>
                 </div>
-                <div className="flex items-center justify-between pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
-                    className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
-                  >
-                    {t('calendar.delete_item', '删除事项')}
-                  </button>
-                  <div className="flex flex-wrap justify-end gap-2">
+                <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-neutral-800">
+                  <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
-                      className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                      onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
+                      className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      {t('calendar.edit_item', '编辑任务')}
+                      {t('calendar.delete_item', '删除事项')}
                     </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
+                        className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        {t('calendar.edit_item', '编辑任务')}
+                      </button>
+                      {!selectedItem.id.endsWith('-done') && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openRescheduleModal(
+                              selectedItem.task,
+                              selectedItem.blockId,
+                              selectedItem.businessDate || dateKeyFromIso(selectedItem.start)
+                            )
+                          }
+                          className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                          {t('calendar.single_reschedule_btn', '单次再排期')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
                     {!selectedItem.id.endsWith('-done') && (
                       <button
                         type="button"
-                        onClick={() =>
-                          openRescheduleModal(
-                            selectedItem.task,
-                            selectedItem.blockId,
-                            selectedItem.businessDate || dateKeyFromIso(selectedItem.start)
-                          )
-                        }
-                        className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                        onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
+                        className="px-3.5 py-1.5 border border-blue-600 text-blue-600 dark:border-[#a8c7fa] dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
                       >
-                        {t('calendar.single_reschedule_btn', '单次再排期')}
+                        {t('calendar.complete_part', '完成本节')}
                       </button>
                     )}
-                    {!selectedItem.id.endsWith('-done') && <button
-                      type="button"
-                      onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
-                      className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
-                    >
-                      {t('calendar.complete_part', '完成本节')}
-                    </button>}
                     <button
                       type="button"
                       onClick={() =>
@@ -2760,7 +2676,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           dateKeyFromIso(selectedItem.start)
                         )
                       }
-                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
                     >
                       {selectedItem.id.endsWith('-done') ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
                     </button>
