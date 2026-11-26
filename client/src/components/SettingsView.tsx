@@ -43,6 +43,10 @@ import {
   Gift,
   Zap,
   DollarSign,
+  Settings,
+  CalendarCheck2,
+  BellOff,
+  X,
 } from 'lucide-react';
 
 interface WorkSlot {
@@ -60,6 +64,7 @@ interface CalendarSub {
   id: number;
   name: string;
   url: string;
+  color?: string | null;
   last_sync_at: string | null;
   sync_status: 'ok' | 'error';
   error_message: string | null;
@@ -196,6 +201,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const {
     themeMode,
     setThemeMode,
+    isDark,
     themeColor,
     setThemeColor,
     displayDensity,
@@ -230,6 +236,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [deletePassword, setDeletePassword] = useState('');
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editingSubPolicy, setEditingSubPolicy] = useState<{
+    sub: CalendarSub;
+    color: string;
+    allowScheduling: boolean;
+    aiReminderEnabled: boolean;
+  } | null>(null);
+  const [savingSubPolicy, setSavingSubPolicy] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -781,6 +794,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
       alert(t('calendar.status_sync_err', '同步失败：') + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const openSubPolicyModal = async (sub: CalendarSub) => {
+    const color = sub.color || '#039BE5';
+    let allowScheduling = false;
+    let aiReminderEnabled = true;
+    try {
+      const start = new Date(Date.now() - 7 * 86400000).toISOString();
+      const end = new Date(Date.now() + 30 * 86400000).toISOString();
+      const res = await api.get('/calendar/events', { params: { start, end } });
+      const subEvents = (res.data?.events || []).filter(
+        (ev: any) =>
+          ev.extendedProps?.type === 'external' &&
+          Number(ev.subscriptionId ?? ev.extendedProps?.subscriptionId ?? 0) === sub.id
+      );
+      if (subEvents.length > 0) {
+        allowScheduling = subEvents.every((ev: any) => Boolean(ev.extendedProps?.allowScheduling));
+        aiReminderEnabled = subEvents.some((ev: any) => ev.extendedProps?.aiReminderEnabled !== false);
+      }
+    } catch {}
+    setEditingSubPolicy({ sub, color, allowScheduling, aiReminderEnabled });
+  };
+
+  const handleSaveSubPolicy = async () => {
+    if (!editingSubPolicy) return;
+    setSavingSubPolicy(true);
+    try {
+      await api.put('/calendar/external-events/bulk-policy', {
+        subscriptionId: editingSubPolicy.sub.id,
+        allowScheduling: editingSubPolicy.allowScheduling,
+        aiReminderEnabled: editingSubPolicy.aiReminderEnabled,
+      });
+      setEditingSubPolicy(null);
+      fetchSubs();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } }; message?: string };
+      alert(t('common.error', '操作失败：') + (error.response?.data?.error || error.message));
+    } finally {
+      setSavingSubPolicy(false);
     }
   };
 
@@ -2427,6 +2480,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
+                            onClick={() => void openSubPolicyModal(sub)}
+                            className="p-2 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-full transition cursor-pointer"
+                            title={t('calendar.sub_policy_settings', '提醒与可排程设置')}
+                          >
+                            <Settings className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleSyncNow(sub.id)}
                             className="p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-full transition cursor-pointer"
                             title={t('calendar.sync_now')}
@@ -2451,6 +2512,162 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           )}
         </section>
       </div>
+
+      {/* 订阅提醒与可排程设置弹窗 */}
+      {editingSubPolicy && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full shadow-2xl border border-gray-200 dark:border-[#444746] overflow-hidden transition-colors">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span
+                  className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: isDark
+                      ? `color-mix(in srgb, ${editingSubPolicy.color} 25%, #282a2c)`
+                      : `color-mix(in srgb, ${editingSubPolicy.color} 15%, #ffffff)`,
+                    color: editingSubPolicy.color,
+                  }}
+                >
+                  <Calendar className="w-4 h-4" />
+                </span>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                  {editingSubPolicy.sub.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSubPolicy(null)}
+                className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300 transition cursor-pointer shrink-0"
+                aria-label={t('common.close', '关闭')}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div
+                className={`rounded-xl p-3 transition-all duration-200 ${
+                  editingSubPolicy.allowScheduling ? 'border border-dashed opacity-90' : 'border-l-[3.5px]'
+                }`}
+                style={{
+                  borderColor: editingSubPolicy.allowScheduling ? editingSubPolicy.color : undefined,
+                  borderLeftColor: editingSubPolicy.color,
+                  backgroundColor: isDark
+                    ? `color-mix(in srgb, ${editingSubPolicy.color} ${editingSubPolicy.allowScheduling ? '14%' : '35%'}, #1e1f20)`
+                    : `color-mix(in srgb, ${editingSubPolicy.color} ${editingSubPolicy.allowScheduling ? '8%' : '18%'}, #ffffff)`,
+                  color: isDark ? '#f3f4f6' : '#1f2937',
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold truncate">{editingSubPolicy.sub.name}</span>
+                  {editingSubPolicy.aiReminderEnabled ? (
+                    <Bell className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                  ) : (
+                    <BellOff className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono opacity-80">
+                  <Calendar className="w-3.5 h-3.5 shrink-0" />
+                  <span>{editingSubPolicy.sub.event_count} 个事件</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={editingSubPolicy.allowScheduling}
+                  onClick={() =>
+                    setEditingSubPolicy((prev) =>
+                      prev ? { ...prev, allowScheduling: !prev.allowScheduling } : null
+                    )
+                  }
+                  className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
+                >
+                  <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                    <CalendarCheck2
+                      className={`w-4 h-4 transition-colors ${
+                        editingSubPolicy.allowScheduling
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-gray-400 dark:text-neutral-500'
+                      }`}
+                    />
+                    <span>{t('calendar.schedulable_label', '可排程')}</span>
+                  </span>
+                  <span
+                    className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                      editingSubPolicy.allowScheduling
+                        ? 'bg-emerald-500 dark:bg-emerald-600'
+                        : 'bg-gray-300 dark:bg-neutral-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                        editingSubPolicy.allowScheduling ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </span>
+                </button>
+
+                <div className="border-t border-gray-200/60 dark:border-neutral-700/60 pt-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={editingSubPolicy.aiReminderEnabled}
+                    onClick={() =>
+                      setEditingSubPolicy((prev) =>
+                        prev ? { ...prev, aiReminderEnabled: !prev.aiReminderEnabled } : null
+                      )
+                    }
+                    className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                      {editingSubPolicy.aiReminderEnabled ? (
+                        <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400 transition-colors" />
+                      ) : (
+                        <BellOff className="w-4 h-4 text-gray-400 dark:text-neutral-500 transition-colors" />
+                      )}
+                      <span>{t('calendar.event_reminder_label', '事件提醒')}</span>
+                    </span>
+                    <span
+                      className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                        editingSubPolicy.aiReminderEnabled
+                          ? 'bg-blue-600 dark:bg-blue-500'
+                          : 'bg-gray-300 dark:bg-neutral-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                          editingSubPolicy.aiReminderEnabled ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 dark:border-neutral-800 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingSubPolicy}
+                onClick={() => setEditingSubPolicy(null)}
+                className="px-3.5 py-1.5 text-xs font-medium text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+              >
+                {t('common.cancel', '取消')}
+              </button>
+              <button
+                type="button"
+                disabled={savingSubPolicy}
+                onClick={() => void handleSaveSubPolicy()}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {savingSubPolicy ? t('common.saving', '保存中...') : t('common.save', '保存')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 注销账号确认弹窗 */}
       {showDeleteModal && (
