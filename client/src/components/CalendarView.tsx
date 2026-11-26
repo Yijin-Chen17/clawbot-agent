@@ -1148,11 +1148,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     if (!confirm(`确定在日历中隐藏外部日程「${title}」吗？后续同步也不会再显示。`)) return;
     setSavingPolicyKey(`ignore:${eventId}`);
     try {
-      await api.post(`/calendar/external-events/${eventId}/ignore`);
+      const res = await api.post(`/calendar/external-events/${eventId}/ignore`);
+      if (res.data?.success === false) {
+        throw new Error(res.data.message || '隐藏外部日程失败');
+      }
       setSelectedItem(null);
       await fetchData(true);
     } catch (e: any) {
-      alert(e.response?.data?.error || '隐藏外部日程失败');
+      alert(e.response?.data?.error || e.message || '隐藏外部日程失败');
     } finally {
       setSavingPolicyKey(null);
     }
@@ -1537,7 +1540,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
           {externalGroups.length > 0 && (
             <button
-              onClick={() => setShowGroupsModal(true)}
+              onClick={() => {
+                setGroupSearch('');
+                setGroupSubFilter('all');
+                setShowGroupsModal(true);
+              }}
               className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
               title="课程与外部日程批量规则"
             >

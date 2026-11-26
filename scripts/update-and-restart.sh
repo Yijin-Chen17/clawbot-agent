@@ -37,9 +37,9 @@ export PATH="/home/calcury/nodejs/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 export PM2_HOME="/home/calcury/.pm2"
 export GIT_TERMINAL_PROMPT=0
 
-# 4. 检查目录写权限，若当前用户无权修改则友好提示并尝试 sudo
-if [ ! -w "${APP_DIR}" ] || [ ! -w "${PM2_HOME}" ]; then
-    echo "⚠️ 权限检查: 当前用户 (${CURRENT_USER}) 对应用或 PM2 目录无直接写权限。"
+# 4. 检查目录及 PM2 socket 写权限，若当前用户无权修改或非服务账号则自动通过 sudo 切换
+if [ ! -w "${APP_DIR}" ] || [ ! -w "${PM2_HOME}" ] || { [ -e "${PM2_HOME}/rpc.sock" ] && [ ! -w "${PM2_HOME}/rpc.sock" ]; }; then
+    echo "⚠️ 权限检查: 当前用户 (${CURRENT_USER}) 对应用、PM2 目录或 rpc.sock 无直接写权限。"
     echo "👉 正在尝试自动通过 sudo 获取必要权限执行..."
     exec sudo "$0" "$@"
 fi
