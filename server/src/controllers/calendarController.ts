@@ -246,33 +246,68 @@ export function bulkUpdateAllExternalEventsPolicy(req: AuthenticatedRequest, res
     body.allowScheduling === undefined ? undefined : Boolean(body.allowScheduling);
   const aiReminderEnabled =
     body.aiReminderEnabled === undefined ? undefined : Boolean(body.aiReminderEnabled);
+  const subscriptionId =
+    body.subscriptionId === undefined || body.subscriptionId === null || body.subscriptionId === ''
+      ? undefined
+      : Number(body.subscriptionId);
 
   if (allowScheduling === undefined && aiReminderEnabled === undefined) {
     res.status(400).json({ error: '请提供要批量更新的设置项' });
     return;
   }
 
-  const rows = db
-    .prepare(
-      `SELECT ee.id
-       FROM external_events ee
-       LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
-       WHERE ee.user_id = ?
-         AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
-         AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))`
-    )
-    .all(userId) as Array<{ id: number }>;
+  if (subscriptionId !== undefined && (!Number.isInteger(subscriptionId) || subscriptionId <= 0)) {
+    res.status(400).json({ error: '无效的日历订阅 ID' });
+    return;
+  }
+
+  const rows = (
+    subscriptionId !== undefined
+      ? db
+          .prepare(
+            `SELECT ee.id
+             FROM external_events ee
+             LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+             WHERE ee.user_id = ?
+               AND ee.subscription_id = ?
+               AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+               AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))`
+          )
+          .all(userId, subscriptionId)
+      : db
+          .prepare(
+            `SELECT ee.id
+             FROM external_events ee
+             LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+             WHERE ee.user_id = ?
+               AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+               AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))`
+          )
+          .all(userId)
+  ) as Array<{ id: number }>;
 
   db.transaction(() => {
     if (allowScheduling !== undefined) {
-      db.prepare(
-        'UPDATE external_event_group_rules SET allow_scheduling = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
-      ).run(allowScheduling ? 1 : 0, userId);
+      if (subscriptionId !== undefined) {
+        db.prepare(
+          'UPDATE external_event_group_rules SET allow_scheduling = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND subscription_id = ?'
+        ).run(allowScheduling ? 1 : 0, userId, subscriptionId);
+      } else {
+        db.prepare(
+          'UPDATE external_event_group_rules SET allow_scheduling = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+        ).run(allowScheduling ? 1 : 0, userId);
+      }
     }
     if (aiReminderEnabled !== undefined) {
-      db.prepare(
-        'UPDATE external_event_group_rules SET ai_reminder_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
-      ).run(aiReminderEnabled ? 1 : 0, userId);
+      if (subscriptionId !== undefined) {
+        db.prepare(
+          'UPDATE external_event_group_rules SET ai_reminder_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND subscription_id = ?'
+        ).run(aiReminderEnabled ? 1 : 0, userId, subscriptionId);
+      } else {
+        db.prepare(
+          'UPDATE external_event_group_rules SET ai_reminder_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+        ).run(aiReminderEnabled ? 1 : 0, userId);
+      }
     }
     for (const row of rows) {
       upsertSingleExternalEventOverride({
