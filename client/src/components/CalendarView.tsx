@@ -372,6 +372,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [sidebarTaskTab, setSidebarTaskTab] = useState<'scheduled' | 'unscheduled'>('scheduled');
   const [showCalendarsModal, setShowCalendarsModal] = useState(false);
   const [savingPolicyKey, setSavingPolicyKey] = useState<string | null>(null);
+  const [bulkPolicyLoading, setBulkPolicyLoading] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
   const [schedulableDraft, setSchedulableDraft] = useState(false);
   const [aiReminderDraft, setAiReminderDraft] = useState(true);
@@ -1055,6 +1056,25 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       alert(e.response?.data?.error || '更新外部日程设置失败');
     } finally {
       setSavingPolicyKey(null);
+    }
+  };
+
+  const handleBulkAllCalendarsPolicy = async (payload: {
+    allowScheduling?: boolean;
+    aiReminderEnabled?: boolean;
+  }) => {
+    const key =
+      payload.aiReminderEnabled !== undefined
+        ? `remind:${payload.aiReminderEnabled}`
+        : `sched:${payload.allowScheduling}`;
+    setBulkPolicyLoading(key);
+    try {
+      await api.put('/calendar/external-events/bulk-policy', payload);
+      await fetchData(true);
+    } catch (e: any) {
+      alert(e.response?.data?.error || t('common.error', '操作失败'));
+    } finally {
+      setBulkPolicyLoading(null);
     }
   };
 
@@ -2278,6 +2298,64 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   })}
                 </div>
               )}
+            </div>
+
+            {/* 所有日历批量设置（含已订阅与未订阅） */}
+            <div className="space-y-2.5 pt-3 border-t border-gray-100 dark:border-[#444746] text-xs">
+              <div className="font-bold text-gray-800 dark:text-gray-200">
+                {t('calendar.bulk_all_calendars_title', '全部日历统一设置（含已订阅与未订阅）')}
+              </div>
+              <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-2xl border border-gray-200/80 dark:border-[#444746] space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 font-medium text-gray-700 dark:text-neutral-200">
+                    <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <span>{t('calendar.event_reminder_label', '事件提醒')}</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={bulkPolicyLoading !== null}
+                      onClick={() => void handleBulkAllCalendarsPolicy({ aiReminderEnabled: true })}
+                      className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-medium transition cursor-pointer disabled:opacity-50"
+                    >
+                      {bulkPolicyLoading === 'remind:true' ? t('common.saving', '保存中...') : t('calendar.enable_all', '全部开启')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={bulkPolicyLoading !== null}
+                      onClick={() => void handleBulkAllCalendarsPolicy({ aiReminderEnabled: false })}
+                      className="px-2.5 py-1 rounded-lg bg-gray-200/80 dark:bg-neutral-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-neutral-600 font-medium transition cursor-pointer disabled:opacity-50"
+                    >
+                      {bulkPolicyLoading === 'remind:false' ? t('common.saving', '保存中...') : t('calendar.disable_all', '全部关闭')}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-200/60 dark:border-neutral-700/60">
+                  <span className="flex items-center gap-2 font-medium text-gray-700 dark:text-neutral-200">
+                    <CalendarCheck2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>{t('calendar.schedulable_label', '可排程')}</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={bulkPolicyLoading !== null}
+                      onClick={() => void handleBulkAllCalendarsPolicy({ allowScheduling: true })}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 font-medium transition cursor-pointer disabled:opacity-50"
+                    >
+                      {bulkPolicyLoading === 'sched:true' ? t('common.saving', '保存中...') : t('calendar.schedulable_all', '全部可排程')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={bulkPolicyLoading !== null}
+                      onClick={() => void handleBulkAllCalendarsPolicy({ allowScheduling: false })}
+                      className="px-2.5 py-1 rounded-lg bg-gray-200/80 dark:bg-neutral-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-neutral-600 font-medium transition cursor-pointer disabled:opacity-50"
+                    >
+                      {bulkPolicyLoading === 'sched:false' ? t('common.saving', '保存中...') : t('calendar.unschedulable_all', '全部不可排程')}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

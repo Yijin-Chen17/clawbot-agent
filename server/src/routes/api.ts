@@ -72,6 +72,7 @@ import {
   previewTodoCard,
   ignoreExternalEvent,
   updateExternalEventPolicy,
+  bulkUpdateAllExternalEventsPolicy,
   listExternalGroups,
   updateExternalGroupPolicy,
 } from '../controllers/calendarController.js';
@@ -137,6 +138,7 @@ router.put('/calendar/colors/:id', requireAuth, updateCalendarColor);
 router.post('/calendar/subscriptions', requireAuth, createSubscription);
 router.delete('/calendar/subscriptions/:id', requireAuth, deleteSubscription);
 router.post('/calendar/subscriptions/:id/sync', requireAuth, syncSubscriptionNow);
+router.put('/calendar/external-events/bulk-policy', requireAuth, bulkUpdateAllExternalEventsPolicy);
 router.post('/calendar/external-events/:id/ignore', requireAuth, ignoreExternalEvent);
 router.put('/calendar/external-events/:id/policy', requireAuth, updateExternalEventPolicy);
 router.get('/calendar/external-groups', requireAuth, listExternalGroups);
