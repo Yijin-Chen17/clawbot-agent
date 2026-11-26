@@ -142,6 +142,7 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
     body.allowScheduling === undefined ? undefined : body.allowScheduling === null ? null : Boolean(body.allowScheduling);
   const aiReminderEnabled =
     body.aiReminderEnabled === undefined ? undefined : body.aiReminderEnabled === null ? null : Boolean(body.aiReminderEnabled);
+  const matchSameName = Boolean(body.matchSameName);
 
   if (allowScheduling === undefined && aiReminderEnabled === undefined) {
     res.status(400).json({ error: '请提供要更新的策略字段' });
@@ -149,12 +150,45 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
   }
 
   try {
-    const { policy } = upsertSingleExternalEventOverride({
-      userId,
-      eventId,
-      allowScheduling,
-      aiReminderEnabled,
-    });
+    let policy;
+    if (matchSameName) {
+      const target = db
+        .prepare('SELECT id, title FROM external_events WHERE id = ? AND user_id = ?')
+        .get(eventId, userId) as { id: number; title: string } | undefined;
+      if (!target) {
+        res.status(404).json({ error: '未找到指定外部日程' });
+        return;
+      }
+      const matchingRows = db
+        .prepare('SELECT id FROM external_events WHERE user_id = ? AND TRIM(title) = TRIM(?)')
+        .all(userId, target.title) as Array<{ id: number }>;
+      for (const row of matchingRows) {
+        const updated = upsertSingleExternalEventOverride({
+          userId,
+          eventId: row.id,
+          allowScheduling,
+          aiReminderEnabled,
+        });
+        if (row.id === eventId) {
+          policy = updated.policy;
+        }
+      }
+      if (!policy) {
+        policy = upsertSingleExternalEventOverride({
+          userId,
+          eventId,
+          allowScheduling,
+          aiReminderEnabled,
+        }).policy;
+      }
+    } else {
+      policy = upsertSingleExternalEventOverride({
+        userId,
+        eventId,
+        allowScheduling,
+        aiReminderEnabled,
+      }).policy;
+    }
     syncExternalNotificationOutboxForUser(userId);
     let planVersion: number | undefined;
     if (allowScheduling !== undefined) {

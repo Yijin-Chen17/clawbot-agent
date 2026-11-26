@@ -57,7 +57,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [defaultView, setDefaultViewState] = useState<DefaultView>(() => {
     const saved = localStorage.getItem('clawbot_default_view');
-    return (saved as DefaultView) || 'matrix';
+    return (saved as DefaultView) || 'calendar';
   });
 
   const [defaultTaskDuration, setDefaultTaskDurationState] = useState<number>(() => {
