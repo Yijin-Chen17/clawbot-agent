@@ -152,30 +152,30 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
   try {
     let resolvedEventId = eventId;
     let target = db
-      .prepare('SELECT id, title FROM external_events WHERE id = ? AND user_id = ?')
-      .get(resolvedEventId, userId) as { id: number; title: string } | undefined;
+      .prepare('SELECT id, title, start_time FROM external_events WHERE id = ? AND user_id = ?')
+      .get(resolvedEventId, userId) as { id: number; title: string; start_time: string } | undefined;
 
     if (!target && (body.uid || body.title)) {
       if (body.uid && body.start) {
         target = db
           .prepare(
-            `SELECT id, title FROM external_events
+            `SELECT id, title, start_time FROM external_events
              WHERE user_id = ? AND uid = ? AND (start_time = ? OR occurrence_start = ?)
              ORDER BY id DESC LIMIT 1`
           )
           .get(userId, String(body.uid), String(body.start), String(body.start)) as
-          | { id: number; title: string }
+          | { id: number; title: string; start_time: string }
           | undefined;
       }
       if (!target && body.title && body.start) {
         target = db
           .prepare(
-            `SELECT id, title FROM external_events
+            `SELECT id, title, start_time FROM external_events
              WHERE user_id = ? AND TRIM(title) = TRIM(?) AND start_time = ?
              ORDER BY id DESC LIMIT 1`
           )
           .get(userId, String(body.title), String(body.start)) as
-          | { id: number; title: string }
+          | { id: number; title: string; start_time: string }
           | undefined;
       }
       if (target) {
@@ -191,8 +191,10 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
     let policy;
     if (matchSameName) {
       const matchingRows = db
-        .prepare('SELECT id FROM external_events WHERE user_id = ? AND TRIM(title) = TRIM(?)')
-        .all(userId, target.title) as Array<{ id: number }>;
+        .prepare(
+          'SELECT id FROM external_events WHERE user_id = ? AND TRIM(title) = TRIM(?) AND start_time >= ?'
+        )
+        .all(userId, target.title, target.start_time) as Array<{ id: number }>;
       for (const row of matchingRows) {
         const updated = upsertSingleExternalEventOverride({
           userId,
@@ -384,6 +386,7 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
         groupAllowScheduling: ev.groupAllowScheduling,
         groupAiReminderEnabled: ev.groupAiReminderEnabled,
         sameNameCount: ev.sameNameCount,
+        sameNameSubsequentCount: ev.sameNameSubsequentCount,
       },
     })),
     ...unified.blocks.map(b => {

@@ -99,6 +99,7 @@ interface CalendarEventItem {
     groupAllowScheduling?: boolean;
     groupAiReminderEnabled?: boolean;
     sameNameCount?: number;
+    sameNameSubsequentCount?: number;
   };
 }
 
@@ -2386,14 +2387,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
       {/* 3. 日程或待办详情模态框 */}
       {selectedItem && selectedItem.kind === 'event' && (() => {
-        const sameNameCount = events.filter(
+        const subsequentSameNameInWindow = events.filter(
           (ev) =>
             ev.extendedProps?.type === 'external' &&
-            ev.title.trim() === selectedItem.title.trim()
+            ev.title.trim() === selectedItem.title.trim() &&
+            ev.start > selectedItem.start
         ).length;
         const isBusySingle = savingPolicyKey === `single:${selectedItem.id}`;
-        const totalSameNameCount = selectedItem.event.extendedProps?.sameNameCount ?? sameNameCount;
-        const otherSameNameCount = Math.max(0, totalSameNameCount - 1);
+        const otherSameNameCount =
+          selectedItem.event.extendedProps?.sameNameSubsequentCount ?? subsequentSameNameInWindow;
 
         return (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -2543,7 +2545,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Layers className="w-3.5 h-3.5" />
-                  <span>{t('calendar.apply_all_same_name', '应用到所有同名日程')}</span>
+                  <span>{t('calendar.apply_subsequent_same_name', '应用到后续同名日程')}</span>
                 </button>
                 <div className="flex items-center gap-2">
                   <button
@@ -2582,7 +2584,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
                       <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                      <span>{t('calendar.apply_all_same_name', '应用到所有同名日程')}</span>
+                      <span>{t('calendar.apply_subsequent_same_name', '应用到后续同名日程')}</span>
                     </div>
                     <button
                       type="button"
@@ -2594,8 +2596,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   </div>
                   <p className="text-xs text-gray-600 dark:text-neutral-300 leading-relaxed">
                     {otherSameNameCount > 0
-                      ? `后续还有 ${otherSameNameCount} 个同名日程「${selectedItem.title}」，确认将此次更改应用到全部同名日程吗？`
-                      : `确认将此次更改应用到所有名为「${selectedItem.title}」的日程吗？`}
+                      ? `后续还有 ${otherSameNameCount} 个同名日程「${selectedItem.title}」，确认将此次更改应用到当前及后续所有同名日程吗？`
+                      : `后续暂无其他同名日程，确认将此次更改应用到当前「${selectedItem.title}」吗？`}
                   </p>
                   <div className="flex items-center justify-end gap-2 pt-1">
                     <button

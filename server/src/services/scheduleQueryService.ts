@@ -62,6 +62,7 @@ export interface UnifiedRangeQueryResult {
     groupAllowScheduling: boolean;
     groupAiReminderEnabled: boolean;
     sameNameCount: number;
+    sameNameSubsequentCount: number;
   }>;
   blocks: UnifiedBlockItem[];
 }
@@ -132,12 +133,17 @@ export function queryScheduleInRange(
     start_time: string;
   }>;
 
-  const sameNameCountMap = new Map<string, number>();
+  const sameNameStartsMap = new Map<string, string[]>();
   for (const r of allActiveTitleRows) {
     const occ = r.occurrence_start || r.start_time;
     if (r.subscription_id && r.uid && ignoredSet.has(`${r.subscription_id}::${r.uid}::${occ}`)) continue;
     const titleKey = String(r.title || '').trim();
-    sameNameCountMap.set(titleKey, (sameNameCountMap.get(titleKey) || 0) + 1);
+    const list = sameNameStartsMap.get(titleKey);
+    if (list) {
+      list.push(r.start_time);
+    } else {
+      sameNameStartsMap.set(titleKey, [r.start_time]);
+    }
   }
 
   const externalEvents = extRows
@@ -147,6 +153,8 @@ export function queryScheduleInRange(
     })
     .map(e => {
       const policy = resolveExternalEventPolicy(e, policyLookup);
+      const titleStarts = sameNameStartsMap.get(String(e.title || '').trim()) || [];
+      const subsequentCount = titleStarts.filter(st => st > e.start_time).length;
       return {
         id: `ext-${e.id}`,
         rawId: e.id,
@@ -165,7 +173,8 @@ export function queryScheduleInRange(
         hasInstanceOverride: policy.hasInstanceOverride,
         groupAllowScheduling: policy.groupAllowScheduling,
         groupAiReminderEnabled: policy.groupAiReminderEnabled,
-        sameNameCount: sameNameCountMap.get(String(e.title || '').trim()) || 1,
+        sameNameCount: titleStarts.length || 1,
+        sameNameSubsequentCount: subsequentCount,
       };
     });
 
