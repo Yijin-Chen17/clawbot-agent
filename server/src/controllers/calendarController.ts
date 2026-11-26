@@ -383,6 +383,7 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
         hasInstanceOverride: ev.hasInstanceOverride,
         groupAllowScheduling: ev.groupAllowScheduling,
         groupAiReminderEnabled: ev.groupAiReminderEnabled,
+        sameNameCount: ev.sameNameCount,
       },
     })),
     ...unified.blocks.map(b => {

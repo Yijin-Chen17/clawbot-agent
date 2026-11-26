@@ -61,6 +61,7 @@ export interface UnifiedRangeQueryResult {
     hasInstanceOverride: boolean;
     groupAllowScheduling: boolean;
     groupAiReminderEnabled: boolean;
+    sameNameCount: number;
   }>;
   blocks: UnifiedBlockItem[];
 }
@@ -116,6 +117,29 @@ export function queryScheduleInRange(
 
   const policyLookup = getExternalPolicyLookup(userId);
 
+  const allActiveTitleRows = db.prepare(`
+    SELECT ee.title, ee.subscription_id, ee.uid, ee.occurrence_start, ee.start_time
+    FROM external_events ee
+    LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+    WHERE ee.user_id = ?
+      AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+      AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))
+  `).all(userId) as Array<{
+    title: string;
+    subscription_id: number | null;
+    uid: string | null;
+    occurrence_start: string | null;
+    start_time: string;
+  }>;
+
+  const sameNameCountMap = new Map<string, number>();
+  for (const r of allActiveTitleRows) {
+    const occ = r.occurrence_start || r.start_time;
+    if (r.subscription_id && r.uid && ignoredSet.has(`${r.subscription_id}::${r.uid}::${occ}`)) continue;
+    const titleKey = String(r.title || '').trim();
+    sameNameCountMap.set(titleKey, (sameNameCountMap.get(titleKey) || 0) + 1);
+  }
+
   const externalEvents = extRows
     .filter(e => {
       const occ = e.occurrence_start || e.start_time;
@@ -141,6 +165,7 @@ export function queryScheduleInRange(
         hasInstanceOverride: policy.hasInstanceOverride,
         groupAllowScheduling: policy.groupAllowScheduling,
         groupAiReminderEnabled: policy.groupAiReminderEnabled,
+        sameNameCount: sameNameCountMap.get(String(e.title || '').trim()) || 1,
       };
     });
 

@@ -98,6 +98,7 @@ interface CalendarEventItem {
     hasInstanceOverride?: boolean;
     groupAllowScheduling?: boolean;
     groupAiReminderEnabled?: boolean;
+    sameNameCount?: number;
   };
 }
 
@@ -2391,7 +2392,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             ev.title.trim() === selectedItem.title.trim()
         ).length;
         const isBusySingle = savingPolicyKey === `single:${selectedItem.id}`;
-        const otherSameNameCount = Math.max(0, sameNameCount - 1);
+        const totalSameNameCount = selectedItem.event.extendedProps?.sameNameCount ?? sameNameCount;
+        const otherSameNameCount = Math.max(0, totalSameNameCount - 1);
 
         return (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
