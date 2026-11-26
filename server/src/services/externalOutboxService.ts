@@ -5,7 +5,7 @@ import { checkAccountEligibility, getUserTimezone } from './accountService.js';
 import { getExternalPolicyLookup, resolveExternalEventPolicy } from './externalEventPolicyService.js';
 import { formatTimeInAccountTz, getAccountLocalDateKey, zonedWallClockToUtc } from '../utils/timezone.js';
 import { invokeLlmWithFailover } from './llm.js';
-import { sendClawbotMessageWithReceipt, templates } from './clawbot.js';
+import { checkWeixinProactiveEligibility, sendClawbotMessageWithReceipt, templates } from './clawbot.js';
 
 const LOOKAHEAD_DAYS = 7;
 
@@ -621,6 +621,13 @@ export async function processExternalOutboxNotifications(
       .get(item.user_id) as UserSettings | undefined;
     if (!settings) {
       markExternalNotificationFailed(item.id, 'missing_user_settings');
+      failed++;
+      continue;
+    }
+
+    const deliveryCheck = checkWeixinProactiveEligibility(settings, now);
+    if (!deliveryCheck.ok) {
+      markExternalNotificationFailed(item.id, deliveryCheck.reason || 'delivery_channel_unavailable');
       failed++;
       continue;
     }

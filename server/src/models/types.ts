@@ -355,6 +355,30 @@ export interface NotificationOutboxRecord {
   updated_at: string;
 }
 
+export interface WeixinReplyOutboxRecord {
+  id: number;
+  user_id: number;
+  inbox_id?: number | null;
+  channel: string;
+  to_user_id: string;
+  context_token?: string | null;
+  text_content: string;
+  image_kind?: 'week_calendar' | 'todo_list' | null;
+  image_base64?: string | null;
+  text_sent: number;
+  image_sent: number;
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'expired' | 'cancelled';
+  attempt_count: number;
+  next_retry_at?: string | null;
+  lease_owner?: string | null;
+  lease_until?: string | null;
+  provider_msg_id?: string | null;
+  last_error?: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ConversationState {
   id: number;
   user_id: number;
@@ -364,8 +388,11 @@ export interface ConversationState {
   updated_at: string;
 }
 
-export interface LLMExtractionResult {
+export interface LLMExtractionAction {
   swap_decision?: 'confirm' | 'reject' | 'other' | null;
+  session_action?: 'continue' | 'cancel_session' | 'switch_new' | 'select_candidate' | null;
+  selected_candidate_index?: number | null;
+  selected_candidate_id?: number | null;
   intent: 'create_task' | 'status_update' | 'query_schedule' | 'delete_item' | 'modify_item' | 'other';
   title?: string | null;
   description?: string | null;
@@ -417,6 +444,10 @@ export interface LLMExtractionResult {
     tags?: string[] | null;
     notes?: string | null;
   } | null;
+}
+
+export interface LLMExtractionResult extends LLMExtractionAction {
+  extra_actions?: LLMExtractionAction[] | null;
 }
 
 export interface ClawbotWebhookPayload {

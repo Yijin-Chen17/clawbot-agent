@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import cron from 'node-cron';
 import { db } from '../config/database.js';
 import { CalendarSubscription, ScheduleBlockRecord, TaskInstance, UserSettings } from '../models/types.js';
-import { templates, sendClawbotMessageWithReceipt } from './clawbot.js';
+import { templates, sendClawbotMessageWithReceipt, checkWeixinProactiveEligibility } from './clawbot.js';
+import { processPendingWeixinReplies } from './weixinGateway.js';
 import { syncSubscription } from './calendarSync.js';
 import { checkAccountEligibility, getUserTimezone } from './accountService.js';
 import { getAccountLocalDateKey, formatTimeInAccountTz } from '../utils/timezone.js';
@@ -96,6 +97,7 @@ export function startReminderScheduler() {
     notificationsRunning = true;
     try {
       const now = new Date();
+      await processPendingWeixinReplies(now, `${PROCESS_LEASE_OWNER}-reply`);
       await processOutboxNotifications(now);
       await processExternalOutboxNotifications(now, `${PROCESS_LEASE_OWNER}-ext`);
     } catch (err: any) {
@@ -216,6 +218,13 @@ export async function processOutboxNotifications(
     const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(item.user_id) as UserSettings | undefined;
     if (!settings) {
       markNotificationFailed(item.id, 'missing_user_settings');
+      failed++;
+      continue;
+    }
+
+    const deliveryCheck = checkWeixinProactiveEligibility(settings, now);
+    if (!deliveryCheck.ok) {
+      markNotificationFailed(item.id, deliveryCheck.reason || 'delivery_channel_unavailable');
       failed++;
       continue;
     }

@@ -209,6 +209,37 @@ export function setOutboundSenderForTest(sender: OutboundSender | null): void {
 }
 
 /**
+ * 核对用户当前是否具备可主动推送的微信/外发通道，避免未绑定或超 24h 会话窗口时无谓消耗 LLM 额度
+ */
+export function checkWeixinProactiveEligibility(
+  settings: UserSettings,
+  now: Date = new Date()
+): { ok: boolean; reason?: string } {
+  if (customOutboundSender) {
+    return { ok: true };
+  }
+  if (settings.clawbot_outbound_url && settings.clawbot_outbound_url.trim()) {
+    return { ok: true };
+  }
+  if (!settings.weixin_connected || !settings.weixin_bot_token || !settings.weixin_user_id) {
+    return { ok: false, reason: '未连接微信且未配置 outbound_url' };
+  }
+  if (!settings.weixin_context_token || !settings.weixin_context_token.trim()) {
+    return { ok: false, reason: '缺少微信会话 context_token，需用户先发一条消息激活对话' };
+  }
+  if (settings.weixin_last_active_at) {
+    const raw = String(settings.weixin_last_active_at).trim();
+    const parsedMs = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(raw)
+      ? new Date(raw.replace(' ', 'T') + '+08:00').getTime()
+      : new Date(raw).getTime();
+    if (Number.isFinite(parsedMs) && now.getTime() - parsedMs > 24 * 3600_000) {
+      return { ok: false, reason: '超过微信 24 小时主动推送窗口，等待用户发消息恢复' };
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * 投递外发消息并返回可核对回执（C02, C03）：
  * - 无可用通道时明确返回 failed，不再假装成功
  * - 区分明确失败（failed）与超时未知（unknown）
