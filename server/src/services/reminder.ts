@@ -267,6 +267,26 @@ export async function processOutboxNotifications(
   return { processed: due.length, sent, failed, unknown, cancelled };
 }
 
+function parseSubscriptionSyncTimestampMs(sub: CalendarSubscription): number {
+  const candidates: Array<{ raw?: string | null; bareIsUtc: boolean }> = [
+    { raw: sub.last_attempt_at, bareIsUtc: true },
+    { raw: sub.last_success_at, bareIsUtc: true },
+    { raw: sub.last_sync_at, bareIsUtc: false },
+  ];
+  for (const { raw, bareIsUtc } of candidates) {
+    if (!raw || typeof raw !== 'string' || !raw.trim()) continue;
+    const trimmed = raw.trim();
+    // SQLite CURRENT_TIMESTAMP produces "YYYY-MM-DD HH:MM:SS" in UTC without Z;
+    // datetime('now', 'localtime') produces the same shape in server local time.
+    const isoLike = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(trimmed)
+      ? `${trimmed.replace(' ', 'T')}${bareIsUtc ? 'Z' : ''}`
+      : trimmed;
+    const ms = new Date(isoLike).getTime();
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
+}
+
 /**
  * 定时同步外部日历订阅（A02, C03, C04）：
  * - 跳过已封禁/未放行账号
@@ -286,12 +306,11 @@ export async function checkCalendarSync(now: Date = new Date()): Promise<void> {
 
   for (const sub of subs) {
     const intervalMin = Math.max(5, sub.calendar_sync_interval_minutes || 60);
-    const lastReference = sub.last_attempt_at || sub.last_sync_at;
-    const lastMs = lastReference ? new Date(lastReference).getTime() : 0;
+    const lastMs = parseSubscriptionSyncTimestampMs(sub);
 
     if (now.getTime() - lastMs >= intervalMin * 60 * 1000) {
       try {
-        const res = await syncSubscription(sub);
+        const res = await syncSubscription(sub, now);
         if (res.changed) {
           usersToReplan.add(sub.user_id);
         }

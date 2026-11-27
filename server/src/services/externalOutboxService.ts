@@ -8,6 +8,11 @@ import { invokeLlmWithFailover } from './llm.js';
 import { checkWeixinProactiveEligibility, sendClawbotMessageWithReceipt, templates } from './clawbot.js';
 
 const LOOKAHEAD_DAYS = 7;
+const MAX_EXTERNAL_DELIVERY_ATTEMPTS = 3;
+
+function buildBusinessSlotKey(title: string, startTime: string, endTime: string): string {
+  return `${String(title || '').trim()}::${startTime}::${endTime}`;
+}
 
 function buildExternalReminderTimes(params: {
   startTimeIso: string;
@@ -107,6 +112,8 @@ export function syncExternalNotificationOutboxForUser(
     }
   >();
 
+  const seenBusinessSlots = new Set<string>();
+
   for (const row of extRows) {
     const occStart = String(row.occurrence_start || row.start_time);
     if (row.subscription_id && row.uid && ignoredSet.has(`${row.subscription_id}::${row.uid}::${occStart}`)) {
@@ -125,6 +132,10 @@ export function syncExternalNotificationOutboxForUser(
     });
     if (!times) continue;
     if (now.getTime() > times.expiresMs) continue;
+
+    const slotKey = buildBusinessSlotKey(row.title, row.start_time, row.end_time);
+    if (seenBusinessSlots.has(slotKey)) continue;
+    seenBusinessSlots.add(slotKey);
 
     const key = `${policy.subscriptionId}::${policy.eventUid}::${policy.occurrenceStart}`;
     activeByKey.set(key, {
@@ -186,8 +197,12 @@ export function syncExternalNotificationOutboxForUser(
 
     const alreadySentStmt = db.prepare(
       `SELECT id FROM external_notification_outbox
-       WHERE user_id = ? AND subscription_id = ? AND event_uid = ? AND occurrence_start = ?
-         AND scheduled_fire_at = ? AND status IN ('sent', 'unknown')
+       WHERE user_id = ?
+         AND status IN ('sent', 'unknown')
+         AND (
+           (subscription_id = ? AND event_uid = ? AND occurrence_start = ? AND scheduled_fire_at = ?)
+           OR (TRIM(title) = TRIM(?) AND start_time = ? AND end_time = ?)
+         )
        LIMIT 1`
     );
 
@@ -212,9 +227,19 @@ export function syncExternalNotificationOutboxForUser(
         item.subscriptionId,
         item.eventUid,
         item.occurrenceStart,
-        item.fireIso
+        item.fireIso,
+        item.title,
+        item.startTime,
+        item.endTime
       );
-      if (sentBefore) continue;
+      if (sentBefore) {
+        const stalePending = pendingByKey.get(k);
+        if (stalePending) {
+          cancelStmt.run('duplicate_already_sent', stalePending.id);
+          cancelled++;
+        }
+        continue;
+      }
 
       const existingPending = pendingByKey.get(k);
       if (existingPending) {
@@ -309,6 +334,7 @@ function claimDueExternalNotifications(
       .prepare(
         `SELECT * FROM external_notification_outbox
          WHERE status IN ('pending', 'failed')
+           AND attempt_count < ?
            AND julianday(scheduled_fire_at) <= julianday(?)
            AND julianday(expires_at) >= julianday(?)
            AND (next_retry_at IS NULL OR julianday(next_retry_at) <= julianday(?))
@@ -316,7 +342,7 @@ function claimDueExternalNotifications(
          ORDER BY scheduled_fire_at ASC
          LIMIT ?`
       )
-      .all(nowIso, nowIso, nowIso, nowIso, limit) as ExternalNotificationOutboxRecord[];
+      .all(MAX_EXTERNAL_DELIVERY_ATTEMPTS, nowIso, nowIso, nowIso, nowIso, limit) as ExternalNotificationOutboxRecord[];
 
     if (due.length === 0) return [];
 
@@ -347,7 +373,11 @@ function markExternalNotificationSent(outboxId: number, providerMsgId?: string |
   ).run(providerMsgId || null, outboxId);
 }
 
-function markExternalNotificationFailed(outboxId: number, errorMessage: string, maxAttempts: number = 3): void {
+function markExternalNotificationFailed(
+  outboxId: number,
+  errorMessage: string,
+  maxAttempts: number = MAX_EXTERNAL_DELIVERY_ATTEMPTS
+): void {
   const row = db
     .prepare('SELECT attempt_count FROM external_notification_outbox WHERE id = ?')
     .get(outboxId) as { attempt_count: number } | undefined;
@@ -632,6 +662,26 @@ export async function processExternalOutboxNotifications(
       continue;
     }
 
+    // Re-check right before LLM generation & sending that another record for the same
+    // user + event title + time window has not already been delivered (guards against dynamic UID churn)
+    const duplicateSent = db
+      .prepare(
+        `SELECT id FROM external_notification_outbox
+         WHERE user_id = ?
+           AND id != ?
+           AND status IN ('sent', 'unknown')
+           AND TRIM(title) = TRIM(?)
+           AND start_time = ?
+           AND end_time = ?
+         LIMIT 1`
+      )
+      .get(item.user_id, item.id, ev.title, ev.start_time, ev.end_time);
+    if (duplicateSent) {
+      markExternalNotificationCancelled(item.id, 'duplicate_already_sent');
+      cancelled++;
+      continue;
+    }
+
     let payload: any = {};
     try {
       payload = JSON.parse(item.payload_json);
@@ -660,6 +710,16 @@ export async function processExternalOutboxNotifications(
     const receipt = await sendClawbotMessageWithReceipt(settings, msg, item.idempotency_key);
     if (receipt.outcome === 'sent') {
       markExternalNotificationSent(item.id, receipt.providerMsgId);
+      db.prepare(
+        `UPDATE external_notification_outbox
+         SET status = 'cancelled', last_error = 'duplicate_superseded', lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?
+           AND id != ?
+           AND status IN ('pending', 'failed')
+           AND TRIM(title) = TRIM(?)
+           AND start_time = ?
+           AND end_time = ?`
+      ).run(item.user_id, item.id, ev.title, ev.start_time, ev.end_time);
       sent++;
     } else if (receipt.outcome === 'unknown') {
       markExternalNotificationUnknown(item.id, receipt.error || 'delivery_outcome_unknown');

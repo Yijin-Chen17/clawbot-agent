@@ -262,7 +262,8 @@ export async function sendClawbotMessageWithReceipt(
       settings.weixin_bot_id || '',
       settings.weixin_user_id,
       message,
-      settings.weixin_context_token
+      settings.weixin_context_token,
+      idempotencyKey
     );
     if (res.success) {
       return {

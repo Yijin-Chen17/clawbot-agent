@@ -16,6 +16,7 @@ import {
   processExternalOutboxNotifications,
   syncExternalNotificationOutboxForUser,
 } from './externalOutboxService.js';
+import { checkCalendarSync } from './reminder.js';
 import { setLlmExecutorForTest } from './llm.js';
 import { setOutboundSenderForTest } from './clawbot.js';
 import { getAccountLocalDateKey, addDaysToDateKey } from '../utils/timezone.js';
@@ -272,8 +273,13 @@ describe('External Event Policies, Course Grouping & AI Reminders', () => {
       },
     }));
     await syncSubscription(sub);
-    const syncRes = syncExternalNotificationOutboxForUser(userId, new Date(wallClockIso(tomorrowKey, 10, 0)));
-    assert.equal(syncRes.enqueued, 1);
+    syncExternalNotificationOutboxForUser(userId, new Date(wallClockIso(tomorrowKey, 10, 0)));
+    const pendingBeforeDisable = (
+      db
+        .prepare("SELECT COUNT(*) as c FROM external_notification_outbox WHERE user_id = ? AND status = 'pending'")
+        .get(userId) as { c: number }
+    ).c;
+    assert.equal(pendingBeforeDisable, 1);
 
     const group = listExternalEventGroups(userId)[0];
     upsertExternalGroupRule({
@@ -295,5 +301,143 @@ describe('External Event Policies, Course Grouping & AI Reminders', () => {
         .get(userId) as { c: number }
     ).c;
     assert.equal(pendingCount, 0);
+  });
+
+  it('deduplicates external reminders and avoids false changed flags when ICS regenerates random UIDs per fetch', async () => {
+    const subInfo = db
+      .prepare("INSERT INTO calendar_subscriptions (user_id, name, url) VALUES (?, 'UNNC', 'https://cal.example/unnc.ics')")
+      .run(userId);
+    const subId = Number(subInfo.lastInsertRowid);
+
+    const evStart = wallClockIso(tomorrowKey, 9, 0);
+    const evEnd = wallClockIso(tomorrowKey, 11, 0);
+    let fetchCount = 0;
+
+    setCalendarFetcherForTest(async () => {
+      fetchCount++;
+      return {
+        c1: {
+          type: 'VEVENT',
+          uid: `random-uid-round-${fetchCount}`,
+          summary: 'COMP1036/L1/01',
+          start: new Date(evStart),
+          end: new Date(evEnd),
+        },
+      };
+    });
+
+    const sync1 = await syncSubscription(
+      db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ?').get(subId) as any
+    );
+    assert.equal(sync1.changed, true);
+
+    let llmCalls = 0;
+    setLlmExecutorForTest(async () => {
+      llmCalls++;
+      return { content: `AI提醒#${llmCalls}` };
+    });
+
+    const sentKeys: Array<string | undefined> = [];
+    setOutboundSenderForTest(async (_settings, _msg, idempotencyKey) => {
+      sentKeys.push(idempotencyKey);
+      return { outcome: 'sent', channel: 'weixin_ilink', providerMsgId: `wx-${sentKeys.length}` };
+    });
+
+    // Fire at 08:55
+    const t0855 = new Date(new Date(evStart).getTime() - 5 * 60_000 + 5_000);
+    syncExternalNotificationOutboxForUser(userId, t0855);
+    const res1 = await processExternalOutboxNotifications(t0855, 'worker-1');
+    assert.equal(res1.sent, 1);
+
+    // Subsequent sync at 08:56 returns a brand-new random UID -> must NOT report changed or re-send!
+    const sync2 = await syncSubscription(
+      db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ?').get(subId) as any
+    );
+    assert.equal(sync2.changed, false);
+
+    const t0856 = new Date(new Date(evStart).getTime() - 4 * 60_000);
+    syncExternalNotificationOutboxForUser(userId, t0856);
+    const res2 = await processExternalOutboxNotifications(t0856, 'worker-1');
+    assert.equal(res2.sent, 0);
+
+    // Even at 09:01 with another new random UID, still must NOT re-send
+    const sync3 = await syncSubscription(
+      db.prepare('SELECT * FROM calendar_subscriptions WHERE id = ?').get(subId) as any
+    );
+    assert.equal(sync3.changed, false);
+    const t0901 = new Date(new Date(evStart).getTime() + 60_000);
+    syncExternalNotificationOutboxForUser(userId, t0901);
+    const res3 = await processExternalOutboxNotifications(t0901, 'worker-1');
+    assert.equal(res3.sent, 0);
+    assert.equal(sentKeys.length, 1);
+    assert.equal(llmCalls, 1);
+  });
+
+  it('respects calendar_sync_interval_minutes when last_attempt_at is UTC CURRENT_TIMESTAMP and caps failed retries at 3', async () => {
+    const subInfo = db
+      .prepare("INSERT INTO calendar_subscriptions (user_id, name, url) VALUES (?, 'UNNC', 'https://cal.example/unnc.ics')")
+      .run(userId);
+    const subId = Number(subInfo.lastInsertRowid);
+
+    const evStart = wallClockIso(tomorrowKey, 9, 0);
+    const evEnd = wallClockIso(tomorrowKey, 11, 0);
+    let fetchCalls = 0;
+
+    setCalendarFetcherForTest(async () => {
+      fetchCalls++;
+      return {
+        c1: {
+          type: 'VEVENT',
+          uid: 'stable-uid-1',
+          summary: 'COMP1036/L1/01',
+          start: new Date(evStart),
+          end: new Date(evEnd),
+        },
+      };
+    });
+
+    // Simulate legacy SQLite UTC CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS") set 5 minutes ago
+    const fiveMinAgoUtc = new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 19).replace('T', ' ');
+    db.prepare('UPDATE calendar_subscriptions SET last_attempt_at = ? WHERE id = ?').run(fiveMinAgoUtc, subId);
+
+    // Default interval is 60 min -> checkCalendarSync must NOT sync after just 5 minutes
+    await checkCalendarSync(new Date());
+    assert.equal(fetchCalls, 0);
+
+    // After 61 minutes -> checkCalendarSync syncs once, and a second tick 1 minute later does not re-sync
+    await checkCalendarSync(new Date(Date.now() + 61 * 60_000));
+    assert.equal(fetchCalls, 1);
+    await checkCalendarSync(new Date(Date.now() + 62 * 60_000));
+    assert.equal(fetchCalls, 1);
+
+    // Failed delivery stops retrying after 3 attempts (no infinite 15s spin when next_retry_at is NULL)
+    let llmCalls = 0;
+    setLlmExecutorForTest(async () => {
+      llmCalls++;
+      return { content: `AI-${llmCalls}` };
+    });
+    const usedKeys: Array<string | undefined> = [];
+    setOutboundSenderForTest(async (_settings, _msg, idemKey) => {
+      usedKeys.push(idemKey);
+      return { outcome: 'failed', channel: 'weixin_ilink', error: 'mock error' };
+    });
+
+    const fireStartMs = new Date(evStart).getTime() - 5 * 60_000 + 1_000;
+    syncExternalNotificationOutboxForUser(userId, new Date(fireStartMs - 60_000));
+    for (let i = 0; i < 8; i++) {
+      // Advance by 5 minutes each step so backoff never blocks eligible attempts within expires_at,
+      // wait: expires_at is +15m after start (20m after fireStart), so use 130s steps across 15m
+      const stepTime = new Date(fireStartMs + i * 130_000);
+      db.prepare('UPDATE external_notification_outbox SET next_retry_at = NULL WHERE user_id = ?').run(userId);
+      await processExternalOutboxNotifications(stepTime, 'worker-retry-test');
+    }
+
+    const row = db
+      .prepare('SELECT status, attempt_count FROM external_notification_outbox WHERE user_id = ?')
+      .get(userId) as { status: string; attempt_count: number };
+    assert.equal(row.status, 'failed');
+    assert.equal(row.attempt_count, 3);
+    assert.equal(usedKeys.length, 3);
+    assert.ok(usedKeys[0] && usedKeys[0] === usedKeys[1] && usedKeys[1] === usedKeys[2]);
   });
 });

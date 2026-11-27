@@ -134,6 +134,8 @@ export function cancelNotificationsForBlock(blockId: string): void {
   `).run(blockId);
 }
 
+const MAX_NOTIFICATION_ATTEMPTS = 3;
+
 /**
  * 带可恢复租约领取待投递提醒（C02, C03）：
  * 进程崩溃后，租约过期即可由新 Worker 接续处理。
@@ -170,13 +172,14 @@ export function claimDueNotifications(
     const due = db.prepare(`
       SELECT * FROM notification_outbox
       WHERE status IN ('pending', 'failed')
+        AND attempt_count < ?
         AND julianday(scheduled_fire_at) <= julianday(?)
         AND julianday(expires_at) >= julianday(?)
         AND (next_retry_at IS NULL OR julianday(next_retry_at) <= julianday(?))
         AND (lease_until IS NULL OR julianday(lease_until) < julianday(?))
       ORDER BY scheduled_fire_at ASC
       LIMIT ?
-    `).all(nowIso, nowIso, nowIso, nowIso, limit) as NotificationOutboxRecord[];
+    `).all(MAX_NOTIFICATION_ATTEMPTS, nowIso, nowIso, nowIso, nowIso, limit) as NotificationOutboxRecord[];
 
     if (due.length === 0) return [];
 
@@ -202,7 +205,11 @@ export function markNotificationSent(outboxId: number, providerMsgId?: string | 
   `).run(providerMsgId || null, outboxId);
 }
 
-export function markNotificationFailed(outboxId: number, errorMessage: string, maxAttempts: number = 3): void {
+export function markNotificationFailed(
+  outboxId: number,
+  errorMessage: string,
+  maxAttempts: number = MAX_NOTIFICATION_ATTEMPTS
+): void {
   const row = db.prepare('SELECT attempt_count FROM notification_outbox WHERE id = ?').get(outboxId) as
     | { attempt_count: number }
     | undefined;

@@ -53,10 +53,19 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
     res.status(400).json({ error: '请提供日历名称与订阅链接' });
     return;
   }
+  let cleanUrl: string;
   try {
-    calendarFetchUrl(url);
+    cleanUrl = calendarFetchUrl(url);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
+    return;
+  }
+
+  const existingSub = db
+    .prepare('SELECT id, name FROM calendar_subscriptions WHERE user_id = ? AND (url = ? OR url = ?)')
+    .get(userId, url.trim(), cleanUrl) as { id: number; name: string } | undefined;
+  if (existingSub) {
+    res.status(409).json({ error: `该日历订阅链接已存在（${existingSub.name}），无需重复添加` });
     return;
   }
 

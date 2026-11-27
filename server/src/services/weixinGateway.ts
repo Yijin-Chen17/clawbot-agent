@@ -214,13 +214,14 @@ export async function sendWeixinTextMessage(
   fromBotId: string,
   toUserId: string,
   text: string,
-  contextToken?: string
+  contextToken?: string,
+  clientIdOverride?: string
 ): Promise<{ success: boolean; data?: any; error?: string; message_id?: string; ret?: number }> {
   if (!botToken || !toUserId) {
     return { success: false, error: '缺少 botToken 或 toUserId' };
   }
 
-  const clientId = generateClientId();
+  const clientId = clientIdOverride?.trim() || generateClientId();
   const url = `${baseUrl.replace(/\/$/, '')}/ilink/bot/sendmessage`;
 
   const payload = {
