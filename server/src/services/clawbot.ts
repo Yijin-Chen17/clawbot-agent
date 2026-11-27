@@ -144,11 +144,11 @@ export const templates = {
   },
 
   reminderBeforeStart: (title: string, startStr: string, endStr: string, minutes: number) => {
-    return `🔔「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})。开始执行请回复「开始」，需改期可回复「换个时间」`;
+    return `🔔 提醒：「${title}」将在 ${minutes} 分钟后开始 (${startStr} ~ ${endStr})。`;
   },
 
   reminderBeforeEnd: (title: string, minutes: number) => {
-    return `⏰「${title}」预计还有约 ${minutes} 分钟结束。已完成请回复「已完成」，需延时回复「延长XX分钟」。`;
+    return `⏰ 提醒：「${title}」预计还有约 ${minutes} 分钟结束。`;
   },
 
   externalEventReminder: (params: {

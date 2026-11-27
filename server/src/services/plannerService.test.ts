@@ -361,4 +361,76 @@ describe('Batch 2: Planner Commits, Preserved Blocks, Extend Safety, Proposals &
     assert.equal(shInst.business_date, '2026-07-02');
     assert.equal(nyInst.business_date, '2026-07-01');
   });
+
+  it('preserves scheduled blocks inside schedule_lock window during replan while still filling free slots and unlocking expired blocks', async () => {
+    const anchorNow = new Date(wallClockIso(tomorrowKey, 9, 0));
+    // First use 36h lock so tomorrowKey 10:00-11:00 is protected even during createTaskCommand(tHigh) at real now
+    db.prepare(
+      "UPDATE user_settings SET schedule_lock_mode = 'hours', schedule_lock_hours = 36, work_slots = ? WHERE user_id = ?"
+    ).run(JSON.stringify([{ start: '09:00', end: '18:00' }]), userId);
+
+    // Low-priority movable task placed at 10:00-11:00 (inside lock window)
+    const tLow = await createTaskCommand({
+      userId,
+      rawInput: {
+        title: '锁定期内低优任务',
+        duration_minutes: 60,
+        importance_tier: 'minor',
+        importance: 30,
+        urgency: 40,
+      },
+    });
+    assert.equal(tLow.success, true);
+
+    // Pin its block to tomorrowKey 10:00-11:00 via DB to verify replan keeps it intact
+    const lockedStart = wallClockIso(tomorrowKey, 10, 0);
+    const lockedEnd = wallClockIso(tomorrowKey, 11, 0);
+    db.prepare(
+      "UPDATE schedule_blocks SET start_time = ?, end_time = ?, status = 'planned' WHERE task_id = ?"
+    ).run(lockedStart, lockedEnd, tLow.task!.id);
+
+    // Create a high-priority urgent task with deadline tomorrowKey 14:00 (plenty of free slots after 11:00)
+    const tHigh = await createTaskCommand({
+      userId,
+      rawInput: {
+        title: '插空高优任务',
+        duration_minutes: 60,
+        deadline: wallClockIso(tomorrowKey, 14, 0),
+        deadline_kind: 'hard',
+        importance_tier: 'vital',
+        importance: 95,
+        urgency: 95,
+      },
+    });
+    assert.equal(tHigh.success, true);
+    assert.equal(tHigh.proposal, undefined); // Must NOT propose displacing locked 10:00-11:00 task
+
+    // Switch to 6h rolling lock and trigger manual replan anchored at tomorrowKey 09:00 (lockUntil = 15:00)
+    db.prepare("UPDATE user_settings SET schedule_lock_mode = 'hours', schedule_lock_hours = 6 WHERE user_id = ?").run(userId);
+    const replan = replanUserTasks(userId, { triggerSource: 'manual_replan', now: anchorNow });
+    assert.equal(replan.success, true);
+
+    const lowBlockAfter = db
+      .prepare("SELECT start_time, end_time FROM schedule_blocks WHERE task_id = ? AND status = 'planned'")
+      .get(tLow.task!.id) as { start_time: string; end_time: string };
+    assert.equal(new Date(lowBlockAfter.start_time).getTime(), new Date(lockedStart).getTime());
+    assert.equal(new Date(lowBlockAfter.end_time).getTime(), new Date(lockedEnd).getTime());
+
+    const highBlockAfter = db
+      .prepare("SELECT start_time, end_time FROM schedule_blocks WHERE task_id = ? AND status = 'planned'")
+      .get(tHigh.task!.id) as { start_time: string; end_time: string };
+    assert.ok(highBlockAfter);
+    // High task filled free slot without overlapping locked 10:00-11:00 block
+    const hStart = new Date(highBlockAfter.start_time).getTime();
+    const hEnd = new Date(highBlockAfter.end_time).getTime();
+    assert.ok(hEnd <= new Date(lockedStart).getTime() || hStart >= new Date(lockedEnd).getTime());
+
+    // Advance time past 11:00 -> low task block expired & incomplete, so replan unlocks and rolls it forward
+    const afterExpiryNow = new Date(wallClockIso(tomorrowKey, 11, 30));
+    replanUserTasks(userId, { triggerSource: 'daily_rollover', now: afterExpiryNow });
+    const rolledBlock = db
+      .prepare("SELECT start_time, end_time FROM schedule_blocks WHERE task_id = ? AND status = 'planned'")
+      .get(tLow.task!.id) as { start_time: string; end_time: string };
+    assert.ok(new Date(rolledBlock.start_time).getTime() >= afterExpiryNow.getTime());
+  });
 });

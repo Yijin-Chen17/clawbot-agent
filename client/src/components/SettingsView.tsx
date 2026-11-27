@@ -258,6 +258,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
   const [wxUserId, setWxUserId] = useState('');
   const [wxNickname, setWxNickname] = useState('');
   const [advanceDeadlineDays, setAdvanceDeadlineDays] = useState(1);
+  const [scheduleLockMode, setScheduleLockMode] = useState<'none' | 'hours' | 'today' | 'this_week'>('none');
+  const [scheduleLockHours, setScheduleLockHours] = useState<number>(4);
   const [, setQrCode] = useState('');
   const [qrCodeImgContent, setQrCodeImgContent] = useState('');
   const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'wait' | 'scaned' | 'confirmed' | 'expired'>('idle');
@@ -287,7 +289,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
 
   const [taskBuffer, setTaskBuffer] = useState<number>(15);
   const [remindStart, setRemindStart] = useState<number>(10);
-  const [remindEnd, setRemindEnd] = useState<number>(5);
   const [calSyncInterval, setCalSyncInterval] = useState<number>(30);
 
   // Calendar feeds
@@ -585,9 +586,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
         }
         setTaskBuffer(settings.task_buffer_minutes ?? 15);
         setRemindStart(settings.reminder_before_start_minutes ?? 10);
-        setRemindEnd(settings.reminder_before_end_minutes ?? 5);
         setCalSyncInterval(settings.calendar_sync_interval_minutes ?? 30);
         setAdvanceDeadlineDays(settings.advance_deadline_days ?? 1);
+        const lockMode = settings.schedule_lock_mode;
+        setScheduleLockMode(
+          lockMode === 'hours' || lockMode === 'today' || lockMode === 'this_week' ? lockMode : 'none'
+        );
+        setScheduleLockHours(
+          Number(settings.schedule_lock_hours) > 0 ? Number(settings.schedule_lock_hours) : 4
+        );
       }
 
       if (urls?.icalSubscriptionUrl) {
@@ -727,9 +734,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
           work_slots: parsedSlotsInfo.slots,
           task_buffer_minutes: Number(taskBuffer),
           reminder_before_start_minutes: Number(remindStart),
-          reminder_before_end_minutes: Number(remindEnd),
           calendar_sync_interval_minutes: Number(calSyncInterval),
           advance_deadline_days: Number(advanceDeadlineDays),
+          schedule_lock_mode: scheduleLockMode,
+          schedule_lock_hours:
+            scheduleLockMode === 'hours'
+              ? Math.max(1, Math.min(168, Math.round(Number(scheduleLockHours) || 1)))
+              : 0,
         });
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
@@ -749,9 +760,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
     workSlotsText,
     taskBuffer,
     remindStart,
-    remindEnd,
     calSyncInterval,
     advanceDeadlineDays,
+    scheduleLockMode,
+    scheduleLockHours,
   ]);
 
   const handleAddSubscription = async (e: React.FormEvent) => {
@@ -1930,6 +1942,86 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                   </select>
                 </div>
               </div>
+
+              {/* 5. Schedule Lock Window */}
+              <div className="space-y-3 pt-4 border-t border-gray-100 dark:border-neutral-800">
+                <div>
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
+                    {t('settings.schedule_lock_title', '近期日程锁定范围')}
+                  </label>
+                  <p className="text-xs text-gray-400 dark:text-neutral-500 mb-2.5">
+                    {t(
+                      'settings.schedule_lock_desc',
+                      '锁定范围内已排定的日程在自动或手动重排时保持位置不变；锁定区间内的剩余空闲时段仍可用于排入新任务。'
+                    )}
+                  </p>
+                </div>
+
+                <div className="max-w-md">
+                  <select
+                    value={scheduleLockMode}
+                    onChange={(e) =>
+                      setScheduleLockMode(e.target.value as 'none' | 'hours' | 'today' | 'this_week')
+                    }
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none cursor-pointer"
+                  >
+                    <option value="none">{t('settings.lock_mode_none', '不锁定（所有未开始日程可随时重排）')}</option>
+                    <option value="hours">{t('settings.lock_mode_hours', '按滚动时长锁定（从当前往后锁定 N 小时）')}</option>
+                    <option value="today">{t('settings.lock_mode_today', '锁定所在当天（至今日 23:59，次日零点解除）')}</option>
+                    <option value="this_week">{t('settings.lock_mode_week', '锁定所在当周（至本周日 23:59，下周自动解除）')}</option>
+                  </select>
+                </div>
+
+                {scheduleLockMode === 'hours' && (
+                  <div className="space-y-2.5 pt-1">
+                    <div className="flex items-center gap-2 max-w-xs">
+                      <input
+                        type="number"
+                        min={1}
+                        max={168}
+                        value={scheduleLockHours}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setScheduleLockHours(Number.isFinite(v) ? Math.max(1, Math.min(168, Math.round(v))) : 1);
+                        }}
+                        className="w-28 px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      />
+                      <span className="text-xs text-gray-500 dark:text-neutral-400 font-medium">
+                        小时（1 ~ 168）
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[2, 4, 8, 12, 24].map((hrs) => (
+                        <button
+                          key={hrs}
+                          type="button"
+                          onClick={() => setScheduleLockHours(hrs)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition cursor-pointer ${
+                            scheduleLockHours === hrs
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+                          }`}
+                        >
+                          {hrs} 小时
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-800/50 rounded-xl px-3.5 py-2.5 max-w-xl flex items-center gap-2">
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {scheduleLockMode === 'none'
+                      ? '当前未开启时间锁：每次重排将按最新优先级重新分配所有未开始日程。'
+                      : scheduleLockMode === 'hours'
+                      ? `当前将保护至 ${new Date(Date.now() + Math.max(1, scheduleLockHours) * 3600_000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} 前已排定的日程位置；到期未完成或该时间之后仍可重排。`
+                      : scheduleLockMode === 'today'
+                      ? '当前将保护今日 23:59 前已排定的日程位置不变，当天剩余空闲时段仍可排入新任务，跨日后未完成任务自动解除锁定。'
+                      : '当前将保护本周日 23:59 前已排定的日程位置不变，本周内剩余空闲时段仍可排入新任务，下周自动进入新锁定周期。'}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1981,41 +2073,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenMobileMenu }) 
                 </div>
               </div>
 
-              {/* 2. End reminder */}
-              <div className="space-y-3 pb-6 border-b border-gray-100 dark:border-neutral-800 text-xs">
-                <div>
-                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider block mb-1">
-                    {t('notification.end_title')}
-                  </label>
-                  <p className="text-xs text-gray-500 dark:text-neutral-400 mb-2.5">
-                    {t('notification.end_desc')}
-                  </p>
-                  <div className="max-w-xs">
-                    <input
-                      type="number"
-                      min="1"
-                      max="60"
-                      value={remindEnd}
-                      onChange={(e) => setRemindEnd(Number(e.target.value))}
-                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#1e1f20] border border-gray-300 dark:border-neutral-700 rounded-xl font-mono text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                    />
+              {/* 2. Pure notification mode notice (no start/end check-in confirmation) */}
+              <div className="space-y-2 pb-2 text-xs">
+                <div className="rounded-xl bg-gray-50 dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-800 px-3.5 py-3 text-gray-600 dark:text-neutral-300">
+                  <div className="font-semibold text-gray-800 dark:text-gray-200 mb-1">
+                    仅提醒不打卡模式已启用
                   </div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap pt-1">
-                  {[3, 5, 10, 15].map((mins) => (
-                    <button
-                      key={mins}
-                      type="button"
-                      onClick={() => setRemindEnd(mins)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition cursor-pointer ${
-                        remindEnd === mins
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
-                      }`}
-                    >
-                      {mins} {t('general.minutes')}
-                    </button>
-                  ))}
+                  <p className="text-xs text-gray-500 dark:text-neutral-400">
+                    系统仅在日程开始前发送纯提醒通知，已取消每个分段的“开始 / 结束打卡确认”追问。
+                  </p>
                 </div>
               </div>
 

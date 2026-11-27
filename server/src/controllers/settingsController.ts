@@ -116,6 +116,32 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     return;
   }
 
+  const validLockModes = new Set(['none', 'hours', 'today', 'this_week']);
+  if (body.schedule_lock_mode !== undefined && !validLockModes.has(String(body.schedule_lock_mode))) {
+    res.status(400).json({ error: '无效的日程锁定范围模式' });
+    return;
+  }
+
+  let nextLockHours = Number(existing?.schedule_lock_hours ?? 0);
+  if (body.schedule_lock_hours !== undefined) {
+    const parsedLockHours = Number(body.schedule_lock_hours);
+    if (!Number.isFinite(parsedLockHours) || parsedLockHours < 0 || parsedLockHours > 168) {
+      res.status(400).json({ error: '锁定小时数需在 0 到 168 小时之间' });
+      return;
+    }
+    nextLockHours = Math.round(parsedLockHours);
+  }
+  const nextLockMode = (
+    body.schedule_lock_mode !== undefined
+      ? String(body.schedule_lock_mode)
+      : existing?.schedule_lock_mode ?? 'none'
+  ) as 'none' | 'hours' | 'today' | 'this_week';
+  if (nextLockMode === 'hours' && nextLockHours <= 0) {
+    nextLockHours = 4;
+  } else if (nextLockMode !== 'hours' && body.schedule_lock_mode !== undefined && body.schedule_lock_hours === undefined) {
+    nextLockHours = 0;
+  }
+
   const nextApiMode =
     body.api_mode !== undefined
       ? body.api_mode === 'custom'
@@ -165,9 +191,9 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       clawbot_outbound_url, clawbot_outbound_key, clawbot_to_wxid,
       work_slots, task_buffer_minutes, reminder_before_start_minutes,
       reminder_before_end_minutes, calendar_sync_interval_minutes,
-      advance_deadline_days, timezone, updated_at
+      advance_deadline_days, schedule_lock_mode, schedule_lock_hours, timezone, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET
       api_mode = excluded.api_mode,
       llm_endpoint = excluded.llm_endpoint,
@@ -182,6 +208,8 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
       reminder_before_end_minutes = excluded.reminder_before_end_minutes,
       calendar_sync_interval_minutes = excluded.calendar_sync_interval_minutes,
       advance_deadline_days = excluded.advance_deadline_days,
+      schedule_lock_mode = excluded.schedule_lock_mode,
+      schedule_lock_hours = excluded.schedule_lock_hours,
       timezone = excluded.timezone,
       updated_at = CURRENT_TIMESTAMP
   `).run(
@@ -199,6 +227,8 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
     nextRemEnd,
     nextSyncInt,
     nextAdvanceDays,
+    nextLockMode,
+    nextLockHours,
     nextTimezone
   );
 

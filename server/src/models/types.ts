@@ -20,6 +20,7 @@ export interface WorkSlot {
 }
 
 export type WeixinConnectionStatus = 'disconnected' | 'connected' | 'rebind_required';
+export type ScheduleLockMode = 'none' | 'hours' | 'today' | 'this_week';
 
 export interface UserSettings {
   user_id: number;
@@ -37,6 +38,8 @@ export interface UserSettings {
   reminder_before_end_minutes: number;
   calendar_sync_interval_minutes: number;
   advance_deadline_days?: number;
+  schedule_lock_mode?: ScheduleLockMode;
+  schedule_lock_hours?: number;
   timezone?: string;
   calendar_color?: string | null;
   weixin_connected?: number;

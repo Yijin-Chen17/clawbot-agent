@@ -175,33 +175,52 @@ describe('Batch 3: Command Inbox, Weixin/Webhook Channels, Outbox Delivery & Cal
     const outboxRows = db
       .prepare("SELECT * FROM notification_outbox WHERE user_id = ? AND status = 'pending' ORDER BY scheduled_fire_at ASC")
       .all(userId) as any[];
-    assert.ok(outboxRows.length >= 2);
+    assert.equal(outboxRows.length, 1); // Start-only pure reminder; no end check-in reminder
     const startNotif = outboxRows.find(r => r.reminder_type === 'start');
-    const endNotif = outboxRows.find(r => r.reminder_type === 'end');
-    assert.ok(startNotif && endNotif);
+    assert.ok(startNotif);
+    assert.equal(outboxRows.some(r => r.reminder_type === 'end'), false);
 
     // 1. Deliver start notification at its fire time -> outcome 'sent', instance MUST remain 'pending'
     let outcomeToReturn: 'sent' | 'failed' | 'unknown' = 'sent';
-    setOutboundSenderForTest(async () => ({
-      outcome: outcomeToReturn,
-      channel: 'webhook_outbound',
-      providerMsgId: outcomeToReturn === 'sent' ? 'msg-sent-1' : undefined,
-      error: outcomeToReturn === 'sent' ? undefined : `err-${outcomeToReturn}`,
-    }));
+    const sentMessages: string[] = [];
+    setOutboundSenderForTest(async (_s, msg) => {
+      sentMessages.push(msg);
+      return {
+        outcome: outcomeToReturn,
+        channel: 'webhook_outbound',
+        providerMsgId: outcomeToReturn === 'sent' ? 'msg-sent-1' : undefined,
+        error: outcomeToReturn === 'sent' ? undefined : `err-${outcomeToReturn}`,
+      };
+    });
 
     const startFireNow = new Date(new Date(startNotif.scheduled_fire_at).getTime() + 1000);
     const res1 = await processOutboxNotifications(startFireNow, 'test-worker-1');
     assert.equal(res1.sent, 1);
+    assert.equal(sentMessages[0].includes('请回复「开始」'), false);
 
     const instAfterSent = db.prepare('SELECT status FROM task_instances WHERE id = ?').get(startNotif.instance_id) as any;
     assert.equal(instAfterSent.status, 'pending'); // Never forced to in_progress
 
-    // 2. Deliver end notification with 'unknown' outcome -> recorded unknown and not reclaimed blindly
+    // 2. Deliver another task's notification with 'unknown' outcome -> recorded unknown and not reclaimed blindly
+    const tUnknown = await createTaskCommand({
+      userId,
+      rawInput: {
+        title: '未知回执测试任务',
+        is_fixed: true,
+        scheduled_start: wallClockIso(tomorrowKey, 12, 0),
+        scheduled_end: wallClockIso(tomorrowKey, 13, 0),
+        duration_minutes: 60,
+      },
+    });
+    assert.equal(tUnknown.success, true);
+    const unknownNotif = db
+      .prepare("SELECT * FROM notification_outbox WHERE user_id = ? AND status = 'pending' ORDER BY scheduled_fire_at ASC LIMIT 1")
+      .get(userId) as any;
     outcomeToReturn = 'unknown';
-    const endFireNow = new Date(new Date(endNotif.scheduled_fire_at).getTime() + 1000);
-    const res2 = await processOutboxNotifications(endFireNow, 'test-worker-1');
+    const unknownFireNow = new Date(new Date(unknownNotif.scheduled_fire_at).getTime() + 1000);
+    const res2 = await processOutboxNotifications(unknownFireNow, 'test-worker-1');
     assert.equal(res2.unknown, 1);
-    const res2Again = await processOutboxNotifications(new Date(endFireNow.getTime() + 120_000), 'test-worker-1');
+    const res2Again = await processOutboxNotifications(new Date(unknownFireNow.getTime() + 120_000), 'test-worker-1');
     assert.equal(res2Again.processed, 0);
 
     // 3. Create another task, fail once -> marks failed with backoff, then completing instance cancels it
