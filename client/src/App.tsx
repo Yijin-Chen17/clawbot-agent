@@ -17,7 +17,7 @@ const DashboardContent: React.FC = () => {
   const { user, loading } = useAuth();
   const { t } = useTheme();
   // 当前活动视图：四象限看板 (matrix) / 待办清单 (list) / 日历日程 (calendar) / 设置 (settings) / 审核 (admin) / 调试 (debug)
-  const [activeTab, setActiveTab] = useState<string>('matrix');
+  const [activeTab, setActiveTab] = useState<string>('calendar');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [pendingCount, setPendingCount] = useState(0);
@@ -28,7 +28,7 @@ const DashboardContent: React.FC = () => {
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [hasVisitedCalendar, setHasVisitedCalendar] = useState(false);
+  const [hasVisitedCalendar, setHasVisitedCalendar] = useState(true);
 
   const handleTabChange = useCallback((tab: string) => {
     if (tab === 'calendar') {

@@ -20,8 +20,6 @@ import {
   Copy,
   Check,
   Clock,
-  Download,
-  Share2,
   Menu,
   PanelLeftClose,
   PanelLeft,
@@ -31,7 +29,11 @@ import {
   Bell,
   BellOff,
   Layers,
-  Search,
+  X,
+  Pin,
+  Zap,
+  CalendarCheck2,
+  Settings,
 } from 'lucide-react';
 
 // Google Calendar standard 24-hour grid constants
@@ -97,21 +99,9 @@ interface CalendarEventItem {
     hasInstanceOverride?: boolean;
     groupAllowScheduling?: boolean;
     groupAiReminderEnabled?: boolean;
+    sameNameCount?: number;
+    sameNameSubsequentCount?: number;
   };
-}
-
-interface ExternalEventGroupSummary {
-  subscriptionId: number;
-  subscriptionName: string;
-  groupKey: string;
-  groupLabel: string;
-  eventCount: number;
-  upcomingCount: number;
-  nextStartTime: string | null;
-  sampleTitles: string[];
-  allowScheduling: boolean;
-  aiReminderEnabled: boolean;
-  overrideCount: number;
 }
 
 interface TaskItem {
@@ -364,7 +354,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subscriptions, setSubscriptions] = useState<CalendarSubscription[]>([]);
-  const [externalGroups, setExternalGroups] = useState<ExternalEventGroupSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Left sidebar collapse toggle (Google Calendar main drawer toggle)
@@ -381,14 +370,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
   // Dialogs & Modals
-  const [sidebarTaskTab, setSidebarTaskTab] = useState<'unscheduled' | 'scheduled' | 'due'>('unscheduled');
+  const [sidebarTaskTab, setSidebarTaskTab] = useState<'scheduled' | 'unscheduled'>('scheduled');
   const [showCalendarsModal, setShowCalendarsModal] = useState(false);
-  const [showGroupsModal, setShowGroupsModal] = useState(false);
-  const [groupSearch, setGroupSearch] = useState('');
-  const [groupSubFilter, setGroupSubFilter] = useState<number | 'all'>('all');
   const [savingPolicyKey, setSavingPolicyKey] = useState<string | null>(null);
-  const [showExportModal, setShowExportModal] = useState(false);
+  const [editingSubPolicy, setEditingSubPolicy] = useState<{
+    sub: CalendarSubscription;
+    color: string;
+    allowScheduling: boolean;
+    aiReminderEnabled: boolean;
+  } | null>(null);
+  const [savingSubPolicy, setSavingSubPolicy] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TimedSegment | null>(null);
+  const [schedulableDraft, setSchedulableDraft] = useState(false);
+  const [aiReminderDraft, setAiReminderDraft] = useState(true);
+  const [confirmApplyAllSameName, setConfirmApplyAllSameName] = useState(false);
   const [selectedDueTask, setSelectedDueTask] = useState<TaskItem | null>(null);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [editError, setEditError] = useState('');
@@ -416,6 +411,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const openCalendarItem = (item: TimedSegment) => {
     setSelectedItem(item);
+    if (item.kind === 'event') {
+      setSchedulableDraft(Boolean(item.event.extendedProps?.allowScheduling));
+      setAiReminderDraft(item.event.extendedProps?.aiReminderEnabled !== false);
+      setConfirmApplyAllSameName(false);
+    }
   };
 
   const editInitialTask = (task: TaskItem): EditableTask => {
@@ -486,8 +486,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const effectiveToken = serverExportUrls?.token || user?.token_secret || user?.calendar_token || '';
   const icalExportUrl = serverExportUrls?.http || (effectiveToken ? `${window.location.origin}/api/calendar/subscribe/${effectiveToken}.ics` : '');
-  const webcalUrl = icalExportUrl.replace(/^https?:\/\//i, 'webcal://');
-  const downloadUrl = serverExportUrls?.download || (effectiveToken ? `${window.location.origin}/api/calendar/export/${effectiveToken}.ics` : '');
 
   // Live timer for red current time line
   useEffect(() => {
@@ -552,7 +550,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       ]);
       setEvents(eventsRes.data.events || []);
       setSubscriptions(eventsRes.data.subscriptions || []);
-      setExternalGroups(eventsRes.data.externalEventGroups || []);
       setTaskCalendarColor(eventsRes.data.taskColor || null);
       setTasks(tasksRes.data.tasks || []);
       if (eventsRes.data.exportUrls) {
@@ -686,7 +683,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
   }, [subscriptions]);
 
   const todayKey = localDateKey(new Date());
-  const weekStartKey = localDateKey(weekStart);
 
   const buildDayEntry = useCallback((date: Date) => {
     const key = localDateKey(date);
@@ -780,17 +776,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           taskItem.status === 'completed' ||
           (taskItem.time_mode === 'daily_fixed' && completedDates.includes(key));
         const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
-        const totalParts = ev.extendedProps?.totalParts || 1;
         const partIdx = ev.extendedProps?.partIndex || 1;
-        const partSuffix =
-          totalParts > 1
-            ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(partIdx)).replace('{total}', String(totalParts))})`
-            : '';
-        let titlePrefix = blockDone ? '✓ ' : '';
-        if (!blockDone) {
-          if (taskItem.is_fixed) titlePrefix += '📌 ';
-          if (taskItem.is_concurrent) titlePrefix += '⚡ ';
-        }
+        const titlePrefix = blockDone ? '✓ ' : '';
 
         let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
         if (!blockDone) {
@@ -809,7 +796,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           blockStatus: ev.extendedProps?.blockStatus,
           planStatus: (ev.extendedProps as any)?.planStatus || taskItem.plan_status,
           businessDate: (ev.extendedProps as any)?.businessDate || key,
-          title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+          title: `${titlePrefix}${taskItem.title}`,
           start: range.start,
           end: range.end,
           allDay: false,
@@ -861,12 +848,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         if (range) {
           const blockDone = isCompletedForDay || Boolean(block.completed);
           const quad = getTaskQuadrant(taskItem.importance, taskItem.urgency, taskItem.score_scale);
-          const partSuffix = block.totalParts && block.totalParts > 1 ? ` (${t('calendar.part_suffix', '第 {part} 段 / 共 {total} 段').replace('{part}', String(block.partIndex || bIdx + 1)).replace('{total}', String(block.totalParts))})` : '';
-          let titlePrefix = blockDone ? '✓ ' : '';
-          if (!blockDone) {
-            if (taskItem.is_fixed) titlePrefix += '📌 ';
-            if (taskItem.is_concurrent) titlePrefix += '⚡ ';
-          }
+          const titlePrefix = blockDone ? '✓ ' : '';
 
           let qBadge = blockDone ? t('common.completed', '已完成') : quad.name;
           if (!blockDone) {
@@ -882,7 +864,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             partIndex: block.partIndex || bIdx + 1,
             planStatus: taskItem.plan_status,
             businessDate: key,
-            title: `${titlePrefix}${taskItem.title}${partSuffix}`,
+            title: `${titlePrefix}${taskItem.title}`,
             start: range.start,
             end: range.end,
             allDay: false,
@@ -936,22 +918,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     return monthDayData.find((d) => d.key === overflowDayKey) || null;
   }, [overflowDayKey, monthDayData]);
 
-  // Overdue tasks
-  const overdueTasks = useMemo(() => {
-    return tasks
-      .filter((t) => {
-        if (!t.deadline || t.status === 'completed') return false;
-        if (t.time_mode === 'daily_fixed' && t.completed_dates) {
-          try {
-            const doneDates = JSON.parse(t.completed_dates);
-            if (Array.isArray(doneDates) && doneDates.includes(todayKey)) return false;
-          } catch {}
-        }
-        return dateKeyFromIso(t.deadline) < weekStartKey;
-      })
-      .sort((a, b) => b.urgency - a.urgency || b.importance - a.importance);
-  }, [tasks, weekStartKey, todayKey]);
-
   // Unscheduled & Scheduled task lists for Calendar view
   const unscheduledTasks = useMemo(() => {
     return tasks
@@ -979,11 +945,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         return aMs - bMs;
       });
   }, [tasks]);
-
-  // Due groups this week
-  const dueGroups = useMemo(() => {
-    return dayData.filter((d) => d.due.length > 0);
-  }, [dayData]);
 
   // Mini calendar matrix calculation (Monday to Sunday)
   const miniCalendarGrid = useMemo(() => {
@@ -1068,7 +1029,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
 
   const handleUpdateSingleExternalPolicy = async (
     eventId: string,
-    payload: { allowScheduling?: boolean | null; aiReminderEnabled?: boolean | null }
+    payload: {
+      allowScheduling?: boolean | null;
+      aiReminderEnabled?: boolean | null;
+      matchSameName?: boolean;
+      uid?: string;
+      start?: string;
+      title?: string;
+    }
   ) => {
     setSavingPolicyKey(`single:${eventId}`);
     try {
@@ -1098,66 +1066,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
     }
   };
 
-  const handleUpdateGroupExternalPolicy = async (
-    group: { subscriptionId: number; groupKey: string; groupLabel: string },
-    payload: { allowScheduling?: boolean; aiReminderEnabled?: boolean; resetInstanceOverrides?: boolean }
-  ) => {
-    const key = `group:${group.subscriptionId}:${group.groupKey}`;
-    setSavingPolicyKey(key);
-    try {
-      const res = await api.put('/calendar/external-groups/policy', {
-        subscriptionId: group.subscriptionId,
-        groupKey: group.groupKey,
-        groupLabel: group.groupLabel,
-        ...payload,
-      });
-      if (Array.isArray(res.data?.groups)) {
-        setExternalGroups(res.data.groups);
-      }
-      if (
-        selectedItem?.kind === 'event' &&
-        (selectedItem.event.extendedProps?.courseGroupKey || '') === group.groupKey &&
-        Number(selectedItem.event.extendedProps?.subscriptionId ?? 0) === group.subscriptionId
-      ) {
-        const nextExt = { ...(selectedItem.event.extendedProps || { type: 'external' as const }) };
-        if (payload.allowScheduling !== undefined) {
-          nextExt.allowScheduling = payload.allowScheduling;
-          nextExt.groupAllowScheduling = payload.allowScheduling;
-        }
-        if (payload.aiReminderEnabled !== undefined) {
-          nextExt.aiReminderEnabled = payload.aiReminderEnabled;
-          nextExt.groupAiReminderEnabled = payload.aiReminderEnabled;
-        }
-        if (payload.resetInstanceOverrides !== false) {
-          nextExt.hasInstanceOverride = false;
-        }
-        setSelectedItem({
-          ...selectedItem,
-          event: { ...selectedItem.event, extendedProps: nextExt },
-        });
-      }
-      await fetchData(true);
-    } catch (e: any) {
-      alert(e.response?.data?.error || '批量更新课程设置失败');
-    } finally {
-      setSavingPolicyKey(null);
-    }
+  const openSubPolicyModal = (sub: CalendarSubscription, color: string) => {
+    const subEvents = events.filter(
+      (ev) =>
+        ev.extendedProps?.type === 'external' &&
+        Number(ev.subscriptionId ?? ev.extendedProps?.subscriptionId ?? 0) === sub.id
+    );
+    const allowScheduling =
+      subEvents.length > 0 && subEvents.every((ev) => Boolean(ev.extendedProps?.allowScheduling));
+    const aiReminderEnabled =
+      subEvents.length === 0 || subEvents.some((ev) => ev.extendedProps?.aiReminderEnabled !== false);
+    setEditingSubPolicy({ sub, color, allowScheduling, aiReminderEnabled });
   };
 
-  const handleIgnoreExternalEvent = async (eventId: string, title: string) => {
-    if (!confirm(`确定在日历中隐藏外部日程「${title}」吗？后续同步也不会再显示。`)) return;
-    setSavingPolicyKey(`ignore:${eventId}`);
+  const handleSaveSubPolicy = async () => {
+    if (!editingSubPolicy) return;
+    setSavingSubPolicy(true);
     try {
-      const res = await api.post(`/calendar/external-events/${eventId}/ignore`);
-      if (res.data?.success === false) {
-        throw new Error(res.data.message || '隐藏外部日程失败');
-      }
-      setSelectedItem(null);
+      await api.put('/calendar/external-events/bulk-policy', {
+        subscriptionId: editingSubPolicy.sub.id,
+        allowScheduling: editingSubPolicy.allowScheduling,
+        aiReminderEnabled: editingSubPolicy.aiReminderEnabled,
+      });
+      setEditingSubPolicy(null);
       await fetchData(true);
     } catch (e: any) {
-      alert(e.response?.data?.error || e.message || '隐藏外部日程失败');
+      alert(e.response?.data?.error || t('common.error', '操作失败'));
     } finally {
-      setSavingPolicyKey(null);
+      setSavingSubPolicy(false);
     }
   };
 
@@ -1481,30 +1417,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               {language.startsWith('zh') ? '月' : 'Month'}
             </button>
           </div>
-          {/* 排期状态概览徽章（点击快速查看未排期/已排期） */}
-          <div className="hidden lg:flex items-center gap-1 rounded-full border border-gray-200 dark:border-[#444746] bg-gray-50/70 dark:bg-[#282a2c] px-2 py-1 text-[11px]">
-            <button
-              type="button"
-              onClick={() => { setSidebarOpen(true); setSidebarTaskTab('scheduled'); }}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full hover:bg-white dark:hover:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] font-medium cursor-pointer transition"
-              title={t('calendar.scheduled_tab', '已排期')}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-              <span>{t('calendar.scheduled_label', '已排期')} {scheduledTasksList.length}</span>
-            </button>
-            <span className="text-gray-300 dark:text-neutral-600">·</span>
-            <button
-              type="button"
-              onClick={() => { setSidebarOpen(true); setSidebarTaskTab('unscheduled'); }}
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full hover:bg-white dark:hover:bg-[#1e1f20] font-medium cursor-pointer transition ${
-                unscheduledTasks.length > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-neutral-400'
-              }`}
-              title={t('calendar.unscheduled_tab', '未排期')}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${unscheduledTasks.length > 0 ? 'bg-amber-500' : 'bg-gray-400'}`} />
-              <span>{t('calendar.unscheduled_label', '未排期')} {unscheduledTasks.length}</span>
-            </button>
-          </div>
           <button
             onClick={handleSyncAndReplanAll}
             disabled={replanLoading}
@@ -1513,15 +1425,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
           >
             <RefreshCw className={`w-3.5 h-3.5 ${replanLoading ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">{replanLoading ? t('calendar.replan_loading', '正在重排') : t('calendar.replan_all', '重排全部')}</span>
-          </button>
-
-          <button
-            onClick={() => setShowExportModal(true)}
-            title={t('calendar.export_btn')}
-            className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
-          >
-            <Share2 className="w-4 h-4 text-gray-600 dark:text-[#c4c7c5]" />
-            <span className="hidden sm:inline">{t('calendar.export_btn')}</span>
           </button>
 
           <button
@@ -1537,24 +1440,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </span>
             )}
           </button>
-
-          {externalGroups.length > 0 && (
-            <button
-              onClick={() => {
-                setGroupSearch('');
-                setGroupSubFilter('all');
-                setShowGroupsModal(true);
-              }}
-              className="p-2 sm:px-3 sm:py-1.5 rounded-full border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
-              title="课程与外部日程批量规则"
-            >
-              <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-              <span className="hidden sm:inline">课程规则</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono">
-                {externalGroups.length}
-              </span>
-            </button>
-          )}
 
           <button
             onClick={() => fetchData()}
@@ -1704,20 +1589,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
               <div className="flex items-center justify-between text-xs font-semibold text-gray-800 dark:text-gray-200">
                 <span>{t('calendar.my_calendars', '我的日历')}</span>
-                <div className="flex items-center gap-2">
-                  {externalGroups.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowGroupsModal(true)}
-                      className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-                    >
-                      课程规则({externalGroups.length})
-                    </button>
-                  )}
-                  <span className="text-[10px] text-gray-400 font-normal">
-                    {t('calendar.sources_count', '{count} 个源').replace('{count}', String(subscriptions.length + 1))}
-                  </span>
-                </div>
+                <span className="text-[10px] text-gray-400 font-normal">
+                  {t('calendar.sources_count', '{count} 个源').replace('{count}', String(subscriptions.length + 1))}
+                </span>
               </div>
               <div className="space-y-1 text-xs">
                 {/* Clawbot 主待办 */}
@@ -1760,9 +1634,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
               </div>
             </div>
 
-            {/* 排期状态面板：未排期 / 已排期 / 截止待办 */}
+            {/* 排期状态面板：已排期 / 未排期 */}
             <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-[#444746] flex-1">
-              <div className="grid grid-cols-3 gap-1 p-0.5 rounded-xl bg-gray-100/80 dark:bg-[#282a2c] text-[11px] font-medium">
+              <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-gray-100/80 dark:bg-[#282a2c] text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => setSidebarTaskTab('scheduled')}
+                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                    sidebarTaskTab === 'scheduled'
+                      ? 'bg-white dark:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] shadow-2xs font-semibold'
+                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>{t('calendar.scheduled_label', '已排期')}</span>
+                  <span className="px-1 rounded-full text-[10px] font-mono bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-[#a8c7fa]">
+                    {scheduledTasksList.length}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSidebarTaskTab('unscheduled')}
@@ -1780,36 +1668,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   }`}>
                     {unscheduledTasks.length}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSidebarTaskTab('scheduled')}
-                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
-                    sidebarTaskTab === 'scheduled'
-                      ? 'bg-white dark:bg-[#1e1f20] text-blue-700 dark:text-[#a8c7fa] shadow-2xs font-semibold'
-                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
-                  }`}
-                >
-                  <span>{t('calendar.scheduled_label', '已排期')}</span>
-                  <span className="px-1 rounded-full text-[10px] font-mono bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-[#a8c7fa]">
-                    {scheduledTasksList.length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSidebarTaskTab('due')}
-                  className={`py-1 px-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
-                    sidebarTaskTab === 'due'
-                      ? 'bg-white dark:bg-[#1e1f20] text-rose-700 dark:text-rose-300 shadow-2xs font-semibold'
-                      : 'text-gray-600 dark:text-[#c4c7c5] hover:text-gray-900 dark:hover:text-white'
-                  }`}
-                >
-                  <span>{t('calendar.due_short_tab', '截止')}</span>
-                  {overdueTasks.length > 0 && (
-                    <span className="px-1 rounded-full text-[10px] font-mono bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold">
-                      {overdueTasks.length}
-                    </span>
-                  )}
                 </button>
               </div>
 
@@ -1901,7 +1759,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                               className="text-left text-xs font-medium text-gray-800 dark:text-gray-100 hover:text-blue-600 dark:hover:text-[#a8c7fa] truncate flex-1 cursor-pointer"
                               title={item.title}
                             >
-                              {item.is_fixed ? '📌 ' : ''}
+                              {item.is_fixed ? <Pin className="w-3 h-3 inline mr-1 shrink-0" /> : null}
                               {item.title}
                             </button>
                             <span className="text-[10px] font-mono text-gray-400 shrink-0">
@@ -1933,52 +1791,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 </div>
               )}
 
-              {sidebarTaskTab === 'due' && (
-                <div className="space-y-1.5">
-                  {overdueTasks.length === 0 && dueGroups.length === 0 && (
-                    <div className="text-[11px] text-gray-400 dark:text-[#8e918f] py-4 text-center">
-                      {t('calendar.no_due', '本周暂无截止待办')}
-                    </div>
-                  )}
-                  {overdueTasks.slice(0, 4).map((item) => (
-                    <button
-                      key={`overdue-${item.id}`}
-                      type="button"
-                      onClick={() => setSelectedDueTask(item)}
-                      className="w-full text-left p-2 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/60 dark:border-rose-900/60 transition cursor-pointer"
-                    >
-                      <div className="text-xs font-medium text-rose-700 dark:text-rose-300 truncate">
-                        {item.title}
-                      </div>
-                      <div className="text-[10px] text-rose-500 font-mono mt-0.5 flex items-center justify-between">
-                        <span>{item.deadline ? new Date(item.deadline).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN') : t('calendar.overdue_label', '已逾期')} · {item.duration_minutes}m</span>
-                        <span>{item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')}</span>
-                      </div>
-                    </button>
-                  ))}
-
-                  {dueGroups.slice(0, 3).map((group) => (
-                    <div key={`due-grp-${group.key}`} className="space-y-1">
-                      <div className="text-[10px] text-gray-400 font-medium px-1 mt-2">
-                        {language.startsWith('en') ? group.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : `${group.date.getMonth() + 1}月${group.date.getDate()}日 (${weekDayLabels[(group.date.getDay() + 6) % 7]})`}
-                      </div>
-                      {group.due.slice(0, 3).map((item) => (
-                        <button
-                          key={`due-${item.id}`}
-                          type="button"
-                          onClick={() => setSelectedDueTask(item)}
-                          className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#282a2c] transition cursor-pointer flex items-center justify-between text-xs"
-                        >
-                          <span className="truncate text-gray-700 dark:text-[#c4c7c5]">{item.title}</span>
-                          <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-1">
-                            {item.scheduled_start ? t('calendar.scheduled_label', '已排期') : t('calendar.unscheduled_label', '未排期')} · {item.duration_minutes}m
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </aside>
         </div>
@@ -2098,7 +1910,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                               </span>
                             )}
                             <span className="truncate font-medium">
-                              {isExtFree ? `🔓 ${seg.title}` : seg.title}
+                              {seg.title}
                             </span>
                           </button>
                         );
@@ -2204,7 +2016,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           : { backgroundColor: item.color }
                       }
                     >
-                      <span className="truncate">{isExtFree ? `🔓 ${item.title}` : item.title}</span>
+                      <span className="truncate">{item.title}</span>
                       {isExtMuted && <BellOff className="w-3 h-3 shrink-0 opacity-75" />}
                     </button>
                   );
@@ -2308,7 +2120,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                               className="text-[10px] font-semibold truncate leading-tight flex-1"
                               style={{ color: isDark ? '#ffffff' : '#1f2937' }}
                             >
-                              {isExtFree ? `🔓 ${seg.title}` : seg.title}
+                              {seg.title}
                             </span>
                             <span
                               className="text-[9px] font-mono shrink-0 opacity-75"
@@ -2324,7 +2136,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                               className="text-[11px] font-semibold truncate leading-tight flex items-center justify-between gap-1"
                               style={{ color: isDark ? '#ffffff' : '#1f2937' }}
                             >
-                              <span className="truncate">{isExtFree ? `🔓 ${seg.title}` : seg.title}</span>
+                              <span className="truncate">{seg.title}</span>
                               {!isTask && (
                                 isExtMuted ? (
                                   <BellOff className="w-2.5 h-2.5 shrink-0 opacity-60" />
@@ -2454,19 +2266,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#444746]">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-gray-800 dark:text-gray-200 text-xs">{t('calendar.subscribed_list_title', '已订阅日历')}</span>
-                {externalGroups.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCalendarsModal(false);
-                      setShowGroupsModal(true);
-                    }}
-                    className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>管理课程与日程规则 ({externalGroups.length})</span>
-                  </button>
-                )}
               </div>
               {subscriptions.length === 0 ? (
                 <div className="text-gray-400 text-xs py-3 text-center">{t('calendar.no_external_sources', '暂无外部订阅源')}</div>
@@ -2498,6 +2297,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                         <div className="flex items-center gap-1.5 shrink-0 ml-2">
                           <button
                             type="button"
+                            onClick={() => openSubPolicyModal(s, color)}
+                            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition cursor-pointer"
+                            title={t('calendar.sub_policy_settings', '提醒与可排程设置')}
+                          >
+                            <Settings className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleSyncSubscription(s.id)}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded-lg transition cursor-pointer"
                             title={t('calendar.sync_now', '立即同步')}
@@ -2523,247 +2330,157 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
         </div>
       )}
 
-      {/* 1.5 课程与外部日程批量规则管理模态框 */}
-      {showGroupsModal && (() => {
-        const filteredGroups = externalGroups.filter((g) => {
-          if (groupSubFilter !== 'all' && g.subscriptionId !== groupSubFilter) return false;
-          if (groupSearch.trim()) {
-            const q = groupSearch.trim().toLowerCase();
-            return (
-              g.groupLabel.toLowerCase().includes(q) ||
-              g.subscriptionName.toLowerCase().includes(q) ||
-              g.sampleTitles.some(st => st.toLowerCase().includes(q))
-            );
-          }
-          return true;
-        });
-
-        return (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors max-h-[88vh] flex flex-col">
-              <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746] shrink-0">
-                <div>
-                  <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                    <Layers className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                    <span>外部课程与日程批量管理</span>
-                  </h3>
-                  <p className="text-[11px] text-gray-500 dark:text-[#9aa0a6] mt-0.5">
-                    自动归类同名课程/周期日程。设为「可排程」代表可让出时段安排待办（非双线程），同时可独立控制是否由 AI 发送微信提醒。
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowGroupsModal(false)}
-                  className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer shrink-0"
+      {editingSubPolicy && (
+        <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full shadow-2xl border border-gray-200 dark:border-[#444746] overflow-hidden animate-fadeIn transition-colors">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span
+                  className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: isDark
+                      ? `color-mix(in srgb, ${editingSubPolicy.color} 25%, #282a2c)`
+                      : `color-mix(in srgb, ${editingSubPolicy.color} 15%, #ffffff)`,
+                    color: editingSubPolicy.color,
+                  }}
                 >
-                  ✕
-                </button>
+                  <CalendarIcon className="w-4 h-4" />
+                </span>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                  {editingSubPolicy.sub.name}
+                </h3>
               </div>
-
-              {/* 搜索与订阅源过滤 */}
-              <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={groupSearch}
-                    onChange={(e) => setGroupSearch(e.target.value)}
-                    placeholder="搜索课程名或外部日程..."
-                    className="w-full pl-8 pr-3 py-2 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none text-gray-800 dark:text-gray-100"
-                  />
-                </div>
-                {subscriptions.length > 1 && (
-                  <select
-                    value={groupSubFilter === 'all' ? 'all' : String(groupSubFilter)}
-                    onChange={(e) =>
-                      setGroupSubFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
-                    }
-                    className="px-3 py-2 text-xs bg-gray-50 dark:bg-[#28292a] border border-gray-200 dark:border-[#444746] rounded-xl outline-none text-gray-800 dark:text-gray-100"
-                  >
-                    <option value="all">全部订阅源 ({externalGroups.length})</option>
-                    {subscriptions.map((s) => (
-                      <option key={s.id} value={String(s.id)}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              {/* 课程分组列表 */}
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
-                {filteredGroups.length === 0 ? (
-                  <div className="py-10 text-center text-xs text-gray-400 dark:text-[#8e918f]">
-                    未找到匹配的外部日程或课程分组
-                  </div>
-                ) : (
-                  filteredGroups.map((g) => {
-                    const busy = savingPolicyKey === `group:${g.subscriptionId}:${g.groupKey}`;
-                    const nextText = g.nextStartTime
-                      ? new Date(g.nextStartTime).toLocaleString('zh-CN', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })
-                      : null;
-
-                    return (
-                      <div
-                        key={`${g.subscriptionId}::${g.groupKey}`}
-                        className="p-3 bg-gray-50/80 dark:bg-[#282a2c] rounded-2xl border border-gray-200/80 dark:border-[#444746] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-gray-900 dark:text-gray-100 truncate">
-                              {g.groupLabel}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
-                              {g.subscriptionName}
-                            </span>
-                            <span className="text-[10px] text-gray-500 dark:text-[#9aa0a6] font-mono">
-                              共 {g.eventCount} 次{g.upcomingCount > 0 ? ` · 未来 ${g.upcomingCount} 次` : ''}
-                            </span>
-                            {g.overrideCount > 0 && (
-                              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
-                                含 {g.overrideCount} 次单次例外
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-gray-500 dark:text-[#9aa0a6] truncate">
-                            {nextText ? `下次：${nextText}` : '近期已结束'}
-                            {g.sampleTitles.some(st => st !== g.groupLabel)
-                              ? ` · 原标题如：${g.sampleTitles.slice(0, 2).join(' / ')}`
-                              : ''}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(g, {
-                                allowScheduling: !g.allowScheduling,
-                                resetInstanceOverrides: true,
-                              })
-                            }
-                            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition cursor-pointer disabled:opacity-50 ${
-                              g.allowScheduling
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                : 'bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-gray-100'
-                            }`}
-                            title="切换该课程全部时段是否允许穿插排程待办"
-                          >
-                            {g.allowScheduling ? '🔓 可排程占用' : '🔒 占用时段'}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(g, {
-                                aiReminderEnabled: !g.aiReminderEnabled,
-                                resetInstanceOverrides: true,
-                              })
-                            }
-                            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition cursor-pointer disabled:opacity-50 flex items-center gap-1 ${
-                              g.aiReminderEnabled
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-gray-100'
-                            }`}
-                            title="切换该课程是否由 AI 发送微信提醒"
-                          >
-                            {g.aiReminderEnabled ? (
-                              <Bell className="w-3.5 h-3.5" />
-                            ) : (
-                              <BellOff className="w-3.5 h-3.5" />
-                            )}
-                            <span>{g.aiReminderEnabled ? 'AI提醒' : '静音'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* 2. 导出订阅链接模态框 */}
-      {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-[#444746]">
-              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <Share2 className="w-5 h-5 text-blue-600 dark:text-[#a8c7fa]" />
-                <span>{t('calendar.export_modal_title', '导出 Clawbot 待办日历')}</span>
-              </h3>
               <button
-                onClick={() => setShowExportModal(false)}
-                className="w-8 h-8 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282a2c] flex items-center justify-center text-sm font-bold transition cursor-pointer"
+                type="button"
+                onClick={() => setEditingSubPolicy(null)}
+                className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300 transition cursor-pointer shrink-0"
+                aria-label={t('common.close', '关闭')}
               >
-                ✕
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-
-            {/* HTTPS {t('calendar.http_sub_link', '日历订阅链接')} */}
-            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
-              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
-                {t('calendar.http_sub_link', '日历订阅链接')}
+            <div className="px-6 py-5 space-y-4">
+              <div
+                className={`rounded-xl p-3 transition-all duration-200 ${
+                  editingSubPolicy.allowScheduling ? 'border border-dashed opacity-90' : 'border-l-[3.5px]'
+                }`}
+                style={{
+                  borderColor: editingSubPolicy.allowScheduling ? editingSubPolicy.color : undefined,
+                  borderLeftColor: editingSubPolicy.color,
+                  backgroundColor: isDark
+                    ? `color-mix(in srgb, ${editingSubPolicy.color} ${editingSubPolicy.allowScheduling ? '14%' : '35%'}, #1e1f20)`
+                    : `color-mix(in srgb, ${editingSubPolicy.color} ${editingSubPolicy.allowScheduling ? '8%' : '18%'}, #ffffff)`,
+                  color: isDark ? '#f3f4f6' : '#1f2937',
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold truncate">{editingSubPolicy.sub.name}</span>
+                  {editingSubPolicy.aiReminderEnabled ? (
+                    <Bell className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                  ) : (
+                    <BellOff className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono opacity-80">
+                  <CalendarIcon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{editingSubPolicy.sub.event_count} 个事件</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={icalExportUrl}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all"
-                />
+
+              <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3">
                 <button
                   type="button"
-                  onClick={() => handleCopyLink(icalExportUrl, 'http')}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer"
+                  role="switch"
+                  aria-checked={editingSubPolicy.allowScheduling}
+                  onClick={() =>
+                    setEditingSubPolicy((prev) =>
+                      prev ? { ...prev, allowScheduling: !prev.allowScheduling } : null
+                    )
+                  }
+                  className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
                 >
-                  {copiedType === 'http' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'http' ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
+                  <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                    <CalendarCheck2
+                      className={`w-4 h-4 transition-colors ${
+                        editingSubPolicy.allowScheduling
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-gray-400 dark:text-neutral-500'
+                      }`}
+                    />
+                    <span>{t('calendar.schedulable_label', '可排程')}</span>
+                  </span>
+                  <span
+                    className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                      editingSubPolicy.allowScheduling
+                        ? 'bg-emerald-500 dark:bg-emerald-600'
+                        : 'bg-gray-300 dark:bg-neutral-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                        editingSubPolicy.allowScheduling ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </span>
                 </button>
-              </div>
-            </div>
 
-            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] space-y-1.5 text-xs">
-              <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">{t('calendar.webcal_sub_link', 'Webcal 订阅链接')}</div>
-              <div className="flex items-center gap-2">
-                <input type="text" readOnly value={webcalUrl} aria-label={t('calendar.webcal_sub_link', 'Webcal 订阅链接')} className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1f20] border border-gray-200 dark:border-[#444746] rounded-lg font-mono text-[11px] select-all" />
-                <button type="button" onClick={() => handleCopyLink(webcalUrl, 'webcal')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shrink-0 flex items-center gap-1 transition cursor-pointer">
-                  {copiedType === 'webcal' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedType === 'webcal' ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
-                </button>
-              </div>
-              {webcalUrl && <a href={webcalUrl} className="inline-block text-blue-600 dark:text-[#a8c7fa] hover:underline">{t('calendar.sub_in_calendar_app', '在日历应用中订阅')}</a>}
-            </div>
-
-            {/* 静态 .ics 文件下载 */}
-            <div className="p-3 bg-gray-50 dark:bg-[#282a2c] rounded-xl border border-gray-200/80 dark:border-[#444746] flex items-center justify-between text-xs">
-              <div>
-                <div className="font-semibold text-gray-800 dark:text-[#e3e3e3]">
-                  {t('calendar.download_ics', '下载静态 .ics 文件')}
+                <div className="border-t border-gray-200/60 dark:border-neutral-700/60 pt-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={editingSubPolicy.aiReminderEnabled}
+                    onClick={() =>
+                      setEditingSubPolicy((prev) =>
+                        prev ? { ...prev, aiReminderEnabled: !prev.aiReminderEnabled } : null
+                      )
+                    }
+                    className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                      {editingSubPolicy.aiReminderEnabled ? (
+                        <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400 transition-colors" />
+                      ) : (
+                        <BellOff className="w-4 h-4 text-gray-400 dark:text-neutral-500 transition-colors" />
+                      )}
+                      <span>{t('calendar.event_reminder_label', '事件提醒')}</span>
+                    </span>
+                    <span
+                      className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                        editingSubPolicy.aiReminderEnabled
+                          ? 'bg-blue-600 dark:bg-blue-500'
+                          : 'bg-gray-300 dark:bg-neutral-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                          editingSubPolicy.aiReminderEnabled ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </span>
+                  </button>
                 </div>
-                <div className="text-[11px] text-gray-400">{t('calendar.ics_desc', '单次导入快照，不自动跟随后续更新')}</div>
               </div>
-              <a
-                href={downloadUrl}
-                download="clawbot-tasks.ics"
-                className="px-3 py-1.5 border border-gray-300 dark:border-[#444746] hover:bg-gray-100 dark:hover:bg-[#282a2c] text-gray-700 dark:text-[#e3e3e3] rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{t('calendar.download_file', '下载文件')}</span>
-              </a>
             </div>
 
-
+            <div className="px-6 py-4 border-t border-gray-100 dark:border-neutral-800 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingSubPolicy}
+                onClick={() => setEditingSubPolicy(null)}
+                className="px-3.5 py-1.5 text-xs font-medium text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+              >
+                {t('common.cancel', '取消')}
+              </button>
+              <button
+                type="button"
+                disabled={savingSubPolicy}
+                onClick={() => void handleSaveSubPolicy()}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {savingSubPolicy ? t('common.saving', '保存中...') : t('common.save', '保存')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2781,7 +2498,256 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
       {editError && <div role="alert" className="fixed bottom-5 right-5 z-[110] rounded-xl bg-rose-600 px-4 py-3 text-xs text-white shadow-lg">{editError}</div>}
 
       {/* 3. 日程或待办详情模态框 */}
-      {selectedItem && (
+      {selectedItem && selectedItem.kind === 'event' && (() => {
+        const subsequentSameNameInWindow = events.filter(
+          (ev) =>
+            ev.extendedProps?.type === 'external' &&
+            ev.title.trim() === selectedItem.title.trim() &&
+            ev.start > selectedItem.start
+        ).length;
+        const isBusySingle = savingPolicyKey === `single:${selectedItem.id}`;
+        const otherSameNameCount =
+          selectedItem.event.extendedProps?.sameNameSubsequentCount ?? subsequentSameNameInWindow;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full shadow-2xl border border-gray-200 dark:border-[#444746] overflow-hidden animate-fadeIn transition-colors">
+              {/* 模仿新建任务布局的顶栏 */}
+              <div className="px-6 py-4 border-b border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
+                    style={{
+                      backgroundColor: isDark
+                        ? `color-mix(in srgb, ${selectedItem.color} 25%, #282a2c)`
+                        : `color-mix(in srgb, ${selectedItem.color} 15%, #ffffff)`,
+                      color: selectedItem.color,
+                    }}
+                  >
+                    <CalendarIcon className="w-4 h-4" />
+                  </span>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    {selectedItem.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedItem(null)}
+                  className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300 transition cursor-pointer shrink-0"
+                  aria-label={t('common.close', '关闭')}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* 主体：中间模仿日历显示样式 + 底部滑动开关 */}
+              <div className="px-6 py-5 space-y-4">
+                {/* 中间：模仿日历卡片样式（切换为可排程时变为虚线框+浅色） */}
+                <div
+                  className={`rounded-xl p-3 transition-all duration-200 ${
+                    schedulableDraft ? 'border border-dashed opacity-90' : 'border-l-[3.5px]'
+                  }`}
+                  style={{
+                    borderColor: schedulableDraft ? selectedItem.color : undefined,
+                    borderLeftColor: selectedItem.color,
+                    backgroundColor: isDark
+                      ? `color-mix(in srgb, ${selectedItem.color} ${schedulableDraft ? '14%' : '35%'}, #1e1f20)`
+                      : `color-mix(in srgb, ${selectedItem.color} ${schedulableDraft ? '8%' : '18%'}, #ffffff)`,
+                    color: isDark ? '#f3f4f6' : '#1f2937',
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold truncate">{selectedItem.title}</span>
+                    {aiReminderDraft ? (
+                      <Bell className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    ) : (
+                      <BellOff className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono opacity-80">
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {selectedItem.allDay
+                        ? t('calendar.all_day', '全天')
+                        : `${formatTime(selectedItem.start)} – ${formatTime(selectedItem.end)}`}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] opacity-75">
+                    <CalendarIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {selectedItem.event.subscriptionName || t('calendar.external_event', '外部日程')}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 滑动按钮区域：仅使用图标、颜色与简洁标签，无多余描述文本 */}
+                <div className="p-4 rounded-2xl bg-gray-50/80 dark:bg-neutral-800/40 space-y-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={schedulableDraft}
+                    onClick={() => setSchedulableDraft((v) => !v)}
+                    className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                      <CalendarCheck2
+                        className={`w-4 h-4 transition-colors ${
+                          schedulableDraft
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-gray-400 dark:text-neutral-500'
+                        }`}
+                      />
+                      <span>{t('calendar.schedulable_label', '可排程')}</span>
+                    </span>
+                    <span
+                      className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                        schedulableDraft
+                          ? 'bg-emerald-500 dark:bg-emerald-600'
+                          : 'bg-gray-300 dark:bg-neutral-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                          schedulableDraft ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  <div className="border-t border-gray-200/60 dark:border-neutral-700/60 pt-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={aiReminderDraft}
+                      onClick={() => setAiReminderDraft((v) => !v)}
+                      className="w-full flex items-center justify-between gap-3 cursor-pointer select-none"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-gray-800 dark:text-neutral-200">
+                        {aiReminderDraft ? (
+                          <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400 transition-colors" />
+                        ) : (
+                          <BellOff className="w-4 h-4 text-gray-400 dark:text-neutral-500 transition-colors" />
+                        )}
+                        <span>{t('calendar.event_reminder_label', '事件提醒')}</span>
+                      </span>
+                      <span
+                        className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                          aiReminderDraft
+                            ? 'bg-blue-600 dark:bg-blue-500'
+                            : 'bg-gray-300 dark:bg-neutral-600'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                            aiReminderDraft ? 'translate-x-5' : 'translate-x-1'
+                          }`}
+                        />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 底栏操作按钮 */}
+              <div className="px-6 py-4 border-t border-gray-100 dark:border-neutral-800 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={isBusySingle}
+                  onClick={() => setConfirmApplyAllSameName(true)}
+                  className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>{t('calendar.apply_subsequent_same_name', '应用到后续同名日程')}</span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isBusySingle}
+                    onClick={() => setSelectedItem(null)}
+                    className="px-3.5 py-1.5 text-xs font-medium text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+                  >
+                    {t('common.cancel', '取消')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBusySingle}
+                    onClick={async () => {
+                      await handleUpdateSingleExternalPolicy(selectedItem.id, {
+                        allowScheduling: schedulableDraft,
+                        aiReminderEnabled: aiReminderDraft,
+                        matchSameName: false,
+                        uid: selectedItem.event.extendedProps?.uid ?? undefined,
+                        start: selectedItem.start,
+                        title: selectedItem.title,
+                      });
+                      setSelectedItem(null);
+                    }}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isBusySingle ? t('common.saving', '保存中...') : t('calendar.apply_this_change', '应用此次更改')}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {confirmApplyAllSameName && (
+              <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-gray-200 dark:border-[#444746] space-y-4 animate-fadeIn">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      <span>{t('calendar.apply_subsequent_same_name', '应用到后续同名日程')}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmApplyAllSameName(false)}
+                      className="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-600 dark:text-neutral-300 leading-relaxed">
+                    {otherSameNameCount > 0
+                      ? `后续还有 ${otherSameNameCount} 个同名日程「${selectedItem.title}」，确认将此次更改应用到当前及后续所有同名日程吗？`
+                      : `后续暂无其他同名日程，确认将此次更改应用到当前「${selectedItem.title}」吗？`}
+                  </p>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isBusySingle}
+                      onClick={() => setConfirmApplyAllSameName(false)}
+                      className="px-3.5 py-1.5 text-xs font-medium text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+                    >
+                      {t('common.cancel', '取消')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusySingle}
+                      onClick={async () => {
+                        await handleUpdateSingleExternalPolicy(selectedItem.id, {
+                          allowScheduling: schedulableDraft,
+                          aiReminderEnabled: aiReminderDraft,
+                          matchSameName: true,
+                          uid: selectedItem.event.extendedProps?.uid ?? undefined,
+                          start: selectedItem.start,
+                          title: selectedItem.title,
+                        });
+                        setConfirmApplyAllSameName(false);
+                        setSelectedItem(null);
+                      }}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isBusySingle ? t('common.saving', '保存中...') : t('common.confirm', '确认应用')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {selectedItem && selectedItem.kind === 'task' && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#1e1f20] rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-gray-200 dark:border-[#444746] animate-fadeIn transition-colors">
             <div className="flex items-start justify-between">
@@ -2819,13 +2785,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                   {(Boolean(selectedItem.task.is_fixed) || Boolean(selectedItem.task.is_concurrent)) && (
                     <div className="flex gap-1.5 mt-1">
                       {Boolean(selectedItem.task.is_fixed) && (
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
-                          {t('calendar.fixed_task_label', '📌 固定时间任务')}
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                          <Pin className="w-3 h-3" />
+                          <span>{t('calendar.fixed_task_label', '固定时间任务')}</span>
                         </span>
                       )}
                       {Boolean(selectedItem.task.is_concurrent) && (
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
-                          {t('calendar.concurrent_task_label', '⚡ 双线程任务')}
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
+                          <Zap className="w-3 h-3" />
+                          <span>{t('calendar.concurrent_task_label', '双线程任务')}</span>
                         </span>
                       )}
                     </div>
@@ -2838,208 +2806,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                 </>
               )}
             </div>
-
-            {selectedItem.kind === 'event' && (() => {
-              const extProps = selectedItem.event.extendedProps;
-              const allowSched = Boolean(extProps?.allowScheduling);
-              const aiRemind = extProps?.aiReminderEnabled !== false;
-              const groupKey = extProps?.courseGroupKey || selectedItem.title.toLowerCase();
-              const groupLabel = extProps?.courseGroupLabel || selectedItem.title;
-              const subId = Number(extProps?.subscriptionId ?? selectedItem.event.subscriptionId ?? 0);
-              const matchedGroup = externalGroups.find(
-                g => g.subscriptionId === subId && g.groupKey === groupKey
-              );
-              const isBusySingle = savingPolicyKey === `single:${selectedItem.id}`;
-              const isBusyGroup = savingPolicyKey === `group:${subId}:${groupKey}`;
-              const isBusyIgnore = savingPolicyKey === `ignore:${selectedItem.id}`;
-
-              return (
-                <div className="space-y-3 pt-1">
-                  {/* 归类识别课程标签 */}
-                  <div className="flex items-center justify-between px-1 text-[11px]">
-                    <div className="flex items-center gap-1.5 text-gray-500 dark:text-[#c4c7c5] min-w-0">
-                      <Layers className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                      <span className="truncate">
-                        识别课程组：<strong className="text-gray-800 dark:text-gray-200">{groupLabel}</strong>
-                        {matchedGroup ? ` (${matchedGroup.eventCount} 节)` : ''}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGroupSearch(groupLabel);
-                        setGroupSubFilter('all');
-                        setSelectedItem(null);
-                        setShowGroupsModal(true);
-                      }}
-                      className="text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 ml-2 cursor-pointer"
-                    >
-                      批量管理
-                    </button>
-                  </div>
-
-                  {/* 1. 是否允许占用此时间段进行排程 */}
-                  <div className="p-3 rounded-2xl border border-gray-200/80 dark:border-[#444746] bg-gray-50/70 dark:bg-[#282a2c] space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
-                          允许占用此时段排程待办
-                        </div>
-                        <div className="text-[11px] text-gray-500 dark:text-[#9aa0a6]">
-                          {allowSched
-                            ? '当前可占用：排程器可把待办排入此时段（不代表双线程，仍保留日程与提醒）'
-                            : '当前已占用：排程器会避开此时段，不在此时段安排其他待办'}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isBusySingle || isBusyGroup}
-                        onClick={() =>
-                          void handleUpdateSingleExternalPolicy(selectedItem.id, {
-                            allowScheduling: !allowSched,
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition cursor-pointer disabled:opacity-50 ${
-                          allowSched
-                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                            : 'bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-gray-100'
-                        }`}
-                      >
-                        {allowSched ? '🔓 可排程' : '🔒 占用中'}
-                      </button>
-                    </div>
-                    {matchedGroup && matchedGroup.eventCount > 1 && (
-                      <div className="flex items-center justify-between pt-1.5 border-t border-gray-200/70 dark:border-[#3c4043] text-[11px]">
-                        <span className="text-gray-500 dark:text-[#9aa0a6]">将全部「{groupLabel}」设为：</span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isBusyGroup}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(
-                                { subscriptionId: subId, groupKey, groupLabel },
-                                { allowScheduling: true, resetInstanceOverrides: true }
-                              )
-                            }
-                            className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 font-medium cursor-pointer"
-                          >
-                            全部可占用
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isBusyGroup}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(
-                                { subscriptionId: subId, groupKey, groupLabel },
-                                { allowScheduling: false, resetInstanceOverrides: true }
-                              )
-                            }
-                            className="px-2 py-0.5 rounded-lg bg-gray-200/80 dark:bg-neutral-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 font-medium cursor-pointer"
-                          >
-                            全部占用
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 2. AI 智能提醒开关 */}
-                  <div className="p-3 rounded-2xl border border-gray-200/80 dark:border-[#444746] bg-gray-50/70 dark:bg-[#282a2c] space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
-                          AI 智能微信提醒
-                        </div>
-                        <div className="text-[11px] text-gray-500 dark:text-[#9aa0a6]">
-                          {aiRemind
-                            ? '已开启：无论是否占用排程，开始前 AI 都会结合重叠待办发出微信提醒'
-                            : '已静音：本次日程开始前不会触发 AI 提醒'}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isBusySingle || isBusyGroup}
-                        onClick={() =>
-                          void handleUpdateSingleExternalPolicy(selectedItem.id, {
-                            aiReminderEnabled: !aiRemind,
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition cursor-pointer disabled:opacity-50 flex items-center gap-1 ${
-                          aiRemind
-                            ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                            : 'bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-800 dark:text-gray-100'
-                        }`}
-                      >
-                        {aiRemind ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-                        <span>{aiRemind ? '提醒开' : '已关闭'}</span>
-                      </button>
-                    </div>
-                    {matchedGroup && matchedGroup.eventCount > 1 && (
-                      <div className="flex items-center justify-between pt-1.5 border-t border-gray-200/70 dark:border-[#3c4043] text-[11px]">
-                        <span className="text-gray-500 dark:text-[#9aa0a6]">将全部「{groupLabel}」提醒设为：</span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isBusyGroup}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(
-                                { subscriptionId: subId, groupKey, groupLabel },
-                                { aiReminderEnabled: true, resetInstanceOverrides: true }
-                              )
-                            }
-                            className="px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-100 font-medium cursor-pointer"
-                          >
-                            全部提醒
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isBusyGroup}
-                            onClick={() =>
-                              void handleUpdateGroupExternalPolicy(
-                                { subscriptionId: subId, groupKey, groupLabel },
-                                { aiReminderEnabled: false, resetInstanceOverrides: true }
-                              )
-                            }
-                            className="px-2 py-0.5 rounded-lg bg-gray-200/80 dark:bg-neutral-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 font-medium cursor-pointer"
-                          >
-                            全部静音
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 底部：恢复默认与隐藏 */}
-                  <div className="flex items-center justify-between pt-1 text-xs">
-                    {extProps?.hasInstanceOverride ? (
-                      <button
-                        type="button"
-                        disabled={isBusySingle}
-                        onClick={() =>
-                          void handleUpdateSingleExternalPolicy(selectedItem.id, {
-                            allowScheduling: null,
-                            aiReminderEnabled: null,
-                          })
-                        }
-                        className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-                      >
-                        恢复跟随课程组设置
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-gray-400">当前跟随课程组设置</span>
-                    )}
-                    <button
-                      type="button"
-                      disabled={isBusyIgnore}
-                      onClick={() => void handleIgnoreExternalEvent(selectedItem.id, selectedItem.title)}
-                      className="px-3 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer disabled:opacity-50"
-                    >
-                      隐藏此日程
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
 
             {selectedItem.kind === 'task' && (
               <div className="space-y-2 pt-1">
@@ -3059,44 +2825,50 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                       : t('calendar.scheduled_label', '已排期')}
                   </span>
                 </div>
-                <div className="flex items-center justify-between pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
-                    className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
-                  >
-                    {t('calendar.delete_item', '删除事项')}
-                  </button>
-                  <div className="flex flex-wrap justify-end gap-2">
+                <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-neutral-800">
+                  <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
-                      className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                      onClick={() => handleDeleteCalendarTask(selectedItem.task.id)}
+                      className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      {t('calendar.edit_item', '编辑任务')}
+                      {t('calendar.delete_item', '删除事项')}
                     </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => { setEditingTask(selectedItem.task); setSelectedItem(null); }}
+                        className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        {t('calendar.edit_item', '编辑任务')}
+                      </button>
+                      {!selectedItem.id.endsWith('-done') && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openRescheduleModal(
+                              selectedItem.task,
+                              selectedItem.blockId,
+                              selectedItem.businessDate || dateKeyFromIso(selectedItem.start)
+                            )
+                          }
+                          className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                          {t('calendar.single_reschedule_btn', '单次再排期')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
                     {!selectedItem.id.endsWith('-done') && (
                       <button
                         type="button"
-                        onClick={() =>
-                          openRescheduleModal(
-                            selectedItem.task,
-                            selectedItem.blockId,
-                            selectedItem.businessDate || dateKeyFromIso(selectedItem.start)
-                          )
-                        }
-                        className="px-3 py-1.5 text-blue-600 dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
+                        onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
+                        className="px-3.5 py-1.5 border border-blue-600 text-blue-600 dark:border-[#a8c7fa] dark:text-[#a8c7fa] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap shrink-0"
                       >
-                        {t('calendar.single_reschedule_btn', '单次再排期')}
+                        {t('calendar.complete_part', '完成本节')}
                       </button>
                     )}
-                    {!selectedItem.id.endsWith('-done') && <button
-                      type="button"
-                      onClick={() => handleCompletePart(selectedItem.task.id, selectedItem.blockId, selectedItem.partIndex)}
-                      className="px-3.5 py-1.5 border border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold rounded-xl transition cursor-pointer"
-                    >
-                      {t('calendar.complete_part', '完成本节')}
-                    </button>}
                     <button
                       type="button"
                       onClick={() =>
@@ -3106,7 +2878,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenMobileMenu, is
                           dateKeyFromIso(selectedItem.start)
                         )
                       }
-                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer"
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
                     >
                       {selectedItem.id.endsWith('-done') ? t('calendar.mark_uncompleted', '标记为未完成') : t('calendar.mark_all_completed', '全部完成')}
                     </button>

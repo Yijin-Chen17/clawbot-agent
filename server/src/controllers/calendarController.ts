@@ -159,6 +159,7 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
     body.allowScheduling === undefined ? undefined : body.allowScheduling === null ? null : Boolean(body.allowScheduling);
   const aiReminderEnabled =
     body.aiReminderEnabled === undefined ? undefined : body.aiReminderEnabled === null ? null : Boolean(body.aiReminderEnabled);
+  const matchSameName = Boolean(body.matchSameName);
 
   if (allowScheduling === undefined && aiReminderEnabled === undefined) {
     res.status(400).json({ error: '请提供要更新的策略字段' });
@@ -166,12 +167,78 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
   }
 
   try {
-    const { policy } = upsertSingleExternalEventOverride({
-      userId,
-      eventId,
-      allowScheduling,
-      aiReminderEnabled,
-    });
+    let resolvedEventId = eventId;
+    let target = db
+      .prepare('SELECT id, title, start_time FROM external_events WHERE id = ? AND user_id = ?')
+      .get(resolvedEventId, userId) as { id: number; title: string; start_time: string } | undefined;
+
+    if (!target && (body.uid || body.title)) {
+      if (body.uid && body.start) {
+        target = db
+          .prepare(
+            `SELECT id, title, start_time FROM external_events
+             WHERE user_id = ? AND uid = ? AND (start_time = ? OR occurrence_start = ?)
+             ORDER BY id DESC LIMIT 1`
+          )
+          .get(userId, String(body.uid), String(body.start), String(body.start)) as
+          | { id: number; title: string; start_time: string }
+          | undefined;
+      }
+      if (!target && body.title && body.start) {
+        target = db
+          .prepare(
+            `SELECT id, title, start_time FROM external_events
+             WHERE user_id = ? AND TRIM(title) = TRIM(?) AND start_time = ?
+             ORDER BY id DESC LIMIT 1`
+          )
+          .get(userId, String(body.title), String(body.start)) as
+          | { id: number; title: string; start_time: string }
+          | undefined;
+      }
+      if (target) {
+        resolvedEventId = target.id;
+      }
+    }
+
+    if (!target) {
+      res.status(404).json({ error: '未找到指定外部日程' });
+      return;
+    }
+
+    let policy;
+    if (matchSameName) {
+      const matchingRows = db
+        .prepare(
+          'SELECT id FROM external_events WHERE user_id = ? AND TRIM(title) = TRIM(?) AND start_time >= ?'
+        )
+        .all(userId, target.title, target.start_time) as Array<{ id: number }>;
+      for (const row of matchingRows) {
+        const updated = upsertSingleExternalEventOverride({
+          userId,
+          eventId: row.id,
+          allowScheduling,
+          aiReminderEnabled,
+        });
+        if (row.id === resolvedEventId) {
+          policy = updated.policy;
+        }
+      }
+      if (!policy) {
+        policy = upsertSingleExternalEventOverride({
+          userId,
+          eventId: resolvedEventId,
+          allowScheduling,
+          aiReminderEnabled,
+        }).policy;
+      }
+    } else {
+      policy = upsertSingleExternalEventOverride({
+        userId,
+        eventId: resolvedEventId,
+        allowScheduling,
+        aiReminderEnabled,
+      }).policy;
+    }
     syncExternalNotificationOutboxForUser(userId);
     let planVersion: number | undefined;
     if (allowScheduling !== undefined) {
@@ -187,6 +254,103 @@ export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Respon
   } catch (err: any) {
     res.status(404).json({ error: err.message || '更新失败' });
   }
+}
+
+export function bulkUpdateAllExternalEventsPolicy(req: AuthenticatedRequest, res: Response): void {
+  const userId = req.user!.id;
+  const body = req.body || {};
+  const allowScheduling =
+    body.allowScheduling === undefined ? undefined : Boolean(body.allowScheduling);
+  const aiReminderEnabled =
+    body.aiReminderEnabled === undefined ? undefined : Boolean(body.aiReminderEnabled);
+  const subscriptionId =
+    body.subscriptionId === undefined || body.subscriptionId === null || body.subscriptionId === ''
+      ? undefined
+      : Number(body.subscriptionId);
+
+  if (allowScheduling === undefined && aiReminderEnabled === undefined) {
+    res.status(400).json({ error: '请提供要批量更新的设置项' });
+    return;
+  }
+
+  if (subscriptionId !== undefined && (!Number.isInteger(subscriptionId) || subscriptionId <= 0)) {
+    res.status(400).json({ error: '无效的日历订阅 ID' });
+    return;
+  }
+
+  const rows = (
+    subscriptionId !== undefined
+      ? db
+          .prepare(
+            `SELECT ee.id
+             FROM external_events ee
+             LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+             WHERE ee.user_id = ?
+               AND ee.subscription_id = ?
+               AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+               AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))`
+          )
+          .all(userId, subscriptionId)
+      : db
+          .prepare(
+            `SELECT ee.id
+             FROM external_events ee
+             LEFT JOIN calendar_subscriptions cs ON cs.id = ee.subscription_id
+             WHERE ee.user_id = ?
+               AND COALESCE(ee.status, 'CONFIRMED') != 'CANCELLED'
+               AND (ee.subscription_id IS NULL OR COALESCE(ee.generation, 0) = COALESCE(cs.current_generation, 0))`
+          )
+          .all(userId)
+  ) as Array<{ id: number }>;
+
+  db.transaction(() => {
+    if (allowScheduling !== undefined) {
+      if (subscriptionId !== undefined) {
+        db.prepare(
+          'UPDATE external_event_group_rules SET allow_scheduling = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND subscription_id = ?'
+        ).run(allowScheduling ? 1 : 0, userId, subscriptionId);
+      } else {
+        db.prepare(
+          'UPDATE external_event_group_rules SET allow_scheduling = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+        ).run(allowScheduling ? 1 : 0, userId);
+      }
+    }
+    if (aiReminderEnabled !== undefined) {
+      if (subscriptionId !== undefined) {
+        db.prepare(
+          'UPDATE external_event_group_rules SET ai_reminder_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND subscription_id = ?'
+        ).run(aiReminderEnabled ? 1 : 0, userId, subscriptionId);
+      } else {
+        db.prepare(
+          'UPDATE external_event_group_rules SET ai_reminder_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+        ).run(aiReminderEnabled ? 1 : 0, userId);
+      }
+    }
+    for (const row of rows) {
+      upsertSingleExternalEventOverride({
+        userId,
+        eventId: row.id,
+        allowScheduling,
+        aiReminderEnabled,
+      });
+    }
+  })();
+
+  try {
+    syncExternalNotificationOutboxForUser(userId);
+  } catch {}
+
+  let planVersion: number | undefined;
+  if (allowScheduling !== undefined) {
+    const replan = replanUserTasks(userId, { triggerSource: 'bulk_external_policy' });
+    planVersion = replan.planVersion;
+  }
+
+  res.json({
+    success: true,
+    updatedCount: rows.length,
+    planVersion,
+  });
 }
 
 export function listExternalGroups(req: AuthenticatedRequest, res: Response): void {
@@ -343,6 +507,8 @@ export function getCalendarEvents(req: AuthenticatedRequest, res: Response): voi
         hasInstanceOverride: ev.hasInstanceOverride,
         groupAllowScheduling: ev.groupAllowScheduling,
         groupAiReminderEnabled: ev.groupAiReminderEnabled,
+        sameNameCount: ev.sameNameCount,
+        sameNameSubsequentCount: ev.sameNameSubsequentCount,
       },
     })),
     ...unified.blocks.map(b => {
