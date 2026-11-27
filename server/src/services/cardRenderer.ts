@@ -3,7 +3,16 @@ import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { db } from '../config/database.js';
 import { Task } from '../models/types.js';
+import { getUserTimezone } from './accountService.js';
 import { queryScheduleInRange, queryTodoSummary } from './scheduleQueryService.js';
+import {
+  addDaysToDateKey,
+  formatInAccountTz,
+  formatTimeInAccountTz,
+  getAccountDayBoundsUtc,
+  getAccountLocalDateKey,
+  zonedWallClockToUtc,
+} from '../utils/timezone.js';
 
 function escapeXml(unsafe: string): string {
   return (unsafe || '')
@@ -43,26 +52,32 @@ function renderSvgToPng(svg: string): Buffer {
   return resvg.render().asPng();
 }
 
-function getMondayOfWeek(d: Date): Date {
-  const date = new Date(d);
-  const day = date.getDay();
-  // Monday as first day of week (ISO-8601)
-  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-  date.setDate(diff);
-  date.setHours(0, 0, 0, 0);
-  return date;
+function getMondayKeyOfWeek(dateKey: string): string {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const utcMid = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const day = utcMid.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return addDaysToDateKey(dateKey, diff);
 }
 
-function getWeekNumber(d: Date): number {
-  const target = new Date(d.valueOf());
-  const dayNr = (d.getDay() + 6) % 7;
-  target.setDate(target.getDate() - dayNr + 3);
+function getWeekNumberFromKey(dateKey: string): number {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d));
+  const dayNr = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNr + 3);
   const firstThursday = target.valueOf();
-  target.setMonth(0, 1);
-  if (target.getDay() !== 4) {
-    target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+  target.setUTCMonth(0, 1);
+  if (target.getUTCDay() !== 4) {
+    target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
   }
   return 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+}
+
+function getMinutesInTz(isoOrDate: string | Date, tz: string): number {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  const hm = formatTimeInAccountTz(d, tz);
+  const [hh, mm] = hm.split(':').map(Number);
+  return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
 }
 
 interface TimedCalendarSegment {
@@ -161,9 +176,8 @@ function formatHour(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`;
 }
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+function formatTime(iso: string, tz: string): string {
+  return formatTimeInAccountTz(iso, tz);
 }
 
 function parseDbIso(dateStr?: string | null): Date | null {
@@ -180,15 +194,17 @@ function parseDbIso(dateStr?: string | null): Date | null {
  */
 export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   const now = new Date();
-  const monday = getMondayOfWeek(now);
-  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6, 23, 59, 59, 999);
+  const tz = getUserTimezone(userId);
+  const todayKey = getAccountLocalDateKey(now, tz);
+  const mondayKey = getMondayKeyOfWeek(todayKey);
+  const sundayKey = addDaysToDateKey(mondayKey, 6);
 
   // Standard 24 hours grid (00:00 to 24:00 consecutive, no rest band cut-off)
   const CALENDAR_HOURS = 24;
   const HOUR_HEIGHT = 52; // Taller height for clearer, high-resolution rendering
 
-  const searchStartIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).toISOString();
-  const searchEndIso = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7, 23, 59, 59, 999).toISOString();
+  const searchStartIso = getAccountDayBoundsUtc(mondayKey, tz).start.toISOString();
+  const searchEndIso = getAccountDayBoundsUtc(addDaysToDateKey(mondayKey, 7), tz).end.toISOString();
 
   // Unified read model: matches Web CalendarView & ICS export (C05)
   const unified = queryScheduleInRange(userId, searchStartIso, searchEndIso);
@@ -209,7 +225,8 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
   interface DayScheduleData {
     index: number;
-    date: Date;
+    dateKey: string;
+    dayNum: number;
     dayDateStr: string;
     weekdayZh: string;
     weekdayEn: string;
@@ -226,14 +243,13 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
   let hasAnyAllDay = false;
 
   for (let i = 0; i < 7; i++) {
-    const dayDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-    // Standard 24h day window: 00:00:00 to 24:00:00
-    const windowStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0, 0);
-    const windowEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, 0, 0, 0, 0);
-    const isToday =
-      now.getFullYear() === dayDate.getFullYear() &&
-      now.getMonth() === dayDate.getMonth() &&
-      now.getDate() === dayDate.getDate();
+    const dayKey = addDaysToDateKey(mondayKey, i);
+    const [, mStr, dStr] = dayKey.split('-');
+    const dayMonth = Number(mStr);
+    const dayNum = Number(dStr);
+    const { start: windowStart, end: dayBoundsEnd } = getAccountDayBoundsUtc(dayKey, tz);
+    const windowEnd = new Date(dayBoundsEnd.getTime() + 1);
+    const isToday = dayKey === todayKey;
 
     const wStartIso = windowStart.toISOString();
     const wEndIso = windowEnd.toISOString();
@@ -388,8 +404,9 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
     days.push({
       index: i,
-      date: dayDate,
-      dayDateStr: `${dayDate.getMonth() + 1}/${dayDate.getDate()}`,
+      dateKey: dayKey,
+      dayNum,
+      dayDateStr: `${dayMonth}/${dayNum}`,
       weekdayZh: weekdaysZh[i],
       weekdayEn: weekdaysEn[i],
       isToday,
@@ -419,8 +436,10 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
 
   const height = paddingY * 2 + headerH + dayHeaderH + allDayH + gridH + footerH; // ~1456px
 
-  const weekNum = getWeekNumber(now);
-  const weekRangeTitle = `${monday.getFullYear()}年${monday.getMonth() + 1}月${monday.getDate()}日 – ${sunday.getMonth() + 1}月${sunday.getDate()}日 (第${weekNum}周)`;
+  const weekNum = getWeekNumberFromKey(todayKey);
+  const [monY, monM, monD] = mondayKey.split('-').map(Number);
+  const [, sunM, sunD] = sundayKey.split('-').map(Number);
+  const weekRangeTitle = `${monY}年${monM}月${monD}日 – ${sunM}月${sunD}日 (第${weekNum}周)`;
 
   // Generate SVG parts
   let dayHeadersSvg = '';
@@ -467,12 +486,12 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
             ? `
           <circle cx="${dayColW / 2}" cy="34" r="14" fill="#2563eb"/>
           <text x="${dayColW / 2}" y="39" text-anchor="middle" font-size="13" font-weight="bold" font-family="monospace" fill="#ffffff">
-            ${d.date.getDate()}
+            ${d.dayNum}
           </text>
         `
             : `
           <text x="${dayColW / 2}" y="38" text-anchor="middle" font-size="14" font-family="monospace" fill="#0f172a">
-            ${d.date.getDate()}
+            ${d.dayNum}
           </text>
         `
         }
@@ -503,8 +522,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     let itemsSvg = '';
     d.timed.forEach((pos, itemIdx) => {
       const seg = pos.item;
-      const startD = new Date(seg.start);
-      const startMinutes = startD.getHours() * 60 + startD.getMinutes();
+      const startMinutes = getMinutesInTz(seg.start, tz);
       const durMinutes = seg.durationMinutes;
 
       const top = gridTopY + (startMinutes / 60) * HOUR_HEIGHT;
@@ -520,7 +538,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
         </clipPath>
       `;
 
-      const timeRange = `${formatTime(seg.start)} - ${formatTime(seg.end)}`;
+      const timeRange = `${formatTime(seg.start, tz)} - ${formatTime(seg.end, tz)}`;
       const shortTitle = seg.title.length > 12 ? seg.title.slice(0, 11) + '…' : seg.title;
 
       itemsSvg += `
@@ -534,7 +552,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
           ${
             height < 34
               ? `
-            <text x="${left + 7}" y="${top + 14}" font-size="9" font-family="monospace" font-weight="bold" fill="${seg.timeColor}">${formatTime(seg.start)}</text>
+            <text x="${left + 7}" y="${top + 14}" font-size="9" font-family="monospace" font-weight="bold" fill="${seg.timeColor}">${formatTime(seg.start, tz)}</text>
             <text x="${left + 38}" y="${top + 14}" font-size="10" font-weight="bold" fill="${seg.titleColor}">${escapeXml(shortTitle)}</text>
           `
               : height < 50
@@ -556,7 +574,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
     // Today current time indicator
     let todayLineSvg = '';
     if (d.isToday) {
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const currentMinutes = getMinutesInTz(now, tz);
       const currentY = gridTopY + (currentMinutes / 60) * HOUR_HEIGHT;
       if (currentY >= gridTopY && currentY <= gridTopY + gridH) {
         todayLineSvg = `
@@ -661,7 +679,7 @@ export async function renderWeekCalendarImage(userId: number): Promise<Buffer> {
           ✨ Clawbot 智能日程管家 · 周日历导出视图 (0:00 - 24:00) · 周一至周日在序
         </text>
         <text x="${gridW - 4}" y="0" text-anchor="end" font-size="10.5" font-family="monospace" fill="#94a3b8">
-          ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', { hour12: false })} 生成
+          ${formatInAccountTz(now, tz, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} 生成
         </text>
       </g>
     </svg>
@@ -679,6 +697,7 @@ export const renderCalendarImage = renderWeekCalendarImage;
  * 2. Render Google Tasks Style "Todo List" PNG Image
  */
 export async function renderTodoListImage(userId: number): Promise<Buffer> {
+  const tz = getUserTimezone(userId);
   const summary = queryTodoSummary(userId, 12);
   const tasks = summary.items;
   const inProgressCount = summary.counts.inProgress;
@@ -731,13 +750,19 @@ export async function renderTodoListImage(userId: number): Promise<Buffer> {
       // Scheduled time or DDL
       let timeText = `耗时 ${t.duration_minutes} 分钟`;
       if (t.scheduled_start && t.scheduled_end) {
-        const sTime = new Date(t.scheduled_start).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const eTime = new Date(t.scheduled_end).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const sTime = formatTimeInAccountTz(t.scheduled_start, tz);
+        const eTime = formatTimeInAccountTz(t.scheduled_end, tz);
         timeText += ` · 安排: ${sTime}-${eTime}`;
       }
       if (t.deadline) {
-        const dDate = new Date(t.deadline);
-        timeText += ` · 截止: ${dDate.getMonth() + 1}/${dDate.getDate()} ${dDate.getHours()}:${String(dDate.getMinutes()).padStart(2, '0')}`;
+        const ddlText = formatInAccountTz(t.deadline, tz, {
+          month: 'numeric',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        timeText += ` · 截止: ${ddlText}`;
       }
 
       tasksSvg += `

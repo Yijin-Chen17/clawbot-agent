@@ -414,6 +414,41 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 8,
+    name: 'weixin_reply_outbox',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS weixin_reply_outbox (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          inbox_id INTEGER DEFAULT NULL,
+          channel TEXT NOT NULL DEFAULT 'weixin_ilink',
+          to_user_id TEXT NOT NULL,
+          context_token TEXT DEFAULT NULL,
+          text_content TEXT NOT NULL,
+          image_kind TEXT DEFAULT NULL,
+          image_base64 TEXT DEFAULT NULL,
+          text_sent INTEGER NOT NULL DEFAULT 0,
+          image_sent INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          next_retry_at DATETIME DEFAULT NULL,
+          lease_owner TEXT DEFAULT NULL,
+          lease_until DATETIME DEFAULT NULL,
+          provider_msg_id TEXT DEFAULT NULL,
+          last_error TEXT DEFAULT NULL,
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_weixin_reply_outbox_due
+          ON weixin_reply_outbox(status, next_retry_at, expires_at);
+        CREATE INDEX IF NOT EXISTS idx_command_inbox_wx_pending
+          ON command_inbox(user_id, channel, status, updated_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

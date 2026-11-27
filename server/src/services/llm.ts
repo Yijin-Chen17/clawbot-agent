@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { LLMExtractionResult, UserSettings } from '../models/types.js';
+import { LLMExtractionAction, LLMExtractionResult, UserSettings } from '../models/types.js';
 import {
   recordApiUsage,
   reserveOfficialLlmBalance,
@@ -246,8 +246,14 @@ export async function invokeLlmWithFailover(params: {
   throw lastError || new Error('大模型调用失败');
 }
 
-const llmExtractionSchema = z.object({
+const llmActionSchema = z.object({
   swap_decision: z.enum(['confirm', 'reject', 'other']).nullable().optional(),
+  session_action: z
+    .enum(['continue', 'cancel_session', 'switch_new', 'select_candidate'])
+    .nullable()
+    .optional(),
+  selected_candidate_index: z.number().int().nullable().optional(),
+  selected_candidate_id: z.number().int().nullable().optional(),
   intent: z.enum(['create_task', 'status_update', 'query_schedule', 'delete_item', 'modify_item', 'other']).default('other'),
   title: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -297,7 +303,7 @@ const llmExtractionSchema = z.object({
       name: z.string().nullable().optional(),
       new_title: z.string().nullable().optional(),
       new_duration_minutes: z.number().finite().nullable().optional(),
-      new_deadline: z.string().nullable().optional(),
+      new_deadline: stringOrNullSchema(),
       deadline_kind: z.enum(['hard', 'soft']).nullable().optional(),
       new_start: z.string().nullable().optional(),
       new_end: z.string().nullable().optional(),
@@ -310,6 +316,14 @@ const llmExtractionSchema = z.object({
     .optional(),
 });
 
+function stringOrNullSchema() {
+  return z.string().nullable().optional();
+}
+
+const llmExtractionSchema = llmActionSchema.extend({
+  extra_actions: z.array(llmActionSchema).max(3).nullable().optional(),
+});
+
 /**
  * 静态系统提示词 (100% 静态不变以保障前缀缓存命中)
  */
@@ -320,6 +334,9 @@ const SYSTEM_PROMPT = `你是一个智能日程与任务提取助手。
 JSON 格式规范：
 {
   "swap_decision": "confirm" | "reject" | "other" | null,
+  "session_action": "continue" | "cancel_session" | "switch_new" | "select_candidate" | null,
+  "selected_candidate_index": number | null,
+  "selected_candidate_id": number | null,
   "intent": "create_task" | "status_update" | "query_schedule" | "delete_item" | "modify_item" | "other",
   "title": string | null,
   "description": string | null,
@@ -368,7 +385,8 @@ JSON 格式规范：
     "is_concurrent": boolean | null,
     "tags": string[] | null,
     "notes": string | null
-  } | null
+  } | null,
+  "extra_actions": array | null
 }
 
 意图识别与场景规则：
@@ -395,9 +413,13 @@ JSON 格式规范：
    - "取消这个任务" -> status_action: "cancel"
    - "重开/恢复待办" -> status_action: "reopen"
    - "停止每日重复/以后不再每天提醒" -> status_action: "stop_daily"
-5. 查询日程 (query_schedule): 查看今天/某天日程。
+5. 查询日程 (query_schedule): 查看今天/某天日程（支持填入 target_date YYYY-MM-DD）。
 6. 其他/闲聊 (other): 无关内容。
-7. 上下文补齐与多轮确认：若消息包含 [待补齐任务信息]，合并新字段输出；若包含 [日程调整待确认信息]，判断 swap_decision 为 confirm / reject / other。`;
+7. 局部多轮事件上下文：
+   - 若消息包含 [待补齐任务信息]，合并新字段并输出 intent: "create_task"、session_action: "continue"；若用户表示“算了/不用了/取消当前操作”，输出 session_action: "cancel_session"；若用户发起全新无关指令，输出 session_action: "switch_new" 并按新指令解析。
+   - 若消息包含 [日程调整待确认信息]，判断 swap_decision 为 confirm / reject / other；若用户改发起全新指令，设 session_action: "switch_new"。
+   - 若消息包含 [待消歧候选列表]，当用户按序号（如“第二个”）、ID 或日期/名称特征选中其中一项时，设 session_action: "select_candidate"，并填写 selected_candidate_index (1-based) 或 selected_candidate_id；若放弃则设 session_action: "cancel_session"。
+8. 复合指令：仅当一句话明确包含多个独立动作（如“把开会删掉，再安排明天写代码2小时”）时，将第一个动作放在顶层字段，其余动作（最多 2 个）按顺序放入 extra_actions 数组，切勿重复顶层动作。`;
 
 export async function parseUserMessageWithLLM(
   message: string,
@@ -426,10 +448,24 @@ export async function parseUserMessageWithLLM(
     if (pendingContext.proposal) {
       const prop = pendingContext.proposal;
       const conflictTitle = prop.conflictTask?.title || '已有任务';
-      const newTitle = pendingContext.newTask?.title || '新待办';
+      const newTitle = pendingContext.newTaskTitle || pendingContext.newTask?.title || '新待办';
       userContent += `\n[日程调整待确认信息: 正在向用户询问是否同意将已排任务「${conflictTitle}」同步修改至新时间，以安排新任务「${newTitle}」]`;
+    } else if (pendingContext.sessionType === 'disambiguate_target' && Array.isArray(pendingContext.candidates)) {
+      const candText = pendingContext.candidates
+        .map((c: any, i: number) => `${i + 1}. [${c.type === 'calendar_event' ? '外部日程' : '待办'}] ${c.title}${c.date ? ` (${c.date})` : ''} (ID:${c.id})`)
+        .join(' ; ');
+      userContent += `\n[待消歧候选列表(${pendingContext.actionLabel || '操作'}): ${candText}]`;
     } else {
-      userContent += `\n[待补齐任务信息: ${JSON.stringify(pendingContext)}]`;
+      const { turns: _turns, missing: _missing, ...cleanFields } = pendingContext;
+      userContent += `\n[待补齐任务信息: ${JSON.stringify(cleanFields)}]`;
+    }
+
+    if (Array.isArray(pendingContext.turns) && pendingContext.turns.length > 0) {
+      const turnLines = pendingContext.turns
+        .slice(-6)
+        .map((t: any) => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`)
+        .join(' | ');
+      userContent += `\n[本轮事件上下文]: ${turnLines}`;
     }
   }
   userContent += `\n[用户输入]: ${message}`;

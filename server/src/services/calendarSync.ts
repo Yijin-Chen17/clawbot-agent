@@ -61,10 +61,23 @@ function getRecurrenceKey(ev: any): string | null {
   return Number.isNaN(dt.getTime()) ? String(rec) : dt.toISOString();
 }
 
+function buildFallbackEventUid(subId: number, ev: any): string {
+  const startIso = ev?.start && !Number.isNaN(new Date(ev.start).getTime()) ? new Date(ev.start).toISOString() : '';
+  const endIso = ev?.end && !Number.isNaN(new Date(ev.end).getTime()) ? new Date(ev.end).toISOString() : '';
+  const seed = `${subId}|${String(ev?.summary || '').trim()}|${startIso}|${endIso}|${ev?.rrule ? String(ev.rrule) : ''}`;
+  return `auto-${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 16)}`;
+}
+
 function computeEventsDigest(events: ParsedCalendarEvent[]): string {
+  // Intentionally exclude ephemeral/random VEVENT UIDs so feeds that regenerate UUIDs per fetch
+  // (e.g. university timetable exports) do not trigger false "changed" replans every sync.
   const normalized = [...events]
-    .sort((a, b) => `${a.uid}|${a.occurrenceStart}`.localeCompare(`${b.uid}|${b.occurrenceStart}`))
-    .map(e => `${e.uid}|${e.occurrenceStart}|${e.startTime}|${e.endTime}|${e.title}|${e.status}|${e.transparency}|${e.isAllDay}`);
+    .sort((a, b) =>
+      `${a.startTime}|${a.endTime}|${a.title}|${a.occurrenceStart}`.localeCompare(
+        `${b.startTime}|${b.endTime}|${b.title}|${b.occurrenceStart}`
+      )
+    )
+    .map(e => `${e.occurrenceStart}|${e.startTime}|${e.endTime}|${e.title}|${e.status}|${e.transparency}|${e.isAllDay}`);
   return crypto.createHash('sha256').update(normalized.join('\n')).digest('hex');
 }
 
@@ -75,24 +88,27 @@ function computeEventsDigest(events: ParsedCalendarEvent[]): string {
  * - 校验订阅代次，防止晚到的旧同步覆盖新快照；仅当事件集合变化时返回 changed: true
  */
 export async function syncSubscription(
-  sub: CalendarSubscription
+  sub: CalendarSubscription,
+  nowOverride?: Date
 ): Promise<{ count: number; changed: boolean; generation: number }> {
   const startSubRow = db
     .prepare('SELECT id, COALESCE(current_generation, 0) as current_generation FROM calendar_subscriptions WHERE id = ?')
     .get(sub.id) as { id: number; current_generation: number } | undefined;
   const expectedGeneration = startSubRow?.current_generation ?? 0;
 
+  const attemptNow = nowOverride || new Date();
+  const attemptIso = attemptNow.toISOString();
   db.prepare(`
     UPDATE calendar_subscriptions
-    SET last_attempt_at = CURRENT_TIMESTAMP
+    SET last_attempt_at = ?
     WHERE id = ?
-  `).run(sub.id);
+  `).run(attemptIso, sub.id);
 
   try {
     const fetchUrl = calendarFetchUrl(sub.url);
     const events = customCalendarFetcher ? await customCalendarFetcher(fetchUrl) : await ical.async.fromURL(fetchUrl);
 
-    const now = new Date();
+    const now = attemptNow;
     const futureLimit = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     const pastLimit = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
@@ -108,7 +124,7 @@ export async function syncSubscription(
     const masters: any[] = [];
 
     for (const ev of vevents) {
-      const uid = String(ev.uid || `${sub.id}-${masters.length}`).trim();
+      const uid = String(ev.uid || buildFallbackEventUid(sub.id, ev)).trim();
       const recKey = getRecurrenceKey(ev);
       if (recKey) {
         const map = overridesByUid.get(uid) || new Map<string, any>();
@@ -123,7 +139,7 @@ export async function syncSubscription(
     const consumedOverrideKeys = new Set<string>();
 
     for (const ev of masters) {
-      const uid = String(ev.uid || `${sub.id}-${parsedEvents.length}`).trim();
+      const uid = String(ev.uid || buildFallbackEventUid(sub.id, ev)).trim();
       const title = ev.summary || '无标题外部日程';
       const baseStatus = String(ev.status || 'CONFIRMED').toUpperCase();
       const baseTransp = String(ev.transparency || 'OPAQUE').toUpperCase();
@@ -291,22 +307,23 @@ export async function syncSubscription(
         );
       }
 
+      const successIso = (nowOverride || new Date()).toISOString();
       db.prepare(`
         UPDATE calendar_subscriptions
         SET current_generation = ?,
             last_sync_at = datetime('now', 'localtime'),
-            last_success_at = CURRENT_TIMESTAMP,
+            last_success_at = ?,
             sync_status = 'ok',
             error_message = NULL
         WHERE id = ?
-      `).run(nextGen, sub.id);
+      `).run(nextGen, successIso, sub.id);
 
       return { count: parsedEvents.length, changed, generation: nextGen, stale: false };
     })();
 
     if (!txOutcome.stale) {
       try {
-        syncExternalNotificationOutboxForUser(sub.user_id);
+        syncExternalNotificationOutboxForUser(sub.user_id, nowOverride || new Date());
       } catch (err: any) {
         console.warn(`[Calendar] Sync external reminder outbox failed for user #${sub.user_id}:`, err.message);
       }
@@ -316,9 +333,9 @@ export async function syncSubscription(
   } catch (err: any) {
     db.prepare(`
       UPDATE calendar_subscriptions
-      SET sync_status = 'error', error_message = ?, last_attempt_at = CURRENT_TIMESTAMP
+      SET sync_status = 'error', error_message = ?, last_attempt_at = ?
       WHERE id = ?
-    `).run(err.message, sub.id);
+    `).run(err.message, (nowOverride || new Date()).toISOString(), sub.id);
     throw err;
   }
 }

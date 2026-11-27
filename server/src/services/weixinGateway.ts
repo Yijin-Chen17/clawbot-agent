@@ -6,14 +6,20 @@ import { getEffectiveLlmConfig, getConfiguredNodes } from './llm.js';
 import { addDebugLog } from './debugLogger.js';
 import { checkAccountEligibility } from './accountService.js';
 import {
-  claimCommandInbox,
+  claimDueWeixinReplies,
+  claimSingleWeixinReply,
+  claimWeixinInboxItem,
   completeCommandInbox,
+  enqueueWeixinReply,
   failCommandInbox,
   listPendingWeixinInboxItems,
+  markWeixinReplyFailed,
+  markWeixinReplySent,
   persistWeixinPollBatch,
   type WeixinInboundItem,
 } from './inboxService.js';
 import { processNaturalLanguageCommand } from './nlCommandService.js';
+import { renderTodoListImage, renderWeekCalendarImage } from './cardRenderer.js';
 
 const FIXED_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const ILINK_APP_ID = 'bot';
@@ -51,6 +57,52 @@ interface ActiveQRSession {
 
 const activeQRSessions = new Map<number, ActiveQRSession>();
 const contextTokenMap = new Map<number, string>();
+
+export function markWeixinRebindRequired(userId: number, reason?: string): void {
+  db.prepare(`
+    UPDATE user_settings
+    SET weixin_connected = 0,
+        weixin_status = 'rebind_required',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?
+  `).run(userId);
+  weixinTransitManager.stopWorker(userId);
+  addDebugLog('Weixin', 'error', `[用户 #${userId}] 微信登录凭证已失效${reason ? ` (${reason})` : ''}，状态已设为待重新绑定`);
+}
+
+function isCredentialExpiredCode(code: unknown): boolean {
+  return code === -14 || String(code) === '-14';
+}
+
+function isWeixinResponseValid(respStatus: number, data: any): { ok: boolean; errCode?: number; errMsg?: string } {
+  if (respStatus >= 400) {
+    return { ok: false, errMsg: `HTTP ${respStatus}` };
+  }
+  if (data === null || data === undefined) {
+    return { ok: false, errMsg: '空响应体' };
+  }
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed) return { ok: true };
+    try {
+      const parsed = JSON.parse(trimmed);
+      data = parsed;
+    } catch {
+      return { ok: false, errMsg: `非预期文本响应: ${trimmed.slice(0, 120)}` };
+    }
+  }
+  if (typeof data !== 'object') {
+    return { ok: false, errMsg: '响应格式异常' };
+  }
+  const hasRetError = data.ret !== undefined && data.ret !== 0;
+  const hasErrCode = data.errcode !== undefined && data.errcode !== 0;
+  if (hasRetError || hasErrCode) {
+    const errCode = Number(data.errcode ?? data.ret);
+    const errMsg = data.errmsg || `ret=${data.ret ?? data.errcode ?? 'unknown'}`;
+    return { ok: false, errCode, errMsg };
+  }
+  return { ok: true };
+}
 
 export function clearWeixinMemoryContext(userId: number): void {
   contextTokenMap.delete(userId);
@@ -162,13 +214,14 @@ export async function sendWeixinTextMessage(
   fromBotId: string,
   toUserId: string,
   text: string,
-  contextToken?: string
+  contextToken?: string,
+  clientIdOverride?: string
 ): Promise<{ success: boolean; data?: any; error?: string; message_id?: string; ret?: number }> {
   if (!botToken || !toUserId) {
     return { success: false, error: '缺少 botToken 或 toUserId' };
   }
 
-  const clientId = generateClientId();
+  const clientId = clientIdOverride?.trim() || generateClientId();
   const url = `${baseUrl.replace(/\/$/, '')}/ilink/bot/sendmessage`;
 
   const payload = {
@@ -198,18 +251,16 @@ export async function sendWeixinTextMessage(
       timeout: 15000,
     });
 
-    const data = resp.data || {};
-    const isError =
-      (data.ret !== undefined && data.ret !== 0) ||
-      (data.errcode !== undefined && data.errcode !== 0);
+    const check = isWeixinResponseValid(resp.status, resp.data);
+    const data = typeof resp.data === 'object' && resp.data !== null ? resp.data : {};
 
-    if (!isError) {
+    if (check.ok) {
       addDebugLog('Weixin', 'success', `✅ 微信消息发送成功 (ID: ${data.message_id || 'ok'})`);
       return { success: true, data, message_id: data.message_id, ret: 0 };
     } else {
-      const errMsg = data.errmsg || `ret=${data.ret ?? data.errcode ?? 'unknown'}`;
-      addDebugLog('Weixin', 'error', `❌ 微信消息发送拒绝: ${errMsg}`, data);
-      return { success: false, data, error: errMsg, ret: data.ret ?? data.errcode };
+      const errMsg = check.errMsg || '发送被拒绝';
+      addDebugLog('Weixin', 'error', `❌ 微信消息发送拒绝: ${errMsg}`, resp.data);
+      return { success: false, data, error: errMsg, ret: check.errCode };
     }
   } catch (err: any) {
     const errDetail = err.response?.data || err.message;
@@ -230,7 +281,7 @@ export async function sendWeixinImageMessage(
   toUserId: string,
   imageBuffer: Buffer,
   contextToken?: string
-): Promise<{ success: boolean; data?: any; error?: string; message_id?: string }> {
+): Promise<{ success: boolean; data?: any; error?: string; message_id?: string; ret?: number }> {
   try {
     const rawsize = imageBuffer.length;
     const rawfilemd5 = crypto.createHash('md5').update(imageBuffer).digest('hex');
@@ -326,19 +377,20 @@ export async function sendWeixinImageMessage(
       timeout: 15000,
     });
 
-    const data = sendResp.data || {};
-    const isError =
-      (data.ret !== undefined && data.ret !== 0) ||
-      (data.errcode !== undefined && data.errcode !== 0);
+    const check = isWeixinResponseValid(sendResp.status, sendResp.data);
+    const data = typeof sendResp.data === 'object' && sendResp.data !== null ? sendResp.data : {};
 
-    if (!isError) {
-      return { success: true, data, message_id: data.message_id };
+    if (check.ok) {
+      addDebugLog('Weixin', 'success', `🖼️ 微信图片消息发送成功 (ID: ${data.message_id || 'ok'})`);
+      return { success: true, data, message_id: data.message_id, ret: 0 };
     } else {
-      const errMsg = data.errmsg || `ret=${data.ret ?? data.errcode}`;
-      return { success: false, data, error: errMsg };
+      const errMsg = check.errMsg || '图片发送被拒绝';
+      addDebugLog('Weixin', 'error', `❌ 微信图片消息发送拒绝: ${errMsg}`, sendResp.data);
+      return { success: false, data, error: errMsg, ret: check.errCode };
     }
   } catch (err: any) {
     const detail = err.response?.data || err.message;
+    addDebugLog('Weixin', 'error', `❌ 微信图片上传/发送异常: ${err.message}`, detail);
     return { success: false, error: String(detail) };
   }
 }
@@ -354,6 +406,7 @@ export async function processWeChatMessage(
 ): Promise<{
   replyText: string;
   imageBuffer?: Buffer;
+  imageKind?: 'week_calendar' | 'todo_list';
   diagnostics?: Record<string, any>;
 }> {
   const dryRun = Boolean(options?.dryRun);
@@ -382,9 +435,9 @@ export async function processWeChatMessage(
     db.prepare(`
       UPDATE user_settings
       SET weixin_activated = 1,
-          weixin_last_active_at = datetime('now', 'localtime')
+          weixin_last_active_at = ?
       WHERE user_id = ?
-    `).run(userId);
+    `).run(new Date().toISOString(), userId);
   }
 
   try {
@@ -407,6 +460,152 @@ export async function processWeChatMessage(
   }
 }
 
+async function deliverWeixinReplyRecord(
+  record: {
+    id: number;
+    user_id: number;
+    to_user_id: string;
+    context_token?: string | null;
+    text_content: string;
+    image_kind?: 'week_calendar' | 'todo_list' | null;
+    image_base64?: string | null;
+    text_sent: number;
+    image_sent: number;
+  },
+  immediateImageBuffer?: Buffer
+): Promise<boolean> {
+  const elig = checkAccountEligibility(record.user_id);
+  if (!elig.eligible) {
+    markWeixinReplyFailed({
+      replyId: record.id,
+      errorMessage: `account_ineligible:${elig.reason}`,
+      textSent: Boolean(record.text_sent),
+      imageSent: Boolean(record.image_sent),
+      terminal: true,
+    });
+    return false;
+  }
+
+  const settings = db
+    .prepare('SELECT * FROM user_settings WHERE user_id = ?')
+    .get(record.user_id) as UserSettings | undefined;
+  if (!settings || !settings.weixin_connected || !settings.weixin_bot_token) {
+    markWeixinReplyFailed({
+      replyId: record.id,
+      errorMessage: '微信未连接或缺少 bot_token',
+      textSent: Boolean(record.text_sent),
+      imageSent: Boolean(record.image_sent),
+      terminal: true,
+    });
+    return false;
+  }
+
+  const baseUrl = settings.weixin_base_url || FIXED_BASE_URL;
+  const botToken = settings.weixin_bot_token;
+  const botId = settings.weixin_bot_id || '';
+  const activeContextToken =
+    record.context_token || contextTokenMap.get(record.user_id) || settings.weixin_context_token || undefined;
+
+  let textSent = Boolean(record.text_sent);
+  let imageSent = Boolean(record.image_sent);
+  let providerMsgId: string | undefined;
+
+  if (!textSent) {
+    const textRes = await sendWeixinTextMessage(
+      baseUrl,
+      botToken,
+      botId,
+      record.to_user_id,
+      record.text_content,
+      activeContextToken
+    );
+    if (!textRes.success) {
+      const expired = isCredentialExpiredCode(textRes.ret);
+      if (expired) {
+        markWeixinRebindRequired(record.user_id, 'sendmessage -14');
+      }
+      markWeixinReplyFailed({
+        replyId: record.id,
+        errorMessage: textRes.error || '文本消息发送失败',
+        textSent: false,
+        imageSent,
+        terminal: expired,
+      });
+      return false;
+    }
+    textSent = true;
+    providerMsgId = textRes.message_id ? String(textRes.message_id) : undefined;
+  }
+
+  if (!imageSent) {
+    let imgBuf = immediateImageBuffer;
+    if (!imgBuf) {
+      if (record.image_kind === 'week_calendar') {
+        imgBuf = await renderWeekCalendarImage(record.user_id);
+      } else if (record.image_kind === 'todo_list') {
+        imgBuf = await renderTodoListImage(record.user_id);
+      } else if (record.image_base64) {
+        imgBuf = Buffer.from(record.image_base64, 'base64');
+      }
+    }
+
+    if (imgBuf) {
+      const imgRes = await sendWeixinImageMessage(
+        baseUrl,
+        botToken,
+        botId,
+        record.to_user_id,
+        imgBuf,
+        activeContextToken
+      );
+      if (!imgRes.success) {
+        const expired = isCredentialExpiredCode(imgRes.ret);
+        if (expired) {
+          markWeixinRebindRequired(record.user_id, 'sendmessage image -14');
+        }
+        markWeixinReplyFailed({
+          replyId: record.id,
+          errorMessage: imgRes.error || '图片消息发送失败',
+          textSent,
+          imageSent: false,
+          terminal: expired,
+        });
+        return false;
+      }
+      providerMsgId = providerMsgId || (imgRes.message_id ? String(imgRes.message_id) : undefined);
+    }
+    imageSent = true;
+  }
+
+  markWeixinReplySent(record.id, providerMsgId, textSent, imageSent);
+  return true;
+}
+
+export async function processPendingWeixinReplies(
+  now: Date = new Date(),
+  leaseOwner: string = `wx-reply-${process.pid}`
+): Promise<{ processed: number; sent: number; failed: number }> {
+  const due = claimDueWeixinReplies(leaseOwner, now, 20, 45);
+  let sent = 0;
+  let failed = 0;
+  for (const rec of due) {
+    try {
+      const ok = await deliverWeixinReplyRecord(rec);
+      if (ok) sent++;
+      else failed++;
+    } catch (err: any) {
+      markWeixinReplyFailed({
+        replyId: rec.id,
+        errorMessage: err?.message || '回复投递异常',
+        textSent: Boolean(rec.text_sent),
+        imageSent: Boolean(rec.image_sent),
+      });
+      failed++;
+    }
+  }
+  return { processed: due.length, sent, failed };
+}
+
 /**
  * 5. Isolated Background Transit Worker Manager
  */
@@ -414,6 +613,7 @@ class WeixinTransitManager {
   private activeWorkers = new Map<
     number,
     {
+      gen: number;
       abortController: AbortController;
       running: boolean;
       startedAt: number;
@@ -421,6 +621,15 @@ class WeixinTransitManager {
       lastError?: string;
     }
   >();
+  private workerSeq = 1;
+  private drainingUsers = new Set<number>();
+  private drainQueuedUsers = new Set<number>();
+
+  private isWorkerCurrent(userId: number, gen: number, signal: AbortSignal): boolean {
+    if (signal.aborted) return false;
+    const w = this.activeWorkers.get(userId);
+    return Boolean(w && w.running && w.gen === gen);
+  }
 
   public startWorker(userId: number) {
     this.stopWorker(userId);
@@ -437,7 +646,9 @@ class WeixinTransitManager {
 
     const abortController = new AbortController();
     const now = Date.now();
+    const gen = this.workerSeq++;
     this.activeWorkers.set(userId, {
+      gen,
       abortController,
       running: true,
       startedAt: now,
@@ -449,7 +660,8 @@ class WeixinTransitManager {
       'info',
       `🚀 启动用户 #${userId} 的微信独立轮询管道 (WxUser: ${settings.weixin_user_id || 'unnamed'})`
     );
-    this.runLongPollLoop(userId, abortController.signal);
+    this.scheduleDrain(userId);
+    this.runLongPollLoop(userId, abortController.signal, gen);
   }
 
   public stopWorker(userId: number) {
@@ -524,77 +736,103 @@ class WeixinTransitManager {
     this.startWorker(userId);
   }
 
-  private async drainPendingInbox(userId: number, settings: UserSettings): Promise<void> {
+  private scheduleDrain(userId: number) {
+    if (this.drainingUsers.has(userId)) {
+      this.drainQueuedUsers.add(userId);
+      return;
+    }
+    this.drainingUsers.add(userId);
+    void (async () => {
+      try {
+        do {
+          this.drainQueuedUsers.delete(userId);
+          await this.drainPendingInbox(userId);
+        } while (this.drainQueuedUsers.has(userId));
+      } catch (err: any) {
+        addDebugLog('Weixin', 'error', `[用户 #${userId}] 异步处理队列异常: ${err?.message || err}`);
+      } finally {
+        this.drainingUsers.delete(userId);
+      }
+    })();
+  }
+
+  private async drainPendingInbox(userId: number): Promise<void> {
     const pending = listPendingWeixinInboxItems(userId);
     for (const item of pending) {
-      const claim = claimCommandInbox({
-        userId,
-        channel: 'weixin_ilink',
-        channelAccountId: settings.weixin_bot_id || '',
-        senderId: item.senderId,
-        externalMsgId: `wx-exec-${item.inboxId}`,
-        payload: { senderId: item.senderId, text: item.text },
-      });
-      if (claim.kind !== 'claimed') continue;
+      const claimStatus = claimWeixinInboxItem(item.inboxId, 90);
+      if (claimStatus !== 'claimed') continue;
+
+      const settings = db
+        .prepare('SELECT * FROM user_settings WHERE user_id = ?')
+        .get(userId) as UserSettings | undefined;
+      if (!settings || !settings.weixin_connected || !settings.weixin_bot_token) {
+        failCommandInbox(item.inboxId, '微信未连接');
+        continue;
+      }
 
       try {
-        const { replyText, imageBuffer } = await processWeChatMessage(userId, item.text, item.senderId);
-        const baseUrl = settings.weixin_base_url || FIXED_BASE_URL;
-        const botToken = settings.weixin_bot_token || '';
-        const botId = settings.weixin_bot_id || '';
-        const activeContextToken = item.contextToken || contextTokenMap.get(userId) || settings.weixin_context_token;
+        let replyText = '';
+        let imageBuffer: Buffer | undefined;
+        let imageKind: 'week_calendar' | 'todo_list' | undefined;
 
-        const textRes = await sendWeixinTextMessage(
-          baseUrl,
-          botToken,
-          botId,
-          item.senderId,
-          replyText,
-          activeContextToken
-        );
-
-        let imageOk = true;
-        if (imageBuffer) {
-          const imgRes = await sendWeixinImageMessage(
-            baseUrl,
-            botToken,
-            botId,
-            item.senderId,
-            imageBuffer,
-            activeContextToken
-          );
-          imageOk = imgRes.success;
+        if (!item.text.trim() && item.nonTextTypes && item.nonTextTypes.length > 0) {
+          replyText =
+            '💡 目前暂只支持文字消息指令，无法直接识别语音、图片或文件。\n请直接发送文字告诉我您的安排，或回复「帮助」查看示例。';
+        } else {
+          const result = await processWeChatMessage(userId, item.text, item.senderId);
+          replyText = result.replyText;
+          imageBuffer = result.imageBuffer;
+          imageKind = result.imageKind;
         }
 
-        // Mark both the polled inbox row and execution guard completed
-        completeCommandInbox(item.inboxId, { replyText, textSent: textRes.success, imageSent: imageOk });
-        completeCommandInbox(claim.inboxId, { replyText, textSent: textRes.success, imageSent: imageOk });
+        const activeContextToken =
+          item.contextToken || contextTokenMap.get(userId) || settings.weixin_context_token || undefined;
+        const customImageBase64 = !imageKind && imageBuffer ? imageBuffer.toString('base64') : null;
+
+        // 业务结果完成与回复出箱原子落库；若后续发送失败，后台 15s Worker 会自动重试
+        const replyId = db.transaction(() => {
+          completeCommandInbox(item.inboxId, {
+            replyText,
+            hasImage: Boolean(imageBuffer || imageKind),
+            imageKind: imageKind || null,
+          });
+          return enqueueWeixinReply({
+            userId,
+            inboxId: item.inboxId,
+            toUserId: item.senderId,
+            contextToken: activeContextToken,
+            textContent: replyText,
+            imageKind: imageKind || null,
+            imageBase64: customImageBase64,
+          });
+        })();
+
+        const claimedReply = claimSingleWeixinReply(replyId, `wx-imm-${process.pid}`, 45);
+        if (claimedReply) {
+          await deliverWeixinReplyRecord(claimedReply, imageBuffer);
+        }
       } catch (err: any) {
         failCommandInbox(item.inboxId, err.message || '处理异常');
-        failCommandInbox(claim.inboxId, err.message || '处理异常');
       }
     }
   }
 
-  private async runLongPollLoop(userId: number, signal: AbortSignal) {
-    while (!signal.aborted) {
+  private async runLongPollLoop(userId: number, signal: AbortSignal, gen: number) {
+    while (this.isWorkerCurrent(userId, gen, signal)) {
       const elig = checkAccountEligibility(userId);
       if (!elig.eligible) {
-        this.stopWorker(userId);
+        if (this.isWorkerCurrent(userId, gen, signal)) this.stopWorker(userId);
         break;
       }
 
       const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as UserSettings | undefined;
       if (!settings || !settings.weixin_connected || !settings.weixin_bot_token) {
-        this.stopWorker(userId);
+        if (this.isWorkerCurrent(userId, gen, signal)) this.stopWorker(userId);
         break;
       }
 
-      // First drain any crash-recovered received messages in command_inbox (M02)
-      await this.drainPendingInbox(userId, settings);
-
       const worker = this.activeWorkers.get(userId);
-      if (worker) {
+      if (worker && worker.gen === gen) {
         worker.lastPollAt = Date.now();
       }
 
@@ -621,6 +859,8 @@ class WeixinTransitManager {
           }
         );
 
+        if (!this.isWorkerCurrent(userId, gen, signal)) break;
+
         const data = resp.data || {};
         const isApiError =
           (data.ret !== undefined && data.ret !== 0) ||
@@ -629,26 +869,17 @@ class WeixinTransitManager {
         if (isApiError) {
           const errCode = data.errcode ?? data.ret;
           const errMsg = data.errmsg || '';
-          if (worker) worker.lastError = `ret=${errCode} errmsg=${errMsg}`;
+          if (worker && worker.gen === gen) worker.lastError = `ret=${errCode} errmsg=${errMsg}`;
           addDebugLog('Weixin', 'warn', `[用户 #${userId}] getupdates 返回错误码: ${errCode} (${errMsg})`);
-          if (errCode === -14) {
-            // Mark credential expired / rebind_required in DB so status page reflects reality (M05)
-            db.prepare(`
-              UPDATE user_settings
-              SET weixin_connected = 0,
-                  weixin_status = 'rebind_required',
-                  updated_at = CURRENT_TIMESTAMP
-              WHERE user_id = ?
-            `).run(userId);
-            addDebugLog('Weixin', 'error', `[用户 #${userId}] 微信登录凭证已失效 (errcode -14)，状态已设为待重新绑定`);
-            this.stopWorker(userId);
+          if (isCredentialExpiredCode(errCode)) {
+            markWeixinRebindRequired(userId, `getupdates ${errCode}`);
             break;
           }
           await new Promise((r) => setTimeout(r, 4000));
           continue;
         }
 
-        if (worker) worker.lastError = undefined;
+        if (worker && worker.gen === gen) worker.lastError = undefined;
 
         const msgs = data.msgs || [];
         const inboundItems: WeixinInboundItem[] = [];
@@ -663,11 +894,15 @@ class WeixinTransitManager {
           }
 
           const itemList = msg.item_list || [];
+          const rawMsgId = msg.msg_id || msg.msgid || msg.message_id || msg.client_id;
+          let hasTextItem = false;
+          const nonTextTypes: number[] = [];
+
           itemList.forEach((item: any, itemIdx: number) => {
             if (item.type === 1 && item.text_item?.text) {
               const userText = item.text_item.text.trim();
               if (!userText) return;
-              const rawMsgId = msg.msg_id || msg.msgid || msg.message_id || msg.client_id;
+              hasTextItem = true;
               const externalMsgId = rawMsgId
                 ? `${rawMsgId}:${itemIdx}`
                 : `wx:${crypto.createHash('sha256').update(`${syncBuf}:${fromUserId}:${itemIdx}:${userText}`).digest('hex').slice(0, 24)}`;
@@ -677,8 +912,23 @@ class WeixinTransitManager {
                 text: userText,
                 contextToken: msg.context_token,
               });
+            } else if (item?.type && item.type !== 1) {
+              nonTextTypes.push(Number(item.type));
             }
           });
+
+          if (!hasTextItem && nonTextTypes.length > 0) {
+            const externalMsgId = rawMsgId
+              ? `${rawMsgId}:nontext`
+              : `wx-nt:${crypto.createHash('sha256').update(`${syncBuf}:${fromUserId}:${nonTextTypes.join(',')}`).digest('hex').slice(0, 24)}`;
+            inboundItems.push({
+              externalMsgId,
+              senderId: fromUserId,
+              text: '',
+              contextToken: msg.context_token,
+              nonTextTypes,
+            });
+          }
         }
 
         // Persist entire batch to command_inbox AND advance sync_buf in one atomic transaction (M02)
@@ -692,13 +942,15 @@ class WeixinTransitManager {
           });
         }
 
-        await this.drainPendingInbox(userId, settings);
+        if (inboundItems.length > 0) {
+          this.scheduleDrain(userId);
+        }
       } catch (err: any) {
-        if (signal.aborted) break;
+        if (!this.isWorkerCurrent(userId, gen, signal)) break;
         if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
           continue;
         }
-        if (worker) worker.lastError = err.message;
+        if (worker && worker.gen === gen) worker.lastError = err.message;
         addDebugLog('Weixin', 'warn', `[用户 #${userId}] 微信轮询连接异常: ${err.message}`);
         await new Promise((r) => setTimeout(r, 3000));
       }

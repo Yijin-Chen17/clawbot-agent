@@ -53,10 +53,19 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
     res.status(400).json({ error: '请提供日历名称与订阅链接' });
     return;
   }
+  let cleanUrl: string;
   try {
-    calendarFetchUrl(url);
+    cleanUrl = calendarFetchUrl(url);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
+    return;
+  }
+
+  const existingSub = db
+    .prepare('SELECT id, name FROM calendar_subscriptions WHERE user_id = ? AND (url = ? OR url = ?)')
+    .get(userId, url.trim(), cleanUrl) as { id: number; name: string } | undefined;
+  if (existingSub) {
+    res.status(409).json({ error: `该日历订阅链接已存在（${existingSub.name}），无需重复添加` });
     return;
   }
 
@@ -122,11 +131,19 @@ export function ignoreExternalEvent(req: AuthenticatedRequest, res: Response): v
     res.status(400).json({ error: '无效的外部日程 ID' });
     return;
   }
-  const resIgn = ignoreExternalCalendarInstance(userId, eventId);
   try {
-    syncExternalNotificationOutboxForUser(userId);
-  } catch {}
-  res.json(resIgn);
+    const resIgn = ignoreExternalCalendarInstance(userId, eventId);
+    if (!resIgn.success) {
+      res.status(404).json({ error: resIgn.message || '未找到指定外部日程' });
+      return;
+    }
+    try {
+      syncExternalNotificationOutboxForUser(userId);
+    } catch {}
+    res.json(resIgn);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '隐藏外部日程失败' });
+  }
 }
 
 export function updateExternalEventPolicy(req: AuthenticatedRequest, res: Response): void {
@@ -338,10 +355,14 @@ export function bulkUpdateAllExternalEventsPolicy(req: AuthenticatedRequest, res
 
 export function listExternalGroups(req: AuthenticatedRequest, res: Response): void {
   const userId = req.user!.id;
-  const rawSubId = req.query.subscriptionId;
-  const subId = rawSubId !== undefined && rawSubId !== '' ? Number(rawSubId) : undefined;
-  const groups = listExternalEventGroups(userId, Number.isFinite(subId) ? subId : undefined);
-  res.json({ groups });
+  try {
+    const rawSubId = req.query.subscriptionId;
+    const subId = rawSubId !== undefined && rawSubId !== '' ? Number(rawSubId) : undefined;
+    const groups = listExternalEventGroups(userId, Number.isFinite(subId) ? subId : undefined);
+    res.json({ groups });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '获取外部课程分组失败' });
+  }
 }
 
 export function updateExternalGroupPolicy(req: AuthenticatedRequest, res: Response): void {
@@ -365,31 +386,35 @@ export function updateExternalGroupPolicy(req: AuthenticatedRequest, res: Respon
     return;
   }
 
-  const rule = upsertExternalGroupRule({
-    userId,
-    subscriptionId,
-    groupKey,
-    groupLabel,
-    allowScheduling,
-    aiReminderEnabled,
-    resetInstanceOverrides,
-  });
+  try {
+    const rule = upsertExternalGroupRule({
+      userId,
+      subscriptionId,
+      groupKey,
+      groupLabel,
+      allowScheduling,
+      aiReminderEnabled,
+      resetInstanceOverrides,
+    });
 
-  syncExternalNotificationOutboxForUser(userId);
-  let planVersion: number | undefined;
-  if (allowScheduling !== undefined || resetInstanceOverrides) {
-    const replan = replanUserTasks(userId, { triggerSource: 'external_group_policy' });
-    planVersion = replan.planVersion;
+    syncExternalNotificationOutboxForUser(userId);
+    let planVersion: number | undefined;
+    if (allowScheduling !== undefined) {
+      const replan = replanUserTasks(userId, { triggerSource: 'external_group_policy' });
+      planVersion = replan.planVersion;
+    }
+
+    const groups = listExternalEventGroups(userId);
+    res.json({
+      success: true,
+      rule,
+      groups,
+      planVersion,
+      message: `已更新「${rule.group_label}」的批量排程与提醒设置`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '批量更新外部日程设置失败' });
   }
-
-  const groups = listExternalEventGroups(userId);
-  res.json({
-    success: true,
-    rule,
-    groups,
-    planVersion,
-    message: `已更新「${rule.group_label}」的批量排程与提醒设置`,
-  });
 }
 
 export function updateCalendarColor(req: AuthenticatedRequest, res: Response): void {

@@ -98,9 +98,12 @@ export async function handleClawbotWebhook(req: Request, res: Response): Promise
       skipImages: true,
     });
 
-    // Attempt outbound push if configured (record receipt, do not fail HTTP reply if outbound URL unconfigured)
+    // Attempt outbound push ONLY when explicit outbound URL is configured or pushToWeixin is requested
     let outboundOutcome: string = 'skipped';
-    if (settings.clawbot_outbound_url || (settings.weixin_connected && settings.weixin_bot_token && settings.weixin_user_id)) {
+    if (
+      (settings.clawbot_outbound_url && settings.clawbot_outbound_url.trim()) ||
+      Boolean(body.pushToWeixin)
+    ) {
       const receipt = await sendClawbotMessageWithReceipt(settings, result.replyText, externalMsgId);
       outboundOutcome = receipt.outcome;
     }
