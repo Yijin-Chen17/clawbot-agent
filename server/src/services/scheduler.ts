@@ -154,6 +154,59 @@ export interface SchedulingResult {
 export const EFFECTIVE_DAILY_CAP_MINUTES = 360;
 
 /**
+ * 计算用户配置的“近期日程锁定范围”截止时刻：
+ * - none: 不锁定
+ * - hours: 从当前时刻往后滚动锁定 N 小时 (now + N*3600s)
+ * - today: 锁定账户业务时区当天至 23:59:59.999
+ * - this_week: 锁定账户业务时区本周（周一~周日）至周日 23:59:59.999
+ */
+export function computeScheduleLockUntil(
+  settings?: Pick<UserSettings, 'schedule_lock_mode' | 'schedule_lock_hours'>,
+  now: Date = new Date(),
+  timezone?: string
+): Date | null {
+  const mode = settings?.schedule_lock_mode || 'none';
+  if (mode === 'hours') {
+    const hours = Math.max(0, Math.min(168, Math.round(Number(settings?.schedule_lock_hours || 0))));
+    if (hours <= 0) return null;
+    return new Date(now.getTime() + hours * 3600_000);
+  }
+
+  const tz = resolveAccountTimezone(timezone);
+  const todayKey = getAccountLocalDateKey(now, tz);
+
+  if (mode === 'today') {
+    return zonedWallClockToUtc(todayKey, 23, 59, 59, 999, tz);
+  }
+
+  if (mode === 'this_week') {
+    const [y, m, d] = todayKey.split('-').map(Number);
+    const dow = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); // 0=Sun..6=Sat
+    const daysUntilSunday = dow === 0 ? 0 : 7 - dow;
+    const sundayKey = addDaysToDateKey(todayKey, daysUntilSunday);
+    return zonedWallClockToUtc(sundayKey, 23, 59, 59, 999, tz);
+  }
+
+  return null;
+}
+
+/**
+ * 判断单个排程块是否处于锁定保护期内（仅锁定尚未结束的块；已过期未完成的块自动解除锁定）
+ */
+export function isScheduleBlockTimeLocked(
+  blockStartIso: string,
+  blockEndIso: string,
+  lockUntil: Date | null,
+  now: Date = new Date()
+): boolean {
+  if (!lockUntil) return false;
+  const startMs = new Date(blockStartIso).getTime();
+  const endMs = new Date(blockEndIso).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+  return startMs < lockUntil.getTime() && endMs > now.getTime();
+}
+
+/**
  * 格式化为本地 YYYY-MM-DD（支持指定账户时区）
  */
 export function formatLocalDate(date: Date = new Date(), timezone?: string): string {
@@ -1319,6 +1372,7 @@ export function replanUserTasks(
 
     const exclusiveFixedBusy: FixedCalendarBlock[] = [...externalBusy];
     const concurrentFixedBusy: FixedCalendarBlock[] = [];
+    const lockUntil = computeScheduleLockUntil(settings, now, tz);
 
     const preservedByInstance = new Map<number, ScheduleBlockRecord[]>();
     const materializedFixedByInstance = new Map<
@@ -1377,12 +1431,16 @@ export function replanUserTasks(
       const conflictIds: string[] = [];
 
       for (const b of instBlocks) {
+        const isTimeLocked =
+          (b.status === 'planned' || b.status === 'in_progress') &&
+          isScheduleBlockTimeLocked(b.start_time, b.end_time, lockUntil, now);
         const isProtected =
           b.status === 'completed' ||
           b.status === 'in_progress' ||
           b.status === 'conflict' ||
           b.is_fixed === 1 ||
           b.is_committed === 1 ||
+          isTimeLocked ||
           isForcePreserved;
         if (!isProtected) continue;
 
@@ -1393,8 +1451,8 @@ export function replanUserTasks(
         const bs = new Date(b.start_time);
         const be = new Date(b.end_time);
 
-        // Check if fixed/committed exclusive block now conflicts with external busy events
-        if (row.is_concurrent !== 1 && (b.is_fixed === 1 || b.is_committed === 1) && b.status !== 'in_progress') {
+        // Check if fixed/committed/locked exclusive block now conflicts with external busy events
+        if (row.is_concurrent !== 1 && (b.is_fixed === 1 || b.is_committed === 1 || isTimeLocked) && b.status !== 'in_progress') {
           const hitsExternal = externalBusy.some(ext => intervalsOverlap(bs, be, ext.start, ext.end));
           if (hitsExternal) {
             conflictIds.push(b.id);
@@ -1995,14 +2053,24 @@ export function scheduleTask(
 
   const newTaskScore = computeTaskPriorityScore(task, now, tz);
 
-  // Only future, unstarted, movable, non-daily tasks are eligible to be swapped
+  // Only future, unstarted, movable, non-daily tasks outside schedule lock window are eligible to be swapped
+  const lockUntil = computeScheduleLockUntil(settings, now, tz);
   const futureCandidates = existingScheduledTasks.filter(t => {
     if (t.is_fixed === 1 || t.time_mode === 'daily_fixed' || t.is_concurrent === 1 || t.status === 'in_progress') {
       return false;
     }
     const startTime = new Date(t.scheduled_start!).getTime();
     const endTime = new Date(t.scheduled_end!).getTime();
-    return startTime > now.getTime() && endTime > now.getTime();
+    if (!(startTime > now.getTime() && endTime > now.getTime())) {
+      return false;
+    }
+    if (lockUntil) {
+      const blocks = taskToBusyEvents(t, 'task', now, 14, tz);
+      if (blocks.some(b => isScheduleBlockTimeLocked(b.start.toISOString(), b.end.toISOString(), lockUntil, now))) {
+        return false;
+      }
+    }
+    return true;
   });
 
   interface ViableProposal {
@@ -2816,8 +2884,13 @@ export function rescheduleSingleTask(options: SingleRescheduleOptions): SingleRe
         intervalsOverlap(startDate, endDate!, new Date(b.start_time), new Date(b.end_time))
       );
       if (overlappingOther.length > 0) {
+        const lockUntil = computeScheduleLockUntil(settings, now, tz);
         const lockedHit = overlappingOther.find(
-          b => b.is_fixed === 1 || b.is_committed === 1 || b.status === 'in_progress'
+          b =>
+            b.is_fixed === 1 ||
+            b.is_committed === 1 ||
+            b.status === 'in_progress' ||
+            isScheduleBlockTimeLocked(b.start_time, b.end_time, lockUntil, now)
         );
         if (lockedHit) {
           return {

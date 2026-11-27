@@ -4,7 +4,9 @@ import test from 'node:test';
 import type { Task, UserSettings } from '../models/types.js';
 import {
   buildExtendedScheduleBlocks,
+  computeScheduleLockUntil,
   formatLocalDate,
+  isScheduleBlockTimeLocked,
   parseDeadlineDate,
   parseWorkSlotWindows,
   runSingleDaySchedule,
@@ -567,5 +569,41 @@ test('findDueReminderBlockIndex fires per-block start & end reminders on multi-p
   assert.equal(findDueReminderBlockIndex(blocks, new Date('2026-11-24T14:56:00.000Z'), 5, 'end'), 1);
   // Outside window returns -1
   assert.equal(findDueReminderBlockIndex(blocks, new Date('2026-11-24T12:00:00.000Z'), 5, 'start'), -1);
+});
+
+test('computeScheduleLockUntil and isScheduleBlockTimeLocked handle rolling hours, today, and this_week boundaries', () => {
+  // 2026-11-27 14:30+08:00 (Friday)
+  const fridayNow = new Date('2026-11-27T06:30:00.000Z');
+  assert.equal(computeScheduleLockUntil({ schedule_lock_mode: 'none', schedule_lock_hours: 4 }, fridayNow, 'Asia/Shanghai'), null);
+
+  const lock4h = computeScheduleLockUntil({ schedule_lock_mode: 'hours', schedule_lock_hours: 4 }, fridayNow, 'Asia/Shanghai');
+  assert.equal(lock4h?.toISOString(), '2026-11-27T10:30:00.000Z'); // 18:30+08:00
+
+  const lockToday = computeScheduleLockUntil({ schedule_lock_mode: 'today', schedule_lock_hours: 0 }, fridayNow, 'Asia/Shanghai');
+  assert.equal(lockToday?.toISOString(), '2026-11-27T15:59:59.999Z'); // 23:59:59.999+08:00
+
+  const lockWeek = computeScheduleLockUntil({ schedule_lock_mode: 'this_week', schedule_lock_hours: 0 }, fridayNow, 'Asia/Shanghai');
+  assert.equal(lockWeek?.toISOString(), '2026-11-29T15:59:59.999Z'); // Sunday 2026-11-29 23:59:59.999+08:00
+
+  // Sunday stays on the same Sunday
+  const sundayNow = new Date('2026-11-29T02:00:00.000Z');
+  const lockSundayWeek = computeScheduleLockUntil({ schedule_lock_mode: 'this_week', schedule_lock_hours: 0 }, sundayNow, 'Asia/Shanghai');
+  assert.equal(lockSundayWeek?.toISOString(), '2026-11-29T15:59:59.999Z');
+
+  // Block inside lock window and still ending in future -> locked
+  assert.equal(
+    isScheduleBlockTimeLocked('2026-11-27T09:00:00.000Z', '2026-11-27T10:00:00.000Z', lock4h, fridayNow),
+    true
+  );
+  // Past expired incomplete block (end <= now) -> NOT locked so it can roll forward
+  assert.equal(
+    isScheduleBlockTimeLocked('2026-11-27T05:00:00.000Z', '2026-11-27T06:00:00.000Z', lock4h, fridayNow),
+    false
+  );
+  // Block starting at or after lockUntil -> NOT locked
+  assert.equal(
+    isScheduleBlockTimeLocked('2026-11-27T10:30:00.000Z', '2026-11-27T11:30:00.000Z', lock4h, fridayNow),
+    false
+  );
 });
 

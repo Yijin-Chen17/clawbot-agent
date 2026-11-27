@@ -4,7 +4,7 @@ import type { NotificationOutboxRecord, ScheduleBlockRecord, UserSettings } from
 /**
  * 计划提交事务内同步通知发件箱（C02, C03）：
  * - 撤销所有旧版计划/已失效/已重排/已完成块对应的 pending/failed 通知
- * - 为新计划中的未完成、未来时段块生成 start 与 end 待投递记录
+ * - 仅生成开始前纯提醒（取消开始/结束打卡确认）
  * - 若同一 block_id 与相同触发时刻的提醒已经 sent，不重复创建
  */
 export function syncOutboxForCommittedPlan(params: {
@@ -17,15 +17,18 @@ export function syncOutboxForCommittedPlan(params: {
 }): void {
   const now = params.now || new Date();
   const leadStartMin = params.settings?.reminder_before_start_minutes ?? 5;
-  const leadEndMin = params.settings?.reminder_before_end_minutes ?? 5;
 
-  // Cancel all pending/failed notifications from earlier plan versions or non-active blocks
+  // Cancel all pending/failed notifications from earlier plan versions or legacy 'end' check-ins
   db.prepare(`
     UPDATE notification_outbox
-    SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+    SET status = 'cancelled',
+        last_error = CASE WHEN reminder_type = 'end' THEN 'end_confirmation_disabled' ELSE last_error END,
+        lease_owner = NULL,
+        lease_until = NULL,
+        updated_at = CURRENT_TIMESTAMP
     WHERE user_id = ?
       AND status IN ('pending', 'failed')
-      AND plan_version < ?
+      AND (plan_version < ? OR reminder_type = 'end')
   `).run(params.userId, params.planVersion);
 
   const insertStmt = db.prepare(`
@@ -50,7 +53,7 @@ export function syncOutboxForCommittedPlan(params: {
 
     const title = params.taskTitlesById.get(block.task_id) || '待办任务';
 
-    // Start reminder (only if block hasn't already started / isn't past grace window)
+    // Pure start reminder (only if block hasn't already started / isn't past grace window)
     if (block.status === 'planned') {
       const startFireMs = startMs - leadStartMin * 60_000;
       const startExpMs = Math.min(endMs, startMs + 10 * 60_000);
@@ -81,38 +84,6 @@ export function syncOutboxForCommittedPlan(params: {
             })
           );
         }
-      }
-    }
-
-    // End check-in reminder
-    const endFireMs = endMs - leadEndMin * 60_000;
-    const endExpMs = endMs + 20 * 60_000;
-    if (now.getTime() <= endExpMs) {
-      const endFireIso = new Date(endFireMs).toISOString();
-      const sentBefore = alreadySentStmt.get(block.id, 'end', endFireIso);
-      if (!sentBefore) {
-        const idemKey = `notif:${params.userId}:${block.id}:v${params.planVersion}:end`;
-        insertStmt.run(
-          params.userId,
-          block.instance_id,
-          block.id,
-          params.planVersion,
-          'end',
-          endFireIso,
-          new Date(endExpMs).toISOString(),
-          idemKey,
-          JSON.stringify({
-            taskId: block.task_id,
-            instanceId: block.instance_id,
-            blockId: block.id,
-            title,
-            startTime: block.start_time,
-            endTime: block.end_time,
-            partIndex: block.part_index,
-            totalParts: block.total_parts,
-            leadMinutes: leadEndMin,
-          })
-        );
       }
     }
   }

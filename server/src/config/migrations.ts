@@ -449,6 +449,24 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    name: 'schedule_lock_and_pure_reminders',
+    up: (db) => {
+      ensureColumn(db, 'user_settings', 'schedule_lock_mode', "TEXT NOT NULL DEFAULT 'none'");
+      ensureColumn(db, 'user_settings', 'schedule_lock_hours', 'INTEGER NOT NULL DEFAULT 0');
+      db.exec(`
+        UPDATE notification_outbox
+        SET status = 'cancelled',
+            last_error = 'end_confirmation_disabled',
+            lease_owner = NULL,
+            lease_until = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE reminder_type = 'end'
+          AND status IN ('pending', 'failed');
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
